@@ -68,8 +68,8 @@ int main(int argc, char** argv)
           "passband edges echo configure()");
     check(c.agcMode == 2 && c.maximumAgcGainDb == 90.0,
           "AGC mode and ceiling echo configure()");
-    check(c.filterTaps == Hl2RxDsp::kRxFilterTaps,
-          "filter taps are the HL2 RX length, not the WDSP default");
+    check(c.filterTaps == Hl2RxDsp::kRxFilterTapsShort,
+          "filter taps: the low-latency length with no notch placed (Plan 4.1)");
 
     // shiftHz() tracks the runtime slice offset.
     check(dsp.shiftHz() == 0.0, "shift starts at 0");
