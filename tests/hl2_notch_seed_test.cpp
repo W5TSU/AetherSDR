@@ -139,6 +139,13 @@ int main(int argc, char** argv)
     check(dsp.channelConfig().filterTaps == Hl2RxDsp::kRxFilterTapsShort,
           "clearNotches() lands on the short filter");
 
+    // Plan 4.2: the T/R transition clocks the demodulator with silence and
+    // never touches channel lifecycle, so RX -> TX -> RX keeps one channel id.
+    dsp.setAudioMuted(true);
+    dsp.setAudioMuted(false);
+    check(dsp.wdspChannelId() == chanId,
+          "RX -> TX -> RX (setAudioMuted) kept the same WDSP channel");
+
     if (g_failures == 0)
         std::printf("hl2_notch_seed_test: PASS\n");
     return g_failures == 0 ? 0 : 1;
