@@ -3824,7 +3824,7 @@ QJsonObject AudioEngine::automationAudioCaptureAnalyze(const QString& tap) const
     return QJsonObject{
         {QStringLiteral("ok"), true},
         {QStringLiteral("tap"), want.isEmpty() ? QStringLiteral("all") : want},
-        {QStringLiteral("frames"), static_cast<double>(mono.size())},
+        {QStringLiteral("frames"), static_cast<int>(mono.size())},
         {QStringLiteral("sampleRate"), sampleRate},
         {QStringLiteral("channels"), channels},
         {QStringLiteral("dominantHz"), tones.size() > 0 ? tones[0].hz : 0.0},

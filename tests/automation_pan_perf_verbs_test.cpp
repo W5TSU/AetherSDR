@@ -160,15 +160,20 @@ int main(int argc, char** argv)
                QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact)));
     }
 
-    // get dsp selector=backend: declines cleanly with no HL2 backend attached.
+    // get dsp selector=backend: on a backend with no `dsp.get` verb it declines
+    // cleanly — an informative ok:false, no hang, no crash. The decline text is
+    // whatever the backend's own invokeExtension returned (here "unknown
+    // extension namespace: hl2"). The with-an-HL2-backend path is the shared
+    // `get hostnb` synchronous-extension template.
     {
         const QJsonObject r = request(
             socket,
             QByteArrayLiteral(
                 "{\"cmd\":\"get\",\"model\":\"dsp\",\"selector\":\"backend\"}"));
-        report("get dsp selector=backend declines without an HL2 backend",
+        report("get dsp selector=backend declines cleanly on a non-HL2 backend",
                r.value(QStringLiteral("ok")).toBool() == false
-                   && !r.contains(QStringLiteral("testError")),
+                   && !r.contains(QStringLiteral("testError"))
+                   && !errorOf(r).isEmpty(),
                errorOf(r));
     }
 

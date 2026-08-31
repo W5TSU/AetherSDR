@@ -4622,11 +4622,13 @@ QJsonObject AutomationServer::doGet(const QString& model, const QString& selecto
         // Same synchronous-extension contract as `get hostnb` / `doCiv`.
         if (selector == QLatin1String("backend")) {
             RadioModel* radio = m_radioModel;
-            if (!radio)
+            if (!radio) {
                 return err(QStringLiteral("no radio model available"));
+            }
             IRadioBackend* backend = radio->backend();
-            if (!backend)
+            if (!backend) {
                 return err(QStringLiteral("no backend attached"));
+            }
             bool answered = false;
             bool failed = false;
             QVariant payload;
@@ -4634,13 +4636,17 @@ QJsonObject AutomationServer::doGet(const QString& model, const QString& selecto
             const quint64 rid = ++m_extensionRequestId;
             auto okConn = connect(backend, &IRadioBackend::extensionResult, this,
                                   [&](quint64 id, const QVariant& v) {
-                if (id != rid) return;
+                if (id != rid) {
+                    return;
+                }
                 answered = true;
                 payload = v;
             }, Qt::DirectConnection);
             auto errConn = connect(backend, &IRadioBackend::extensionError, this,
                                    [&](quint64 id, const QString& msg) {
-                if (id != rid) return;
+                if (id != rid) {
+                    return;
+                }
                 answered = true;
                 failed = true;
                 failure = msg;
@@ -4649,15 +4655,18 @@ QJsonObject AutomationServer::doGet(const QString& model, const QString& selecto
                                      QStringLiteral("dsp.get"), rid, QVariant());
             disconnect(okConn);
             disconnect(errConn);
-            if (!answered)
+            if (!answered) {
                 return err(QStringLiteral("this backend does not implement dsp.get"));
-            if (failed)
+            }
+            if (failed) {
                 return err(failure);
+            }
             const QJsonObject data = QJsonValue::fromVariant(payload).toObject();
             if (!property.isEmpty()) {
-                if (!data.contains(property))
+                if (!data.contains(property)) {
                     return err(QStringLiteral("unknown property '") + property
                                + QStringLiteral("' for dsp backend"));
+                }
                 return QJsonObject{{QStringLiteral("ok"), true},
                                    {QStringLiteral("model"), model},
                                    {QStringLiteral("selector"), selector},
@@ -4666,7 +4675,7 @@ QJsonObject AutomationServer::doGet(const QString& model, const QString& selecto
             }
             return QJsonObject{{QStringLiteral("ok"), true},
                                {QStringLiteral("model"), model},
-                               {QStringLiteral("selector"), QStringLiteral("backend")},
+                               {QStringLiteral("selector"), selector},
                                {QStringLiteral("backend"), data}};
         }
         AudioEngine* audio = m_audioEngine;
@@ -10230,13 +10239,15 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
         // without reaching a Display-menu slider.
         const QStringList parts =
             arg.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
-        if (parts.isEmpty())
+        if (parts.isEmpty()) {
             return err(QStringLiteral("pan span requires a span in MHz (e.g. 0.192)"));
+        }
         bool okv = false;
         const QString panId = (parts.size() > 1) ? parts.first() : QString();
         const double mhz = parts.last().toDouble(&okv);
-        if (!okv || mhz <= 0.0)
+        if (!okv || mhz <= 0.0) {
             return err(QStringLiteral("pan span requires a positive span in MHz"));
+        }
         if (panId.isEmpty()) {
             radio->setPanBandwidth(mhz);
         } else if (!radio->requestPanBandwidth(panId, mhz)) {
@@ -10262,25 +10273,29 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
             panId = parts.at(0);
             idx = 1;
         }
-        if (parts.size() - idx < 2)
+        if (parts.size() - idx < 2) {
             return err(QStringLiteral("pan rate requires <fps> <wfRate> "
                                       "(optionally preceded by a panId)"));
+        }
         bool okF = false;
         bool okW = false;
         const int fps = parts.at(idx).toInt(&okF);
         const int wfRate = parts.at(idx + 1).toInt(&okW);
-        if (!okF || !okW || fps <= 0 || wfRate <= 0)
+        if (!okF || !okW || fps <= 0 || wfRate <= 0) {
             return err(QStringLiteral("pan rate requires positive integer "
                                       "<fps> <wfRate>"));
+        }
         const QString target = !panId.isEmpty()
             ? panId
             : (radio->activePanadapter() ? radio->activePanadapter()->panId()
                                          : QString());
-        if (target.isEmpty())
+        if (target.isEmpty()) {
             return err(QStringLiteral("pan rate: no panadapter to address"));
-        if (!radio->requestPanDisplayRates(target, fps, wfRate))
+        }
+        if (!radio->requestPanDisplayRates(target, fps, wfRate)) {
             return err(QStringLiteral("pan rate: no panadapter '") + target
                        + QStringLiteral("'"));
+        }
         return QJsonObject{{QStringLiteral("ok"), true},
                            {QStringLiteral("pan"), QStringLiteral("rate")},
                            {QStringLiteral("panId"), target},

@@ -1612,7 +1612,7 @@ target_link_libraries(spectral_nr_test PRIVATE Qt6::Core)
 add_test(NAME spectral_nr_test COMMAND spectral_nr_test)
 
 # Pure DSP metrics over captured PCM (dominant tone, RMS dBFS, clip fraction,
-# cepstral comb spacing). Feeds `capture_audio analyze`; self-contained
+# spectral-autocorrelation comb spacing). Feeds `capture_audio analyze`; self-contained
 # radix-2 FFT, so no aethercore / Qt link beyond Core.
 add_executable(audio_metrics_test
     tests/audio_metrics_test.cpp

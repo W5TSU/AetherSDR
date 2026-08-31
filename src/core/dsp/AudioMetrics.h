@@ -29,8 +29,10 @@ struct DominantTone {
 [[nodiscard]] double clippedFraction(
     const float* mono, std::size_t frames, float threshold = 0.999f);
 
-// Spacing, in Hz, of an evenly spaced harmonic comb, found via the first
-// strong cepstral peak. Returns 0.0 when no comb stands clear of the floor.
+// Spacing, in Hz, of an evenly spaced harmonic comb, found as the first strong
+// peak of the mean-removed magnitude spectrum's normalised autocorrelation
+// (a comb of spacing df makes the spectrum periodic with that period).
+// Returns 0.0 when no comb stands clear of the floor.
 [[nodiscard]] double combSpacingHz(
     const float* mono, std::size_t frames, int sampleRate);
 

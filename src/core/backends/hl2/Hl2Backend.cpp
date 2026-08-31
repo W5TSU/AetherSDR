@@ -3887,15 +3887,22 @@ void Hl2Backend::invokeExtension(const QString& ns, const QString& verb, quint64
                         bool notchesOn = false;
                         double shiftHz = 0.0;
                         int notches = 0;
-                        QMetaObject::invokeMethod(
-                            dsp,
-                            [dsp, &c, &notchesOn, &shiftHz, &notches] {
-                                c = dsp->channelConfig();
-                                notchesOn = dsp->notchesEnabled();
-                                shiftHz = dsp->shiftHz();
-                                notches = dsp->notchCount();
-                            },
-                            Qt::BlockingQueuedConnection);
+                        auto readDsp = [dsp, &c, &notchesOn, &shiftHz, &notches] {
+                            c = dsp->channelConfig();
+                            notchesOn = dsp->notchesEnabled();
+                            shiftHz = dsp->shiftHz();
+                            notches = dsp->notchCount();
+                        };
+                        // The DSP lives on m_ioThread. Marshal the read there,
+                        // unless this call is ALREADY on that thread (a future
+                        // caller) — a BlockingQueuedConnection to your own
+                        // thread deadlocks. Same guard shape as publishIoDsps().
+                        if (QThread::currentThread() == m_ioThread) {
+                            readDsp();
+                        } else {
+                            QMetaObject::invokeMethod(dsp, readDsp,
+                                                      Qt::BlockingQueuedConnection);
+                        }
                         m.insert(QStringLiteral("inputSampleRate"), c.inputSampleRate);
                         m.insert(QStringLiteral("dspSampleRate"), c.dspSampleRate);
                         m.insert(QStringLiteral("outputSampleRate"), c.outputSampleRate);
