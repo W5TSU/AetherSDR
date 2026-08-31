@@ -214,6 +214,24 @@ public:
         return m_channel ? m_channel->channelIdForTest() : -1;
     }
 
+    // Live WDSP channel configuration, for the bridge's `dsp.get` readback
+    // (`get_state model=dsp selector=backend`). What the DSP chain ACTUALLY
+    // has — in/dsp/out rates, block sizes, filter taps, minimum-phase, mode,
+    // passband edges, AGC mode/ceiling. Value-initialised Config before
+    // configure(). NOT thread-safe: call only from this object's own thread;
+    // Hl2Backend marshals the read with a BlockingQueuedConnection, the same
+    // way it reads wdspChannelId() during bring-up.
+    [[nodiscard]] WdspChannel::Config channelConfig() const
+    {
+        return m_channel ? m_channel->config() : WdspChannel::Config{};
+    }
+    // Global notch-run flag (the Flex tnf_enabled equivalent). Same
+    // thread-affinity caveat as channelConfig().
+    [[nodiscard]] bool notchesEnabled() const noexcept { return m_notchesEnabled; }
+    // Current slice offset from the NCO, Hz — how the backend tunes inside the
+    // passband without moving the DDC. Same caveat.
+    [[nodiscard]] double shiftHz() const noexcept { return m_shiftHz; }
+
     // Demodulated-audio DC blocker, one pole per channel.
     //
     // WDSP's AM/SAM detector is an ENVELOPE detector — amd.c emits

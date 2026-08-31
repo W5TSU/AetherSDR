@@ -607,6 +607,15 @@ target_include_directories(hl2_noise_blanker_test PRIVATE src)
 target_link_libraries(hl2_noise_blanker_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME hl2_noise_blanker_test COMMAND hl2_noise_blanker_test)
 
+# Hl2RxDsp read accessors behind the bridge's `dsp.get` extension:
+# channelConfig() / notchesEnabled() / shiftHz() / notchCount() must echo the
+# live WDSP configuration (HERMES.md §8.1 — the readback that catches model/DSP
+# divergence).
+add_executable(hl2_dsp_readback_test tests/hl2_dsp_readback_test.cpp)
+target_include_directories(hl2_dsp_readback_test PRIVATE src)
+target_link_libraries(hl2_dsp_readback_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME hl2_dsp_readback_test COMMAND hl2_dsp_readback_test)
+
 # AM/SAM come back from WDSP's envelope detector with the carrier as a DC
 # pedestal; the blocker on the audio output must strip it without touching the
 # modes that were already zero-mean, and without its corner creeping up into

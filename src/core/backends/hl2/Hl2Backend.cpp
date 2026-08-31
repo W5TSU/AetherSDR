@@ -210,6 +210,29 @@ bool isKnownModeString(const QString& mode) noexcept
     return kKnown.contains(mode.toUpper());
 }
 
+// WdspChannel::Mode -> canonical name, for the `dsp.get` readback. The inverse
+// of modeFromString() for the values it maps 1:1; the two CW and the two FM
+// spellings collapse to one name each, matching what the rest of the app uses.
+QString wdspModeName(WdspChannel::Mode mode) noexcept
+{
+    switch (mode) {
+    case WdspChannel::Mode::Lsb:  return QStringLiteral("LSB");
+    case WdspChannel::Mode::Usb:  return QStringLiteral("USB");
+    case WdspChannel::Mode::Dsb:  return QStringLiteral("DSB");
+    case WdspChannel::Mode::Cwl:  return QStringLiteral("CWL");
+    case WdspChannel::Mode::Cwu:  return QStringLiteral("CWU");
+    case WdspChannel::Mode::Fm:   return QStringLiteral("FM");
+    case WdspChannel::Mode::Am:   return QStringLiteral("AM");
+    case WdspChannel::Mode::Digu: return QStringLiteral("DIGU");
+    case WdspChannel::Mode::Spec: return QStringLiteral("SPEC");
+    case WdspChannel::Mode::Digl: return QStringLiteral("DIGL");
+    case WdspChannel::Mode::Sam:  return QStringLiteral("SAM");
+    case WdspChannel::Mode::Drm:  return QStringLiteral("DRM");
+    case WdspChannel::Mode::Wbfm: return QStringLiteral("WBFM");
+    }
+    return QStringLiteral("USB");
+}
+
 // The same question for the AGC vocabulary, and it needs asking for the same
 // reason: wdspAgcMode() FALLS BACK to medium for anything it does not
 // recognise, so a corrupt or hand-edited document would otherwise turn into a
@@ -3834,6 +3857,68 @@ void Hl2Backend::invokeExtension(const QString& ns, const QString& verb, quint64
                     });
                 }
                 emit extensionResult(requestId, QVariantMap{
+                    {QStringLiteral("receivers"), rxList},
+                });
+            }
+            return;
+        }
+        // Live per-receiver WDSP channel config, for `get_state model=dsp
+        // selector=backend`. Reports what the DSP chain ACTUALLY has, read on
+        // its own thread with a blocking hop — the same discipline nb.get
+        // follows with atomics, here through a marshalled lambda because Config
+        // is a struct, not a scalar (the pattern is beginDspSetup()'s
+        // wdspChannelId() read). HERMES.md §8.1: this readback would have
+        // caught the dsp_rate, passband and sideband gaps immediately.
+        if (verb == QLatin1String("dsp.get")) {
+            if (requestId != 0) {
+                QVariantList rxList;
+                for (std::size_t i = 0; i < m_rx.size(); ++i) {
+                    const Receiver& r = m_rx[i];
+                    const auto* ids = m_ids.byDdc(static_cast<int>(i));
+                    QVariantMap m{
+                        {QStringLiteral("ddc"), static_cast<int>(i)},
+                        {QStringLiteral("uiNumber"), ids ? ids->uiNumber : -1},
+                        {QStringLiteral("panId"), ids ? ids->panId : QString()},
+                        {QStringLiteral("hasChain"), r.dsp != nullptr},
+                    };
+                    if (r.dsp && m_ioThread && m_ioThread->isRunning()) {
+                        Hl2RxDsp* dsp = r.dsp;
+                        WdspChannel::Config c;
+                        bool notchesOn = false;
+                        double shiftHz = 0.0;
+                        int notches = 0;
+                        QMetaObject::invokeMethod(
+                            dsp,
+                            [dsp, &c, &notchesOn, &shiftHz, &notches] {
+                                c = dsp->channelConfig();
+                                notchesOn = dsp->notchesEnabled();
+                                shiftHz = dsp->shiftHz();
+                                notches = dsp->notchCount();
+                            },
+                            Qt::BlockingQueuedConnection);
+                        m.insert(QStringLiteral("inputSampleRate"), c.inputSampleRate);
+                        m.insert(QStringLiteral("dspSampleRate"), c.dspSampleRate);
+                        m.insert(QStringLiteral("outputSampleRate"), c.outputSampleRate);
+                        m.insert(QStringLiteral("inputBlockSize"),
+                                 static_cast<qlonglong>(c.inputBlockSize));
+                        m.insert(QStringLiteral("dspBlockSize"),
+                                 static_cast<qlonglong>(c.dspBlockSize));
+                        m.insert(QStringLiteral("filterTaps"), c.filterTaps);
+                        m.insert(QStringLiteral("minimumPhase"), c.minimumPhase);
+                        m.insert(QStringLiteral("mode"), wdspModeName(c.mode));
+                        m.insert(QStringLiteral("filterLowHz"), c.filterLowHz);
+                        m.insert(QStringLiteral("filterHighHz"), c.filterHighHz);
+                        m.insert(QStringLiteral("agcMode"), c.agcMode);
+                        m.insert(QStringLiteral("maximumAgcGainDb"), c.maximumAgcGainDb);
+                        m.insert(QStringLiteral("agcSlopeDb"), c.agcSlopeDb);
+                        m.insert(QStringLiteral("notchesEnabled"), notchesOn);
+                        m.insert(QStringLiteral("notchCount"), notches);
+                        m.insert(QStringLiteral("shiftHz"), shiftHz);
+                    }
+                    rxList.append(m);
+                }
+                emit extensionResult(requestId, QVariantMap{
+                    {QStringLiteral("family"), QStringLiteral("hl2")},
                     {QStringLiteral("receivers"), rxList},
                 });
             }
