@@ -4943,10 +4943,23 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
     }
 
     m_telemetry = t;
-    if (t.adcOverload && *t.adcOverload != m_adcOverload) {
-        m_adcOverload = *t.adcOverload;
-        if (m_adcOverload)
-            qWarning() << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
+    if (t.adcOverload) {
+        if (!m_telemetryClock.isValid()) {
+            m_telemetryClock.start();
+        }
+        const auto d = m_adcOverloadGate.update(*t.adcOverload,
+                                                m_telemetryClock.elapsed());
+        if (d.log) {
+            if (d.suppressedSinceLast > 0) {
+                qWarning().nospace()
+                    << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate ("
+                    << d.suppressedSinceLast
+                    << " further edge(s) suppressed in the last "
+                    << AdcOverloadLogGate::kCooldownMs << " ms)";
+            } else {
+                qWarning() << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
+            }
+        }
     }
 }
 

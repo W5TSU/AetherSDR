@@ -8,6 +8,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include "core/backends/hl2/AdcOverloadLogGate.h"
 #include "core/backends/hl2/Hl2DbReference.h"
 #include "core/backends/hl2/Hl2Receivers.h"
 #include "core/backends/hl2/MetisProtocol.h"   // Hl2Telemetry
@@ -644,7 +645,10 @@ private:
     // can answer "is the radio still sending", which a cumulative total cannot.
     quint64 m_linkRxPacketsAtLastTick = 0;
     static constexpr int kLinkStatsIntervalMs = 1000;
-    bool m_adcOverload = false;
+    // Rate-limits the chattering ADC-overload warning (HERMES.md §15.7); the
+    // clock is a plain monotonic source started on the first telemetry frame.
+    AdcOverloadLogGate m_adcOverloadGate;
+    QElapsedTimer m_telemetryClock;
     bool m_keyed = false;
     bool m_tuning = false;
     bool m_cwAutoKeyed = false;

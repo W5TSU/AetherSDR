@@ -616,6 +616,13 @@ target_include_directories(hl2_dsp_readback_test PRIVATE src)
 target_link_libraries(hl2_dsp_readback_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME hl2_dsp_readback_test COMMAND hl2_dsp_readback_test)
 
+# AdcOverloadLogGate — rate limiter on the chattering HPSDR ADC-overload bit
+# (HERMES.md §15.7 / §13 T1-6a). Header-only policy; pure Core.
+add_executable(hl2_adc_overload_ratelimit_test tests/hl2_adc_overload_ratelimit_test.cpp)
+target_include_directories(hl2_adc_overload_ratelimit_test PRIVATE src)
+target_link_libraries(hl2_adc_overload_ratelimit_test PRIVATE Qt6::Core)
+add_test(NAME hl2_adc_overload_ratelimit_test COMMAND hl2_adc_overload_ratelimit_test)
+
 # AM/SAM come back from WDSP's envelope detector with the carrier as a DC
 # pedestal; the blocker on the audio output must strip it without touching the
 # modes that were already zero-mean, and without its corner creeping up into
