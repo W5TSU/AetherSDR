@@ -2955,8 +2955,9 @@ void Hl2Backend::setPanAverage(const QString& panId, int frames, bool weighted)
     // keeps its own. Hl2RxDsp holds the value across a channel rebuild.
     const int ddc = ddcForPan(panId);
     Receiver* r = rx(ddc);
-    if (!r || !r->dsp)
+    if (!r || !r->dsp) {
         return;
+    }
     QMetaObject::invokeMethod(r->dsp, "setSpectrumAveraging", Qt::QueuedConnection,
         Q_ARG(int, frames), Q_ARG(bool, weighted));
 }

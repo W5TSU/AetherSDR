@@ -5201,8 +5201,9 @@ bool RadioModel::requestPanDisplayRates(const QString& panId, int fps,
 
 bool RadioModel::requestPanAverage(const QString& panId, int frames, bool weighted)
 {
-    if (panId.isEmpty())
+    if (panId.isEmpty()) {
         return false;
+    }
 
     // A backend that streams raw spectra runs the trace average in its own FFT
     // stage — there is no radio-side display engine and no status echo, so the
@@ -5210,8 +5211,9 @@ bool RadioModel::requestPanAverage(const QString& panId, int frames, bool weight
     // model does not carry averaging (it is radio-owned on the Flex, per
     // #4261), so there is nothing to mirror here.
     if (shapesDisplayRatesLocally()) {
-        if (!m_backend)
+        if (!m_backend) {
             return false;
+        }
         m_backend->setPanAverage(backendPanIdFor(panId), frames, weighted);
         return true;
     }

@@ -72,9 +72,7 @@ public:
     void reset() noexcept
     {
         m_acc.clear();
-        m_avgEma.clear();
-        m_avgHistory.clear();
-        m_avgSum.clear();
+        clearAveraging();
     }
 
 private:
@@ -82,6 +80,12 @@ private:
     // Fold the just-computed raw dBFS trace through the averaging stage,
     // rewriting binsDbfs in place. A no-op when m_avgFrames <= 1.
     void applyAveraging(std::vector<float>& binsDbfs);
+    // Forget every accumulated frame so the next one starts a fresh average.
+    void clearAveraging() noexcept
+    {
+        m_avgEma.clear();
+        m_avgHistory.clear();
+    }
 
     int m_fftSize;
     std::vector<std::complex<float>> m_acc;   // accumulation buffer (< m_fftSize)
@@ -93,7 +97,6 @@ private:
     bool m_avgWeighted = true;
     std::vector<double> m_avgEma;             // weighted: running EMA, per bin
     std::deque<std::vector<float>> m_avgHistory;  // boxcar: last m_avgFrames traces
-    std::vector<double> m_avgSum;             // boxcar: running per-bin sum of m_avgHistory
     // Opaque FFTW handles (kept as void* so fftw3.h stays out of the header).
     void* m_in = nullptr;                     // fftw_complex[m_fftSize]
     void* m_out = nullptr;                     // fftw_complex[m_fftSize]

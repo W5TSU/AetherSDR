@@ -57,15 +57,17 @@ class Bridge:
     def call(self, obj, timeout=8.0):
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         c.settimeout(timeout)
-        c.connect(self.path)
-        c.sendall(json.dumps(obj).encode() + b"\n")
-        buf = b""
-        while not buf.endswith(b"\n"):
-            chunk = c.recv(1 << 20)
-            if not chunk:
-                break
-            buf += chunk
-        c.close()
+        try:
+            c.connect(self.path)
+            c.sendall(json.dumps(obj).encode() + b"\n")
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = c.recv(1 << 20)
+                if not chunk:
+                    break
+                buf += chunk
+        finally:
+            c.close()
         return json.loads(buf.decode().splitlines()[0])
 
 
@@ -119,7 +121,8 @@ class Suite:
         return have, None
 
     def close_extra_receivers(self):
-        # Leave exactly one. `close all` keeps the last by contract.
+        # Leave exactly one. A single-target close won't drop the last pan
+        # (that needs `value: all`), so this is safe to spin against.
         while len(self.pans()) > 1:
             before = len(self.pans())
             self.b.call({"cmd": "pan", "action": "close", "value": "1"})
@@ -153,21 +156,53 @@ class Suite:
                            f"fast~{fast:.1f} fps, slow~{slow:.1f} fps "
                            f"(want fast>15, slow<12, gap>5)")
 
+    def _smeter_by_index(self):
+        """Best-effort per-pane S-meter read. Returns {panIndex: dBm} for
+        whatever the build exposes, or {} if there is no usable surface."""
+        out = {}
+        r = self.b.call({"cmd": "get", "model": "meters", "selector": "smeter"})
+        if isinstance(r, dict) and r.get("ok"):
+            for m in r.get("meters", r.get("smeter", [])) or []:
+                idx = m.get("panIndex", m.get("ddc", m.get("rx")))
+                val = m.get("dbm", m.get("value", m.get("level")))
+                if idx is not None and val is not None:
+                    out[idx] = float(val)
+        return out
+
     def row_4_9_per_pane_smeter(self, pans):
-        """A strong signal on one DDC must not move another's needle. Needs a
-        signal source; with the bare simulator scene there may be none loud
-        enough to matter, so this SKIPs rather than asserting on noise."""
-        metsrc = self.b.call({"cmd": "get", "model": "meters",
-                              "selector": "smeter"})
-        if not isinstance(metsrc, dict) or not metsrc.get("ok"):
+        """A strong signal on one DDC must not move another's needle. Tune DDC 0
+        onto the loudest thing in the current scene and DDC 1 well away, record
+        both needles, swap, and confirm the far needle did not follow the
+        carrier. SKIPs only when there is no readable per-pane meter or nothing
+        in the scene moves a needle (a bare simulator with no injected carrier).
+        """
+        if len(pans) < 2:
             return self.record("4.9", "per-pane S-meter isolation", SKIP,
-                               "no per-slice S-meter surface on this build")
-        # Tune DDC 0 onto the simulator's strongest carrier, DDC 1 well away.
-        # Record both needles, then swap which one sits on the carrier and
-        # confirm the OTHER needle did not follow.
-        return self.record("4.9", "per-pane S-meter isolation", SKIP,
-                           "needs a deterministic strong-carrier source; "
-                           "wire to `sim` scene injection when available")
+                               "need >= 2 receivers")
+        p0, p1 = pans[0].get("panId"), pans[1].get("panId")
+        # A frequency the hpsdrsim scene puts energy on, and one it does not.
+        loud, quiet = "14.100", "14.320"
+        self.b.call({"cmd": "pan", "action": "center", "value": loud})
+        self.b.call({"cmd": "slice", "value": f"{p1} freq {quiet}"})
+        time.sleep(2.0)
+        before = self._smeter_by_index()
+        if 0 not in before or 1 not in before:
+            return self.record("4.9", "per-pane S-meter isolation", SKIP,
+                               f"no readable per-pane S-meter: {before}")
+        # Move DDC 1 onto the loud carrier; DDC 0's needle must stay put.
+        self.b.call({"cmd": "slice", "value": f"{p1} freq {loud}"})
+        time.sleep(2.0)
+        after = self._smeter_by_index()
+        if 1 not in after or after[1] - before[1] < 6.0:
+            return self.record("4.9", "per-pane S-meter isolation", SKIP,
+                               "nothing in the scene raised DDC 1's needle by "
+                               ">6 dB — inject a carrier via `sim` and retry")
+        drift0 = abs(after.get(0, before[0]) - before[0])
+        ok = drift0 < 3.0
+        return self.record("4.9", "per-pane S-meter isolation",
+                           PASS if ok else FAIL,
+                           f"DDC 1 needle rose {after[1] - before[1]:.1f} dB; "
+                           f"DDC 0 needle moved {drift0:.1f} dB (want < 3)")
 
     def row_1_9_popout(self, pans):
         if len(pans) < 2:
@@ -242,7 +277,7 @@ class Suite:
                            f"span at 1 RX={span_1rx} MHz, at 4 RX={span_4rx} MHz "
                            f"(want 4 RX strictly narrower)")
 
-    def row_2_4_ep6_loss(self, pans):
+    def row_2_4_ep6_loss(self):
         """rxPacketsLost must stay flat while N DDCs run at the test rate. A
         short sample here; the hour soak (row 7.1) stays HW-only."""
         got, err = self.add_receivers(self.args.receivers)
@@ -281,8 +316,8 @@ class Suite:
 
     def run(self):
         b = self.b
-        if not b.call({"cmd": "get", "model": "radio"}).get("radio", {}) \
-                .get("connected", False):
+        radio = b.call({"cmd": "get", "model": "radio"}).get("radio", {})
+        if not radio.get("connected", False):
             print("radio not connected — start the app connected to an HL2 "
                   "or hpsdrsim -hermeslite2 -P1")
             return 2
@@ -292,7 +327,7 @@ class Suite:
 
         # EP6 loss first: it wants N receivers up at the test rate, and the
         # later rows are happy at whatever count it leaves running.
-        self.row_2_4_ep6_loss(self.pans())
+        self.row_2_4_ep6_loss()
 
         got, err = self.add_receivers(max(2, self.args.receivers))
         pans = self.pans()

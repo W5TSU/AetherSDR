@@ -112,9 +112,7 @@ void Hl2Spectrum::setAveraging(int frames, bool weighted) noexcept
     m_avgWeighted = weighted;
     // A window-length or mode change starts a fresh average rather than
     // blending the old shape into the new one.
-    m_avgEma.clear();
-    m_avgHistory.clear();
-    m_avgSum.clear();
+    clearAveraging();
 }
 
 void Hl2Spectrum::applyAveraging(std::vector<float>& binsDbfs)
@@ -142,26 +140,26 @@ void Hl2Spectrum::applyAveraging(std::vector<float>& binsDbfs)
         return;
     }
 
-    // Boxcar: arithmetic mean of the last m_avgFrames traces, kept as a running
-    // per-bin sum so each frame is O(n) rather than O(n * frames).
-    if (m_avgSum.size() != n) {
-        m_avgSum.assign(n, 0.0);
+    // Boxcar: the plain arithmetic mean of the last m_avgFrames traces. Summed
+    // fresh each frame — m_avgFrames is an operator slider value (tens, not
+    // thousands) and n is the FFT size, so O(n * frames) per frame is cheap and
+    // it sidesteps the slow drift a kept running-sum accumulates.
+    if (!m_avgHistory.empty() && m_avgHistory.front().size() != n) {
         m_avgHistory.clear();
     }
     m_avgHistory.push_back(binsDbfs);
-    for (std::size_t k = 0; k < n; ++k) {
-        m_avgSum[k] += static_cast<double>(binsDbfs[k]);
-    }
     while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
-        const std::vector<float>& oldest = m_avgHistory.front();
-        for (std::size_t k = 0; k < n; ++k) {
-            m_avgSum[k] -= static_cast<double>(oldest[k]);
-        }
         m_avgHistory.pop_front();
+    }
+    std::vector<double> sum(n, 0.0);
+    for (const std::vector<float>& trace : m_avgHistory) {
+        for (std::size_t k = 0; k < n; ++k) {
+            sum[k] += static_cast<double>(trace[k]);
+        }
     }
     const double inv = 1.0 / static_cast<double>(m_avgHistory.size());
     for (std::size_t k = 0; k < n; ++k) {
-        binsDbfs[k] = static_cast<float>(m_avgSum[k] * inv);
+        binsDbfs[k] = static_cast<float>(sum[k] * inv);
     }
 }
 

@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -213,6 +214,59 @@ int main()
               "a full-size frame still comes out right after switching averaging");
         check(argmax(bins) == (8 + half) % N,
               "the tone still decodes after switching averaging mid-stream");
+    }
+
+    // ---- tone + noise: averaging cuts the noise floor's frame-to-frame swing ----
+    {
+        // The property story 7 asks for — "trade responsiveness against a
+        // smoother noise floor". Feed a fixed tone plus fresh white noise every
+        // frame; watch one off-tone bin over many frames through the boxcar and
+        // through no averaging, and confirm the averaged bin's temporal spread
+        // is markedly smaller. (dB-domain averaging settles toward the mean of
+        // the logs, a stable value — the point here is the reduced variance,
+        // not an unbiased power estimate.)
+        constexpr int K = 16;
+        constexpr int k0 = 10;
+        const int floorBin = (k0 + half) % N + 6;   // well off the tone
+        std::uint32_t rng = 0x1234567u;
+        auto noisyTone = [&]() {
+            std::vector<std::complex<float>> v(static_cast<std::size_t>(N));
+            for (int i = 0; i < N; ++i) {
+                const double ph = 2.0 * kPi * k0 * i / N;
+                auto u = [&]() {
+                    rng = rng * 1664525u + 1013904223u;
+                    return (static_cast<float>(rng >> 8) / 16777216.0f - 0.5f);
+                };
+                v[static_cast<std::size_t>(i)] =
+                    0.3f * std::complex<float>(static_cast<float>(std::cos(ph)),
+                                               static_cast<float>(std::sin(ph)))
+                    + 0.08f * std::complex<float>(u(), u());
+            }
+            return v;
+        };
+        auto spread = [&](bool averaged) {
+            Hl2Spectrum s(N);
+            if (averaged) {
+                s.setAveraging(K, false);
+            }
+            std::vector<float> bins;
+            for (int f = 0; f < 4 * K; ++f) {   // let the boxcar fill
+                s.process(noisyTone(), bins);
+            }
+            double sum = 0.0, sum2 = 0.0;
+            constexpr int M = 60;
+            for (int f = 0; f < M; ++f) {
+                s.process(noisyTone(), bins);
+                const double v = bins[static_cast<std::size_t>(floorBin)];
+                sum += v;
+                sum2 += v * v;
+            }
+            return std::sqrt(sum2 / M - (sum / M) * (sum / M));
+        };
+        const double raw = spread(false);
+        const double avg = spread(true);
+        check(avg < raw * 0.6,
+              "boxcar averaging shrinks the noise-floor bin's frame-to-frame stddev");
     }
 
     // ---- reset() drops the averaging history ----
