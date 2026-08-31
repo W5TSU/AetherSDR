@@ -1254,6 +1254,15 @@ QString sliceActionList()
         "centerlock|link|txant|rxant|rxsource|fixture|clearfixture");
 }
 
+// Same single-source contract as sliceActionList(): doPan()'s two error paths
+// and the registry help string all read this, so a new pan action cannot land
+// in one and drift from the others (#5102's failure mode, one verb over).
+QString panActionList()
+{
+    return QStringLiteral(
+        "create|add|remove|close|center|rfgain|span|rate|float|dock");
+}
+
 QJsonObject err(const QString& msg)
 {
     return QJsonObject{{QStringLiteral("ok"), false},
@@ -2653,6 +2662,8 @@ bool isReadOnlyRequest(const QString& name, const QString& action)
         QStringLiteral("floors"),   QStringLiteral("hitTest"),
         // Reads backend telemetry; keys nothing and sets nothing.
         QStringLiteral("health"),   QStringLiteral("devices"),
+        // Frame-rate readout; reads render stats and nothing else.
+        QStringLiteral("perf"),
     };
     if (kSafe.contains(name)) {
         return true;
@@ -2827,6 +2838,14 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
                     {QStringLiteral("authRequired"), !self.m_authToken.isEmpty()},
                     {QStringLiteral("readOnly"), self.m_readOnly},
                 };
+            });
+
+        add("perf", {},
+            "perf — measured panadapter/waterfall frame rates {panFps, wfFps} "
+            "(+ the full renderstats totals)",
+            parseNothing,
+            [](AutomationServer& self, A&, QLocalSocket*) {
+                return self.doPerf();
             });
 
         add("verbs", {}, "list every bridge verb with aliases and help (this table)",
@@ -3240,13 +3259,14 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
         // rfgain branch already splits the joined value and handles both shapes,
         // so the handler was right and only the parser choice was wrong.
         add("pan", {},
-            "pan <create|add|remove|close|center|rfgain|float|dock> [value] — "
-            "float/dock drive PanadapterStack's real reparent path (#4864)",
+            "pan <create|add|remove|close|center|rfgain|span|rate|float|dock> [value] — "
+            "span <[panId] MHz>, rate <[panId] fps wfRate>; float/dock drive "
+            "PanadapterStack's real reparent path (#4864)",
             parseActionRest,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 if (a.action.isEmpty())
-                    return err(QStringLiteral(
-                        "pan requires an action (create|add|remove|close|center|rfgain|float|dock)"));
+                    return err(QStringLiteral("pan requires an action (")
+                               + panActionList() + QStringLiteral(")"));
                 return s.doPan(a.action, a.value);
             });
 
@@ -4589,6 +4609,59 @@ QJsonObject AutomationServer::doGet(const QString& model, const QString& selecto
                            {QStringLiteral("audio"), data}};
     }
     if (model == QLatin1String("dsp")) {
+        // `get dsp selector=backend` — the LIVE per-receiver WDSP config from
+        // the connected backend, not the client-side NR tuning state below.
+        // HERMES.md §8.1: the readback that catches model/DSP divergence.
+        // Same synchronous-extension contract as `get hostnb` / `doCiv`.
+        if (selector == QLatin1String("backend")) {
+            RadioModel* radio = m_radioModel;
+            if (!radio)
+                return err(QStringLiteral("no radio model available"));
+            IRadioBackend* backend = radio->backend();
+            if (!backend)
+                return err(QStringLiteral("no backend attached"));
+            bool answered = false;
+            bool failed = false;
+            QVariant payload;
+            QString failure;
+            const quint64 rid = ++m_extensionRequestId;
+            auto okConn = connect(backend, &IRadioBackend::extensionResult, this,
+                                  [&](quint64 id, const QVariant& v) {
+                if (id != rid) return;
+                answered = true;
+                payload = v;
+            }, Qt::DirectConnection);
+            auto errConn = connect(backend, &IRadioBackend::extensionError, this,
+                                   [&](quint64 id, const QString& msg) {
+                if (id != rid) return;
+                answered = true;
+                failed = true;
+                failure = msg;
+            }, Qt::DirectConnection);
+            backend->invokeExtension(QStringLiteral("hl2"),
+                                     QStringLiteral("dsp.get"), rid, QVariant());
+            disconnect(okConn);
+            disconnect(errConn);
+            if (!answered)
+                return err(QStringLiteral("this backend does not implement dsp.get"));
+            if (failed)
+                return err(failure);
+            const QJsonObject data = QJsonValue::fromVariant(payload).toObject();
+            if (!property.isEmpty()) {
+                if (!data.contains(property))
+                    return err(QStringLiteral("unknown property '") + property
+                               + QStringLiteral("' for dsp backend"));
+                return QJsonObject{{QStringLiteral("ok"), true},
+                                   {QStringLiteral("model"), model},
+                                   {QStringLiteral("selector"), selector},
+                                   {QStringLiteral("property"), property},
+                                   {QStringLiteral("value"), data.value(property)}};
+            }
+            return QJsonObject{{QStringLiteral("ok"), true},
+                               {QStringLiteral("model"), model},
+                               {QStringLiteral("selector"), QStringLiteral("backend")},
+                               {QStringLiteral("backend"), data}};
+        }
         AudioEngine* audio = m_audioEngine;
         if (!audio)
             return err(QStringLiteral("no audio engine available"));
@@ -10142,6 +10215,73 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
                            {QStringLiteral("gain"), gain}, {QStringLiteral("requested"), true}};
     }
 
+    if (action == QLatin1String("span")) {
+        // `pan span <MHz>` or `pan span <panId> <MHz>`. The backend snaps the
+        // request to its nearest achievable width and echoes what it took via
+        // panCenterBandwidthChanged; this verb just issues the intent, so the
+        // panadapter-parity work (detector/averaging, bin count) is drivable
+        // without reaching a Display-menu slider.
+        const QStringList parts =
+            arg.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (parts.isEmpty())
+            return err(QStringLiteral("pan span requires a span in MHz (e.g. 0.192)"));
+        bool okv = false;
+        const QString panId = (parts.size() > 1) ? parts.first() : QString();
+        const double mhz = parts.last().toDouble(&okv);
+        if (!okv || mhz <= 0.0)
+            return err(QStringLiteral("pan span requires a positive span in MHz"));
+        if (panId.isEmpty()) {
+            radio->setPanBandwidth(mhz);
+        } else if (!radio->requestPanBandwidth(panId, mhz)) {
+            return err(QStringLiteral("pan span: no panadapter '") + panId
+                       + QStringLiteral("'"));
+        }
+        return QJsonObject{{QStringLiteral("ok"), true},
+                           {QStringLiteral("pan"), QStringLiteral("span")},
+                           {QStringLiteral("panId"), panId},
+                           {QStringLiteral("spanMhz"), mhz},
+                           {QStringLiteral("requested"), true}};
+    }
+
+    if (action == QLatin1String("rate")) {
+        // `pan rate <fps> <wfRate>` or `pan rate <panId> <fps> <wfRate>` —
+        // the operator's Display->FFT FPS and Display->Waterfall Rate (1..100)
+        // intent, the pair requestPanDisplayRates() carries.
+        const QStringList parts =
+            arg.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        QString panId;
+        int idx = 0;
+        if (parts.size() >= 3) {
+            panId = parts.at(0);
+            idx = 1;
+        }
+        if (parts.size() - idx < 2)
+            return err(QStringLiteral("pan rate requires <fps> <wfRate> "
+                                      "(optionally preceded by a panId)"));
+        bool okF = false;
+        bool okW = false;
+        const int fps = parts.at(idx).toInt(&okF);
+        const int wfRate = parts.at(idx + 1).toInt(&okW);
+        if (!okF || !okW || fps <= 0 || wfRate <= 0)
+            return err(QStringLiteral("pan rate requires positive integer "
+                                      "<fps> <wfRate>"));
+        const QString target = !panId.isEmpty()
+            ? panId
+            : (radio->activePanadapter() ? radio->activePanadapter()->panId()
+                                         : QString());
+        if (target.isEmpty())
+            return err(QStringLiteral("pan rate: no panadapter to address"));
+        if (!radio->requestPanDisplayRates(target, fps, wfRate))
+            return err(QStringLiteral("pan rate: no panadapter '") + target
+                       + QStringLiteral("'"));
+        return QJsonObject{{QStringLiteral("ok"), true},
+                           {QStringLiteral("pan"), QStringLiteral("rate")},
+                           {QStringLiteral("panId"), target},
+                           {QStringLiteral("fps"), fps},
+                           {QStringLiteral("wfRate"), wfRate},
+                           {QStringLiteral("requested"), true}};
+    }
+
     if (action == QLatin1String("float") || action == QLatin1String("dock")) {
         // `pan float <panId|index|active>` / `pan dock …` — the reparent +
         // GPU re-initialize path (#2495/#4319/#4617) made drivable headlessly
@@ -10245,7 +10385,7 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
     }
 
     return err(QStringLiteral("unknown pan action: ") + action
-               + QStringLiteral(" (create|add|remove|close|center|rfgain)"));
+               + QStringLiteral(" (") + panActionList() + QStringLiteral(")"));
 }
 
 // ── Panadapter layout (bridge test hook) ────────────────────────────────────
@@ -11794,6 +11934,28 @@ QJsonObject AutomationServer::doWhoami() const
         {QStringLiteral("txAllowed"), m_txAllowed},
         {QStringLiteral("readOnly"), m_readOnly},
         {QStringLiteral("version"), QCoreApplication::applicationVersion()},
+    };
+}
+
+QJsonObject AutomationServer::doPerf() const
+{
+    // Reuse the renderstats aggregation — the same widget snapshots `get
+    // renderstats` reads — and surface the two frame-rate headlines plus the
+    // full totals for a caller that wants more. Headless (no SpectrumWidget)
+    // this is all zeros, which is the honest answer.
+    const QJsonObject rs = doGet(QStringLiteral("renderstats"), QString(), QString());
+    const QJsonObject totals = rs.value(QStringLiteral("totals")).toObject();
+    return QJsonObject{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("panFps"),
+         totals.value(QStringLiteral("fftFramesPerSec")).toDouble()},
+        {QStringLiteral("wfFps"),
+         totals.value(QStringLiteral("nativeWaterfallUpdatesPerSec")).toDouble()},
+        {QStringLiteral("gpuFps"),
+         totals.value(QStringLiteral("gpuFramesPerSec")).toDouble()},
+        {QStringLiteral("visiblePanCount"),
+         totals.value(QStringLiteral("visiblePanCount")).toInt()},
+        {QStringLiteral("renderstats"), totals},
     };
 }
 

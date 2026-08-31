@@ -714,6 +714,10 @@ private:
     // Identity of THIS bridge instance — pid/socket/label — for multi-instance
     // drivers that enumerate the per-pid discovery directory.
     QJsonObject doWhoami() const;
+    // Measured panadapter / waterfall frame rates — a headline pair from the
+    // renderstats aggregation, so proving a frame-rate regression is one call
+    // instead of scraping a log (HERMES.md §15.7).
+    QJsonObject doPerf() const;
     // Observability suite (#3646): runtime log-category control, ring-buffer
     // tail, push subscription, and timeline markers. All diagnostic, no keying.
     QJsonObject doLog(const QString& action, const QString& arg, QLocalSocket* sock);

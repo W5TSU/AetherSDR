@@ -3762,11 +3762,12 @@ receiver capacity. It never enables transmit and remains available without
 The complete registry, generated from the `add(...)` table in `AutomationServer.cpp` by `tools/gen_bridge_docs.py`. CI fails if this drifts from the code.
 
 <!-- BEGIN GENERATED VERB TABLE (tools/gen_bridge_docs.py) -->
-<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 71 verbs. -->
+<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 72 verbs. -->
 
 | Verb | Aliases | Description |
 |---|---|---|
 | `ping` | — | liveness check → app + version + whether a token is required |
+| `perf` | — | perf — measured panadapter/waterfall frame rates {panFps, wfFps} (+ the full renderstats totals) |
 | `verbs` | — | list every bridge verb with aliases and help (this table) |
 | `dumpTree` | — | serialize the full widget tree as JSON |
 | `floors` | — | per-pan measured noise + display floor (dBm) |
@@ -3805,7 +3806,7 @@ The complete registry, generated from the `add(...)` table in `AutomationServer.
 | `sim` | — | sim <swr\|dropslice\|stallscope\|disconnect\|malformed\|clear> [arg] — demo fault injection (RFC #4288; only valid when the demo is connected) |
 | `record` | — | record <start\|stop\|status\|path\|dir> [args] |
 | `testtone` | — | testtone <on\|off> [freqHz levelDb] |
-| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|float\|dock> [value] — float/dock drive PanadapterStack's real reparent path (#4864) |
+| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|span\|rate\|float\|dock> [value] — span <[panId] MHz>, rate <[panId] fps wfRate>; float/dock drive PanadapterStack's real reparent path (#4864) |
 | `workspace` | — | workspace <status\|enable\|disable\|edit\|place\|list\|switch\|create\|bind\|import-floats\|pan-layout\|palette\|window\|move\|add> — the canvas, its workspaces and its extra windows as data; arg shapes in docs/automation-bridge.md (#4887 ph4/ph6/ph7) |
 | `layout` | — | layout <rearrange <id>\|get> — splitter layout exerciser |
 | `scale` | — | scale [pct] — report/persist the UI scale factor |

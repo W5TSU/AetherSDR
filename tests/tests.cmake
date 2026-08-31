@@ -3360,6 +3360,18 @@ target_link_libraries(automation_audio_analyze_test PRIVATE
 )
 add_test(NAME automation_audio_analyze_test COMMAND automation_audio_analyze_test)
 
+# pan span / pan rate / perf / get dsp selector=backend — boundary rows over a
+# real QLocalSocket with a panadapter-less, backend-less RadioModel.
+add_executable(automation_pan_perf_verbs_test tests/automation_pan_perf_verbs_test.cpp)
+target_include_directories(automation_pan_perf_verbs_test PRIVATE src)
+target_link_libraries(automation_pan_perf_verbs_test PRIVATE
+    aethercore Qt6::Core Qt6::Network Qt6::Widgets
+)
+set_target_properties(automation_pan_perf_verbs_test PROPERTIES AUTOMOC ON)
+add_test(NAME automation_pan_perf_verbs_test COMMAND automation_pan_perf_verbs_test)
+set_tests_properties(automation_pan_perf_verbs_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(aetherclock_model_test tests/aetherclock_model_test.cpp)
 target_include_directories(aetherclock_model_test PRIVATE src)
 target_link_libraries(aetherclock_model_test PRIVATE aethercore Qt6::Core Qt6::Test)
