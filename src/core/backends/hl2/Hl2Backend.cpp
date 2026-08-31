@@ -2944,6 +2944,23 @@ void Hl2Backend::setPanFrameRate(const QString& panId, int fps)
         Q_ARG(int, fps));
 }
 
+void Hl2Backend::setPanAverage(const QString& panId, int frames, bool weighted)
+{
+    // Straight through to the DSP's FFT stage, which runs the trace average
+    // itself — a Flex would have the firmware do it and echo the level back.
+    // Queued: Hl2Spectrum lives on the DSP thread.
+    //
+    // PER PAN, like the frame rate and for the same reason: averaging is a
+    // display choice, not a hardware register, so each receiver's panadapter
+    // keeps its own. Hl2RxDsp holds the value across a channel rebuild.
+    const int ddc = ddcForPan(panId);
+    Receiver* r = rx(ddc);
+    if (!r || !r->dsp)
+        return;
+    QMetaObject::invokeMethod(r->dsp, "setSpectrumAveraging", Qt::QueuedConnection,
+        Q_ARG(int, frames), Q_ARG(bool, weighted));
+}
+
 void Hl2Backend::setKeying(bool key)
 {
     // Keying is gated twice on purpose. capabilities().canTransmit reflects the

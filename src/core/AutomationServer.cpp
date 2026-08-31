@@ -1260,7 +1260,7 @@ QString sliceActionList()
 QString panActionList()
 {
     return QStringLiteral(
-        "create|add|remove|close|center|rfgain|span|rate|float|dock");
+        "create|add|remove|close|center|rfgain|span|rate|average|float|dock");
 }
 
 // Likewise for audioCapture; doAudioCapture()'s fallthrough error reads this.
@@ -3266,9 +3266,9 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
         // rfgain branch already splits the joined value and handles both shapes,
         // so the handler was right and only the parser choice was wrong.
         add("pan", {},
-            "pan <create|add|remove|close|center|rfgain|span|rate|float|dock> [value] — "
-            "span <[panId] MHz>, rate <[panId] fps wfRate>; float/dock drive "
-            "PanadapterStack's real reparent path (#4864)",
+            "pan <create|add|remove|close|center|rfgain|span|rate|average|float|dock> [value] — "
+            "span <[panId] MHz>, rate <[panId] fps wfRate>, average <[panId] frames weighted>; "
+            "float/dock drive PanadapterStack's real reparent path (#4864)",
             parseActionRest,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 if (a.action.isEmpty())
@@ -10301,6 +10301,53 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
                            {QStringLiteral("panId"), target},
                            {QStringLiteral("fps"), fps},
                            {QStringLiteral("wfRate"), wfRate},
+                           {QStringLiteral("requested"), true}};
+    }
+
+    if (action == QLatin1String("average")) {
+        // `pan average <frames> <weighted>` or `pan average <panId> <frames>
+        // <weighted>` — the operator's Display->FFT AVG level and
+        // weighted-average toggle, the pair requestPanAverage() carries. On a
+        // raw-spectrum backend (HL2) this reaches the engine's own FFT stage;
+        // on a Flex it goes out as `display pan set` wire text.
+        const QStringList parts =
+            arg.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        QString panId;
+        int idx = 0;
+        if (parts.size() >= 3) {
+            panId = parts.at(0);
+            idx = 1;
+        }
+        if (parts.size() - idx < 2) {
+            return err(QStringLiteral("pan average requires <frames> <weighted> "
+                                      "(optionally preceded by a panId)"));
+        }
+        bool okFrames = false;
+        const int frames = parts.at(idx).toInt(&okFrames);
+        if (!okFrames || frames < 0) {
+            return err(QStringLiteral("pan average requires a non-negative "
+                                      "integer <frames> (0/1 = off)"));
+        }
+        const QString wtok = parts.at(idx + 1).toLower();
+        const bool weighted = wtok == QLatin1String("1")
+            || wtok == QLatin1String("true") || wtok == QLatin1String("on")
+            || wtok == QLatin1String("weighted");
+        const QString target = !panId.isEmpty()
+            ? panId
+            : (radio->activePanadapter() ? radio->activePanadapter()->panId()
+                                         : QString());
+        if (target.isEmpty()) {
+            return err(QStringLiteral("pan average: no panadapter to address"));
+        }
+        if (!radio->requestPanAverage(target, frames, weighted)) {
+            return err(QStringLiteral("pan average: no panadapter '") + target
+                       + QStringLiteral("'"));
+        }
+        return QJsonObject{{QStringLiteral("ok"), true},
+                           {QStringLiteral("pan"), QStringLiteral("average")},
+                           {QStringLiteral("panId"), target},
+                           {QStringLiteral("frames"), frames},
+                           {QStringLiteral("weighted"), weighted},
                            {QStringLiteral("requested"), true}};
     }
 

@@ -4440,8 +4440,11 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
     connect(menu, &SpectrumOverlayMenu::fftAverageChanged,
             this, [this, applet, sw](int v) {
         sw->setFftAverage(v);
-        m_radioModel.sendCommand(
-            QString("display pan set %1 average=%2").arg(applet->panId()).arg(v));
+        // Through the model, not a raw sendCommand: on a backend that streams
+        // raw spectra the averaging runs in the engine's own FFT stage, and the
+        // Flex wire text it used to send reached nothing there. The seam takes
+        // the pair, so pass the weighted toggle's current value alongside.
+        m_radioModel.requestPanAverage(applet->panId(), v, sw->fftWeightedAvg());
     });
     connect(menu, &SpectrumOverlayMenu::fftFpsChanged,
             this, [this, applet, sw](int v) {
@@ -4457,8 +4460,9 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
     connect(menu, &SpectrumOverlayMenu::fftWeightedAverageChanged,
             this, [this, applet, sw](bool on) {
         sw->setFftWeightedAvg(on);
-        m_radioModel.sendCommand(
-            QString("display pan set %1 weighted_average=%2").arg(applet->panId()).arg(on ? 1 : 0));
+        // Same path as fftAverageChanged — the model routes this to the engine
+        // on a raw-spectrum backend and to wire text on a Flex.
+        m_radioModel.requestPanAverage(applet->panId(), sw->fftAverage(), on);
     });
     connect(menu, &SpectrumOverlayMenu::wfColorSchemeChanged,
             sw, &SpectrumWidget::setWfColorScheme,

@@ -257,6 +257,22 @@ public:
         Q_UNUSED(fps);
     }
 
+    // The operator's Display → FFT AVG level and weighted-average toggle.
+    //
+    // A Flex runs the trace averaging in firmware and echoes the level back
+    // through pan status, so its wire text has somewhere to land. A backend
+    // that streams cooked spectra has no such engine — it runs the average in
+    // its own FFT stage instead. `frames` is 0/1 = off, N = the EMA / boxcar
+    // length; `weighted` picks the dB-domain EMA over the boxcar mean.
+    //
+    // Default no-op: a Flex radio's display engine owns this.
+    virtual void setPanAverage(const QString& panId, int frames, bool weighted)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(frames);
+        Q_UNUSED(weighted);
+    }
+
     // ---- per-slice audio ----
     //
     // A Flex mixes its slices ON THE RADIO, so these are wire commands to it and

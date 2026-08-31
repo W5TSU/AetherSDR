@@ -5199,6 +5199,35 @@ bool RadioModel::requestPanDisplayRates(const QString& panId, int fps,
     return sent;
 }
 
+bool RadioModel::requestPanAverage(const QString& panId, int frames, bool weighted)
+{
+    if (panId.isEmpty())
+        return false;
+
+    // A backend that streams raw spectra runs the trace average in its own FFT
+    // stage — there is no radio-side display engine and no status echo, so the
+    // client is the authority. Route the pair straight to the backend; the pan
+    // model does not carry averaging (it is radio-owned on the Flex, per
+    // #4261), so there is nothing to mirror here.
+    if (shapesDisplayRatesLocally()) {
+        if (!m_backend)
+            return false;
+        m_backend->setPanAverage(backendPanIdFor(panId), frames, weighted);
+        return true;
+    }
+
+    // Flex: firmware runs the average and echoes the level back in pan status.
+    // Both halves go as wire text — the seam carries the pair, so a change to
+    // either re-sends both; the commands are idempotent.
+    bool sent = sendCommand(
+        QString("display pan set %1 average=%2").arg(panId).arg(frames));
+    sent = sendCommand(QString("display pan set %1 weighted_average=%2")
+                           .arg(panId)
+                           .arg(weighted ? 1 : 0))
+           || sent;
+    return sent;
+}
+
 bool RadioModel::requestPanBand(const QString& panId, const QString& bandKey)
 {
     if (panId.isEmpty() || bandKey.isEmpty()) {

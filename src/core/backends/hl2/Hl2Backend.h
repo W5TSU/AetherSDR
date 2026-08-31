@@ -88,6 +88,7 @@ private:
 
 public:
     void setPanFrameRate(const QString& panId, int fps) override;
+    void setPanAverage(const QString& panId, int frames, bool weighted) override;
     bool createPanadapter() override;
     bool removePanadapter(const QString& panId) override;
     void createNotch(double centerHz, double widthHz) override;

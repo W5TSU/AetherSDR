@@ -2016,6 +2016,7 @@ Panadapter lifecycle — create or tear down a pan regardless of how it was open
 | `rfgain` | `[<panId>] <dB>` | set the front-end RF/LNA gain. On a radio-wide preamp (the HL2's single AD9866 behind every DDC) the change reaches every pan; the optional `panId` addresses one where the backend supports it. |
 | `span` | `[<panId>] <MHz>` | set the panadapter span. The backend snaps the request to its nearest achievable width and echoes what it took via `panCenterBandwidthChanged`. |
 | `rate` | `[<panId>] <fps> <wfRate>` | set the Display→FFT FPS and Display→Waterfall Rate (1–100) for a pan — the pair `requestPanDisplayRates()` carries. |
+| `average` | `[<panId>] <frames> <weighted>` | set the Display→FFT AVG level (`frames`; `0`/`1` = off) and weighted-average toggle (`weighted`: `1`/`true`/`on`/`weighted` → dB-domain EMA, else boxcar mean) — the pair `requestPanAverage()` carries. On a Flex this goes out as `display pan set` wire text; on a raw-spectrum backend (HL2) it reaches the engine's own FFT stage, which holds it across a sample-rate rebuild. |
 | `float` / `dock` | `<panId>` / `<index>` / `active` | undock / redock the pan via `PanadapterStack`'s real reparent path (#2495/#4319/#4617/#4864); re-poll `layout get` for `floatingCount` / `dockedCount`. |
 
 All lifecycle actions are async (the radio echoes the change) — re-poll
@@ -3820,7 +3821,7 @@ The complete registry, generated from the `add(...)` table in `AutomationServer.
 | `sim` | — | sim <swr\|dropslice\|stallscope\|disconnect\|malformed\|clear> [arg] — demo fault injection (RFC #4288; only valid when the demo is connected) |
 | `record` | — | record <start\|stop\|status\|path\|dir> [args] |
 | `testtone` | — | testtone <on\|off> [freqHz levelDb] |
-| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|span\|rate\|float\|dock> [value] — span <[panId] MHz>, rate <[panId] fps wfRate>; float/dock drive PanadapterStack's real reparent path (#4864) |
+| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|span\|rate\|average\|float\|dock> [value] — span <[panId] MHz>, rate <[panId] fps wfRate>, average <[panId] frames weighted>; float/dock drive PanadapterStack's real reparent path (#4864) |
 | `workspace` | — | workspace <status\|enable\|disable\|edit\|place\|list\|switch\|create\|bind\|import-floats\|pan-layout\|palette\|window\|move\|add> — the canvas, its workspaces and its extra windows as data; arg shapes in docs/automation-bridge.md (#4887 ph4/ph6/ph7) |
 | `layout` | — | layout <rearrange <id>\|get> — splitter layout exerciser |
 | `scale` | — | scale [pct] — report/persist the UI scale factor |

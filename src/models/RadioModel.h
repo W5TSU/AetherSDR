@@ -876,6 +876,16 @@ public:
     // fast — NOT the milliseconds its Flex wire name (`line_duration`) claims.
     // See core/WaterfallRate.h. (#4606)
     bool requestPanDisplayRates(const QString& panId, int fps, int wfRate);
+
+    // The operator's Display → FFT AVG level (`frames`; 0/1 = off) and
+    // weighted-average toggle, for a specific pan. On a Flex this is
+    // radio-authoritative — the firmware runs the average and echoes the level
+    // back — so it goes out as wire text. On a backend that streams raw spectra
+    // there is no such engine and no echo: the client is the authority, and the
+    // pair is routed to the backend's own FFT stage via IRadioBackend::
+    // setPanAverage. Mirrors requestPanDisplayRates' split. Returns true when
+    // the intent was applied or dispatched.
+    bool requestPanAverage(const QString& panId, int frames, bool weighted);
     bool requestPanBand(const QString& panId, const QString& bandKey);
 
     // Retune a slice on behalf of the CAT servers (rigctld / SmartCAT) so a band

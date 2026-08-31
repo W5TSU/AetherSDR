@@ -120,6 +120,14 @@ public:
     // holds across a sample-rate change without needing to be recomputed.
     Q_INVOKABLE void setSpectrumRateFps(int fps);
 
+    // Panadapter trace averaging — the operator's Display → FFT AVG level and
+    // weighted-average toggle. Forwarded straight to Hl2Spectrum; frames <= 1
+    // disables it, weighted picks the dB-domain EMA over the boxcar. Kept as
+    // members (NOT in m_config) so configure()'s channel rebuild re-applies the
+    // operator's choice rather than snapping back to unaveraged on a rate
+    // change — see the replay right after m_spectrum is recreated in configure().
+    Q_INVOKABLE void setSpectrumAveraging(int frames, bool weighted);
+
     // Impulse noise blanker, on the raw IQ ahead of the demodulator.
     //
     // THE ONLY NOISE BLANKER THIS RADIO HAS. The HL2 ships raw IQ and runs no
@@ -381,6 +389,11 @@ private:
     int m_spectrumIntervalMs = 0;
     QElapsedTimer m_spectrumClock;
     qint64 m_lastSpectrumMs = 0;
+    // Panadapter trace-averaging request. Out of m_config, like the NB state, so
+    // configure() cannot clear it; replayed onto the fresh Hl2Spectrum a rebuild
+    // creates. 1 = unaveraged.
+    int m_spectrumAvgFrames = 1;
+    bool m_spectrumAvgWeighted = true;
     std::vector<std::complex<float>> m_iqBuffer;   // IQ awaiting a full DSP block
     // Wire IQ conjugated into the analytic convention, for the SPECTRUM only —
     // the demodulator takes the raw wire. A member rather than a local: this
