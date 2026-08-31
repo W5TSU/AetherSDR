@@ -98,6 +98,71 @@ void Hl2Spectrum::computeFrame(std::vector<float>& binsDbfs)
         binsDbfs[static_cast<std::size_t>(k)] =
             static_cast<float>(20.0 * std::log10(mag + 1e-12));
     }
+
+    applyAveraging(binsDbfs);
+}
+
+void Hl2Spectrum::setAveraging(int frames, bool weighted) noexcept
+{
+    const int f = frames < 1 ? 1 : frames;
+    if (f == m_avgFrames && weighted == m_avgWeighted) {
+        return;
+    }
+    m_avgFrames = f;
+    m_avgWeighted = weighted;
+    // A window-length or mode change starts a fresh average rather than
+    // blending the old shape into the new one.
+    m_avgEma.clear();
+    m_avgHistory.clear();
+    m_avgSum.clear();
+}
+
+void Hl2Spectrum::applyAveraging(std::vector<float>& binsDbfs)
+{
+    if (m_avgFrames <= 1) {
+        return;   // stage bypassed — binsDbfs is the bare single-frame trace
+    }
+
+    const std::size_t n = binsDbfs.size();
+
+    if (m_avgWeighted) {
+        // dB-domain EMA. Seed from the first frame so the trace does not have
+        // to crawl up from silence over the first time constant.
+        if (m_avgEma.size() != n) {
+            m_avgEma.assign(binsDbfs.begin(), binsDbfs.end());
+        } else {
+            const double alpha = 2.0 / (m_avgFrames + 1);
+            for (std::size_t k = 0; k < n; ++k) {
+                m_avgEma[k] += alpha * (static_cast<double>(binsDbfs[k]) - m_avgEma[k]);
+            }
+        }
+        for (std::size_t k = 0; k < n; ++k) {
+            binsDbfs[k] = static_cast<float>(m_avgEma[k]);
+        }
+        return;
+    }
+
+    // Boxcar: arithmetic mean of the last m_avgFrames traces, kept as a running
+    // per-bin sum so each frame is O(n) rather than O(n * frames).
+    if (m_avgSum.size() != n) {
+        m_avgSum.assign(n, 0.0);
+        m_avgHistory.clear();
+    }
+    m_avgHistory.push_back(binsDbfs);
+    for (std::size_t k = 0; k < n; ++k) {
+        m_avgSum[k] += static_cast<double>(binsDbfs[k]);
+    }
+    while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
+        const std::vector<float>& oldest = m_avgHistory.front();
+        for (std::size_t k = 0; k < n; ++k) {
+            m_avgSum[k] -= static_cast<double>(oldest[k]);
+        }
+        m_avgHistory.pop_front();
+    }
+    const double inv = 1.0 / static_cast<double>(m_avgHistory.size());
+    for (std::size_t k = 0; k < n; ++k) {
+        binsDbfs[k] = static_cast<float>(m_avgSum[k] * inv);
+    }
 }
 
 }  // namespace AetherSDR::hl2

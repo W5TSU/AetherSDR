@@ -2,6 +2,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <deque>
 #include <span>
 #include <vector>
 
@@ -49,17 +50,50 @@ public:
     // emit another frame).
     void accumulate(std::span<const std::complex<float>> iq);
 
-    // Drop whatever partial frame has accumulated. Used on a geometry change,
-    // where the samples either side genuinely describe different windows.
-    void reset() noexcept { m_acc.clear(); }
+    // Trace averaging across frames (Plan 3). Mirrors the operator's
+    // Display → FFT AVG level and weighted-average toggle: a Flex runs this in
+    // firmware and echoes the level back through pan status, and a raw-IQ
+    // backend that streams its own spectra runs it here instead.
+    //
+    //   frames <= 1        no averaging — every frame is the bare magnitude
+    //   weighted == true   dB-domain EMA, alpha = 2 / (frames + 1)
+    //   weighted == false  boxcar mean of the last `frames` frame traces
+    //
+    // Averaging is applied to the dBFS trace, not the linear magnitude — it
+    // smooths what the operator sees, the same trace-average a spectrum
+    // analyser's video averaging produces. Changing either argument clears the
+    // accumulator (a level or mode change must not blend two window lengths).
+    // Never touches the FFT plan, size, or the partial-frame buffer.
+    void setAveraging(int frames, bool weighted) noexcept;
+
+    // Drop whatever partial frame has accumulated, and the averaging history.
+    // Used on a geometry change, where the samples either side — and the frames
+    // either side — genuinely describe different windows.
+    void reset() noexcept
+    {
+        m_acc.clear();
+        m_avgEma.clear();
+        m_avgHistory.clear();
+        m_avgSum.clear();
+    }
 
 private:
     void computeFrame(std::vector<float>& binsDbfs);
+    // Fold the just-computed raw dBFS trace through the averaging stage,
+    // rewriting binsDbfs in place. A no-op when m_avgFrames <= 1.
+    void applyAveraging(std::vector<float>& binsDbfs);
 
     int m_fftSize;
     std::vector<std::complex<float>> m_acc;   // accumulation buffer (< m_fftSize)
     std::vector<double> m_window;             // Hanning window
     double m_coherentGain = 1.0;              // sum(window) / 2
+
+    // Averaging state. m_avgFrames <= 1 means the stage is bypassed entirely.
+    int m_avgFrames = 1;
+    bool m_avgWeighted = true;
+    std::vector<double> m_avgEma;             // weighted: running EMA, per bin
+    std::deque<std::vector<float>> m_avgHistory;  // boxcar: last m_avgFrames traces
+    std::vector<double> m_avgSum;             // boxcar: running per-bin sum of m_avgHistory
     // Opaque FFTW handles (kept as void* so fftw3.h stays out of the header).
     void* m_in = nullptr;                     // fftw_complex[m_fftSize]
     void* m_out = nullptr;                     // fftw_complex[m_fftSize]

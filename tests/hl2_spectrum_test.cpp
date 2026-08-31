@@ -3,6 +3,12 @@
 // fftshifted bin, DC lands at the centre bin, partial frames accumulate across
 // calls, and a large DC offset (the direct-sampling ADC bias) is removed so it
 // does not swamp a real tone — mirroring the tools/hl2/spectrum.py behavior.
+//
+// Plan 3 adds frame averaging: setAveraging(1, *) is a passthrough, an
+// unweighted boxcar is the arithmetic mean of the last k frame traces (dB),
+// a weighted EMA steps monotonically toward a new level and settles there,
+// switching averaging mid-stream never resizes or restarts the FFT, and
+// reset() drops the averaging history.
 
 #include "core/backends/hl2/Hl2Spectrum.h"
 
@@ -95,6 +101,134 @@ int main()
         check(peak == (20 + half) % N, "tone peak survives a large DC offset (DC removed)");
         check(bins[static_cast<std::size_t>(half)] < bins[static_cast<std::size_t>(peak)],
               "centre (DC) bin is below the tone after DC removal");
+    }
+
+    // ==== Plan 3: frame averaging ==========================================
+
+    // The single-frame (unaveraged) dBFS value at a tone's fftshifted peak bin.
+    auto rawPeakDb = [&](int k0, float amp) {
+        Hl2Spectrum s(N);
+        std::vector<float> b;
+        s.process(tone(N, k0, amp), b);
+        return b[static_cast<std::size_t>((k0 + half) % N)];
+    };
+
+    // ---- setAveraging(1, *) is a bit-for-bit passthrough ----
+    {
+        Hl2Spectrum plain(N);
+        Hl2Spectrum avg1(N);
+        avg1.setAveraging(1, true);   // frames <= 1 -> no averaging at all
+        std::vector<float> a, b;
+        plain.process(tone(N, 12, 0.5f), a);
+        avg1.process(tone(N, 12, 0.5f), b);
+        check(a.size() == b.size(), "avg(1): same bin count as unaveraged");
+        bool same = a.size() == b.size();
+        for (std::size_t i = 0; same && i < a.size(); ++i) {
+            if (std::fabs(a[i] - b[i]) > 1e-4f) {
+                same = false;
+            }
+        }
+        check(same, "setAveraging(1) is identical to the single-frame spectrum");
+    }
+
+    // ---- unweighted boxcar: output is the mean of the last k frame traces ----
+    {
+        constexpr int K = 4;
+        constexpr int k0 = 9;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setAveraging(K, false);
+        std::vector<float> bins;
+        for (int f = 0; f < K - 1; ++f) {
+            s.process(tone(N, k0, 0.5f), bins);   // K-1 frames at -6 dBFS
+        }
+        s.process(tone(N, k0, 0.05f), bins);      // one frame ~20 dB down
+        const float hi = rawPeakDb(k0, 0.5f);
+        const float lo = rawPeakDb(k0, 0.05f);
+        const float expected = ((K - 1) * hi + lo) / K;
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - expected) < 0.05f,
+              "boxcar output is the arithmetic mean of the last k frame values");
+    }
+
+    // ---- boxcar of a steady tone equals that tone's single-frame value ----
+    {
+        constexpr int K = 8;
+        constexpr int k0 = 15;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setAveraging(K, false);
+        std::vector<float> bins;
+        for (int f = 0; f < 4 * K; ++f) {
+            s.process(tone(N, k0, 0.3f), bins);
+        }
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - rawPeakDb(k0, 0.3f)) < 1e-3f,
+              "a steady tone through the boxcar reaches the single-frame value");
+    }
+
+    // ---- weighted EMA: converge, then a monotone partway step to a new level ----
+    {
+        constexpr int K = 10;
+        constexpr int k0 = 11;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setAveraging(K, true);                  // EMA, alpha = 2 / (K + 1)
+        std::vector<float> bins;
+        for (int f = 0; f < 200; ++f) {
+            s.process(tone(N, k0, 0.5f), bins);
+        }
+        const float hi = rawPeakDb(k0, 0.5f);
+        const float lo = rawPeakDb(k0, 0.05f);
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - hi) < 0.2f,
+              "EMA converges to a steady tone's single-frame value");
+        float prev = bins[static_cast<std::size_t>(pk)];
+        bool monotoneDown = true;
+        for (int f = 0; f < K; ++f) {
+            s.process(tone(N, k0, 0.05f), bins);
+            const float cur = bins[static_cast<std::size_t>(pk)];
+            if (cur > prev + 1e-3f) {
+                monotoneDown = false;
+            }
+            prev = cur;
+        }
+        check(monotoneDown, "EMA steps monotonically toward a lower level");
+        check(prev < hi - 0.3f * (hi - lo) && prev > lo + 0.05f * (hi - lo),
+              "after k frames the EMA is partway to the new level, not snapped");
+        for (int f = 0; f < 400; ++f) {
+            s.process(tone(N, k0, 0.05f), bins);
+        }
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - lo) < 0.2f,
+              "EMA eventually settles at the new level");
+    }
+
+    // ---- switching averaging at runtime never resizes or restarts the FFT ----
+    {
+        Hl2Spectrum s(N);
+        std::vector<float> bins;
+        s.process(tone(N, 8, 0.4f), bins);
+        check(s.fftSize() == N, "fftSize is N before setAveraging");
+        s.setAveraging(6, true);
+        check(s.fftSize() == N, "fftSize is unchanged after setAveraging");
+        const int frames = s.process(tone(N, 8, 0.4f), bins);
+        check(frames == 1 && bins.size() == static_cast<std::size_t>(N),
+              "a full-size frame still comes out right after switching averaging");
+        check(argmax(bins) == (8 + half) % N,
+              "the tone still decodes after switching averaging mid-stream");
+    }
+
+    // ---- reset() drops the averaging history ----
+    {
+        constexpr int k0 = 13;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setAveraging(8, false);
+        std::vector<float> bins;
+        for (int f = 0; f < 8; ++f) {
+            s.process(tone(N, k0, 0.5f), bins);   // fill the boxcar at -6 dBFS
+        }
+        s.reset();
+        s.process(tone(N, k0, 0.05f), bins);      // one low frame after the reset
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - rawPeakDb(k0, 0.05f)) < 0.05f,
+              "reset() clears the averaging history — the next frame is unaveraged");
     }
 
     if (g_failures == 0)
