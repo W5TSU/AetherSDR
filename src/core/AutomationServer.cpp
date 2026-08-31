@@ -1263,6 +1263,13 @@ QString panActionList()
         "create|add|remove|close|center|rfgain|span|rate|float|dock");
 }
 
+// Likewise for audioCapture; doAudioCapture()'s fallthrough error reads this.
+QString audioCaptureActionList()
+{
+    return QStringLiteral(
+        "start|stop|status|read|analyze|probeNr2Stereo|probeDspStereo");
+}
+
 QJsonObject err(const QString& msg)
 {
     return QJsonObject{{QStringLiteral("ok"), false},
@@ -11913,8 +11920,8 @@ QJsonObject AutomationServer::doAudioCapture(const QString& action,
         return m_audioEngine->automationAudioCaptureAnalyze(arg);
     }
 
-    return err(QStringLiteral("audioCapture action must be start, stop, status, read, "
-                              "analyze, probeNr2Stereo, or probeDspStereo"));
+    return err(QStringLiteral("unknown audioCapture action: ") + normalizedAction
+               + QStringLiteral(" (") + audioCaptureActionList() + QStringLiteral(")"));
 }
 
 QJsonObject AutomationServer::doWhoami() const
