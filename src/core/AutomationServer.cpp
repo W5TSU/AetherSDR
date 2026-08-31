@@ -3405,7 +3405,7 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
             });
 
         add("audioCapture", {},
-            "audioCapture <start|stop|status|read|probeNr2Stereo|probeDspStereo> [args] — RN2 probe accepts rate=Legacy24k|Native48k output=PreserveRxStereo|ProcessedMono blocks=<frames,...>",
+            "audioCapture <start|stop|status|read|analyze|probeNr2Stereo|probeDspStereo> [args] — analyze <raw|post|output|final> reports dominant tone/level/clip/comb; RN2 probe accepts rate=Legacy24k|Native48k output=PreserveRxStereo|ProcessedMono blocks=<frames,...>",
             parseActionRest,
             [](AutomationServer& s, A& a, QLocalSocket*) {
                 return s.doAudioCapture(a.action.isEmpty() ? QStringLiteral("status")
@@ -11769,8 +11769,12 @@ QJsonObject AutomationServer::doAudioCapture(const QString& action,
     if (normalizedAction == QLatin1String("probedspstereo")) {
         return m_audioEngine->automationDspStereoProbe(arg);
     }
+    if (normalizedAction == QLatin1String("analyze")) {
+        return m_audioEngine->automationAudioCaptureAnalyze(arg);
+    }
 
-    return err(QStringLiteral("audioCapture action must be start, stop, status, read, probeNr2Stereo, or probeDspStereo"));
+    return err(QStringLiteral("audioCapture action must be start, stop, status, read, "
+                              "analyze, probeNr2Stereo, or probeDspStereo"));
 }
 
 QJsonObject AutomationServer::doWhoami() const

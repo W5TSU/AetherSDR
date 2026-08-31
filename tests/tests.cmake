@@ -3349,6 +3349,17 @@ target_link_libraries(automation_rn2_probe_test PRIVATE
 )
 add_test(NAME automation_rn2_probe_test COMMAND automation_rn2_probe_test)
 
+# `audioCapture analyze <tap>` — AudioMetrics over the captured PCM, surfaced
+# as a bridge verb so a pitch/level/clip/comb regression is one call.
+add_executable(automation_audio_analyze_test
+    tests/automation_audio_analyze_test.cpp
+)
+target_include_directories(automation_audio_analyze_test PRIVATE src)
+target_link_libraries(automation_audio_analyze_test PRIVATE
+    aethercore Qt6::Core Qt6::Network
+)
+add_test(NAME automation_audio_analyze_test COMMAND automation_audio_analyze_test)
+
 add_executable(aetherclock_model_test tests/aetherclock_model_test.cpp)
 target_include_directories(aetherclock_model_test PRIVATE src)
 target_link_libraries(aetherclock_model_test PRIVATE aethercore Qt6::Core Qt6::Test)

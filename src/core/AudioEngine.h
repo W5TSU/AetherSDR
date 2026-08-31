@@ -195,6 +195,11 @@ public:
     QJsonObject automationAudioCaptureSnapshot(bool includePcm) const;
     QJsonObject automationNr2StereoProbe() const;
     QJsonObject automationDspStereoProbe(const QString& mode) const;
+    // Analyse the audio captured at one tap ("raw"/"post"/"output"/"final", or
+    // empty for every tap) from the most recent audioCapture run: dominant
+    // tone(s), peak, RMS dBFS, clipped-sample fraction and comb spacing. Turns
+    // an audio-quality assertion into one bridge call (HERMES.md §8).
+    QJsonObject automationAudioCaptureAnalyze(const QString& tap) const;
 
     // Client-side PC mic gain (0-100 → 0.0-1.0, applied before Opus encoding)
     void setPcMicGain(int level) { m_pcMicGain.store(qBound(0, level, 100) / 100.0f); }
