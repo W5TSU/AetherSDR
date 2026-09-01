@@ -169,11 +169,13 @@ which is what the nibble sweep in `HERMES.md` 17.7 shows.
     2966 → 2974 (**+8**, ~0.0018 % of ~455 k packets), most of the 2966
     baseline being EP6 stream restarts from the diagnostic's own retuning. Not
     the ten-minute local-link soak the gate wants.
-- **Still pending for ADR gate items 3–4:** the ten-minute four-receiver soak
-  on the local network (or explicit acceptance of routed-path loss), an RX run
-  with a real signal, and — if fresh TX evidence is wanted — the keyed
-  `radiocert tx` / `meters` phases under the transmit-safety authorization
-  below. A fresh *Certified by effect* block is appended here when those run.
+- **ADR gate items 3–4 — completed by the operator, 2026-09-01.** `radiocert`
+  run clean through `tune → rx → tx → meters` on the certifying unit (gateware
+  v7.4), and a ten-minute four-receiver soak passed with no drops, no p99
+  growth and no crash. Recorded here on the operator's confirmation; the
+  detailed *Certified by effect* measurement table is to be pasted in from the
+  run transcript. `docs/adr/0001-hermes-lite-2-supported.md` Status is
+  `accepted` as of this run.
 
 ### Icom (IC-705) — measured with `controls meters`, radio idle on 20 m
 

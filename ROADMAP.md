@@ -57,9 +57,11 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   cycle — a cross-top-level reparent is the #2495/#4617/#4319 crash lineage, so
   moves go through one deliberate menu path for now), and field time on real
   stations against the Classic shell.
-- **Hermes-Lite 2 — from experimental to supported** — **the promotion work is
-  done and the `experimental` label is off; final hardware certification on
-  gateware v7.4 is the last gate before it ships in a release.** The backend
+- **Hermes-Lite 2 — from experimental to supported** — **done.** The
+  `experimental` label is off; hardware certification on gateware v7.4
+  (`radiocert` tune→rx→tx→meters + a ten-minute four-receiver soak) passed
+  2026-09-01, and `docs/adr/0001-hermes-lite-2-supported.md` is `accepted`.
+  Ships in the next release. The backend
   arrived experimental in v26.7.4 and grew to parity through v26.8.x (four
   receivers, the SSB voice chain, decoders, packet, band switching, memory,
   operating-state restore, NB, a real CW BFO, restart-surviving AGC). This

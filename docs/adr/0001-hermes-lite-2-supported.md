@@ -1,22 +1,30 @@
 # 0001 — Hermes-Lite 2 promoted from experimental to supported
 
-**Status:** proposed
+**Status:** accepted (2026-09-01)
 
-> **Gate progress (updated as the milestone lands):**
-> - Plans 1–4 implemented on `feat/hl2-supported-groundwork` (verification
->   verbs; RTTY/DFM + authoritative mode list; panadapter trace averaging;
->   DSP-chain hardening). Plan 5.1 (resampling affordance) and 5.2 (HERMES.md
->   de-drift) done.
+> **Gate progress:**
+> - Plans 1–5 implemented on `feat/hl2-supported-groundwork` (verification
+>   verbs; RTTY/DFM + authoritative mode list; panadapter trace averaging +
+>   peak detector; DSP-chain hardening; resampling affordance; HERMES.md
+>   de-drift; `experimental` descriptor dropped). Offline suite green on
+>   Linux/macOS/Windows (PR #2).
 > - **Certifying unit gateware recorded: v7.4** — Metis discovery reply from
->   `100.117.237.246`, MAC `00:1C:C0:A2:02:01`, board `0x06`, idle, 2026-08-31.
+>   `100.117.237.246`, MAC `00:1C:C0:A2:02:01`, board `0x06`, 2026-08-31.
 >   The version byte is `0x4A` = 74 decimal; the app reports it as `"74"` and
 >   `tools/hl2/discover.py` as `"7.4"` — the same value, and the same version
 >   the 2026-08-10 TX-meter certification ran against, so no gateware-dependent
 >   re-check (drive-nibble decode, `0x0e` dual meaning, discovery `0x13`) is
 >   triggered.
-> - **Still open before Status → accepted:** the deviations in *Scope
->   deviations* below need the project lead's sign-off or implementation; a
->   `radiocert` run and the four-receiver soak on hardware (gate items 3–4).
+> - **Gate items 3–4 (`radiocert` tune → rx → tx → meters + the ten-minute
+>   four-receiver soak) completed on hardware by the operator, 2026-09-01.**
+>   The detailed *Certified by effect* block is appended to
+>   `docs/radio-certification.md` from the run transcript.
+> - **Bin-count deferral (Scope deviation 2): signed off by the project lead,
+>   2026-09-01** — span-following FFT bin count stays a named fast-follow.
+> - Remaining follow-up (does NOT gate the label, tracked separately): run
+>   `tools/hl2_multi_ddc_parity.py` at 1 and 4 receivers to close the
+>   multi-DDC matrix rows; file the fast-follow issues (off-thread rebuild,
+>   FreeDV/RADE, bin count).
 
 ## Context
 
@@ -111,9 +119,8 @@ Two items in the *Decision*'s panadapter-parity bullet were tracked separately.
    every zoom.
 
 **Disposition:** (1) is delivered. (2) is a named fast-follow alongside
-FreeDV/RADE and the off-thread rebuild — accepted on the spec's own "not FFT
-size" reasoning. The project lead's sign-off on deferring (2) is the remaining
-governance step for this deviation (per the *Promotion gate* line).
+FreeDV/RADE and the off-thread rebuild — deferred on the spec's own "not FFT
+size" reasoning. **Signed off by the project lead, 2026-09-01.**
 
 ## Considered options
 
