@@ -2803,6 +2803,11 @@ void Hl2Backend::applyPanBandwidth(double hz)
 
     m_sampleRateHz = rate;
 
+    // Put up the "Resampling…" affordance before the blocking rebuild below.
+    // Raised here, on the GUI thread, so the consumer's forced repaint lands
+    // before the freeze; cleared on every path out of the rebuild.
+    emit resamplingChanged(true);
+
     // The DDC rate lives in the config register (C0=0x00), latched into the next
     // C&C round. Deliberately NOT followed by a filter-pipeline reset: sending
     // 0x39 on every geometry change is what wedged a board hard enough to need a
@@ -2903,10 +2908,13 @@ void Hl2Backend::applyPanBandwidth(double hz)
                     Qt::QueuedConnection,
                     Q_ARG(AetherSDR::hl2::SampleRate,
                           sampleRateEnum(previousRate)));
+            emit resamplingChanged(false);
             emitAllPanState();
             return;
         }
     }
+
+    emit resamplingChanged(false);
 
     // Remember it. The span is the operator's deliberate choice about how much
     // network and CPU this radio may consume, so it survives the session rather

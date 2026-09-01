@@ -842,6 +842,16 @@ signals:
     // receive can never report its own silence.
     void linkStatsUpdated(const IRadioBackend::LinkStats& stats);
 
+    // The backend is rebuilding the receive chain in place and the UI is about
+    // to be unresponsive for it. Raised true immediately before the blocking
+    // work and false immediately after, on the GUI thread, so a consumer can
+    // put up a transient "resampling…" affordance instead of a bare frozen
+    // window (issue #1 story 21; the only emitter today is the HL2 span change
+    // that crosses one of the four DDC-rate boundaries — 0.6–1.1 s with four
+    // panadapters open, HERMES.md §22.4). A backend that rebuilds off-thread
+    // never emits this.
+    void resamplingChanged(bool active);
+
     // ---- vendor-extension replies UP (correlate to invokeExtension) ----
     // The async result of an invokeExtension() call, keyed by the caller's
     // requestId. A backend that completes locally may emit this synchronously;
