@@ -4891,13 +4891,14 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
                                                 m_telemetryClock.elapsed());
         if (d.log) {
             if (d.suppressedSinceLast > 0) {
-                qWarning().nospace()
+                qCWarning(lcHl2).nospace()
                     << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate ("
                     << d.suppressedSinceLast
                     << " further edge(s) suppressed in the last "
                     << AdcOverloadLogGate::kCooldownMs << " ms)";
             } else {
-                qWarning() << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
+                qCWarning(lcHl2)
+                    << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
             }
         }
     }
