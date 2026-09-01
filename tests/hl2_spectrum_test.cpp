@@ -269,7 +269,60 @@ int main()
               "boxcar averaging shrinks the noise-floor bin's frame-to-frame stddev");
     }
 
-    // ---- reset() drops the averaging history ----
+    // ---- peak detector: infinite max-hold (averaging factor <= 1) ----
+    {
+        constexpr int k0 = 12;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setPeakHold(true);                       // frames stays 1 -> infinite hold
+        std::vector<float> bins;
+        s.process(tone(N, k0, 0.05f), bins);       // a quiet frame first
+        const float low = bins[static_cast<std::size_t>(pk)];
+        s.process(tone(N, k0, 0.5f), bins);        // then a loud one — peak jumps up
+        const float high = bins[static_cast<std::size_t>(pk)];
+        check(high > low + 10.0f, "max-hold rises to a louder frame");
+        s.process(tone(N, k0, 0.05f), bins);       // quiet again — peak must NOT fall
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - high) < 1e-3f,
+              "max-hold holds the peak when the signal drops");
+        check(bins[static_cast<std::size_t>(pk)] >= rawPeakDb(k0, 0.5f) - 0.05f,
+              "the held value is the loud frame's single-frame level");
+    }
+
+    // ---- peak detector: sliding window (averaging factor N) ages a peak out ----
+    {
+        constexpr int K = 5;
+        constexpr int k0 = 14;
+        const int pk = (k0 + half) % N;
+        Hl2Spectrum s(N);
+        s.setAveraging(K, false);
+        s.setPeakHold(true);                       // windowed max over K frames
+        std::vector<float> bins;
+        s.process(tone(N, k0, 0.5f), bins);        // one loud frame
+        for (int f = 0; f < K - 1; ++f) {
+            s.process(tone(N, k0, 0.05f), bins);   // K-1 quiet frames — loud still in window
+        }
+        check(bins[static_cast<std::size_t>(pk)] >= rawPeakDb(k0, 0.5f) - 0.05f,
+              "windowed peak still shows the loud frame while it is in the window");
+        s.process(tone(N, k0, 0.05f), bins);       // one more — the loud frame ages out
+        check(bins[static_cast<std::size_t>(pk)] < rawPeakDb(k0, 0.5f) - 10.0f,
+              "windowed peak drops once the loud frame leaves the window");
+    }
+
+    // ---- setPeakHold(false) returns the stage to sample / average ----
+    {
+        Hl2Spectrum s(N);
+        s.setPeakHold(true);
+        std::vector<float> bins;
+        s.process(tone(N, 9, 0.5f), bins);
+        s.process(tone(N, 9, 0.02f), bins);        // held high
+        s.setPeakHold(false);                      // back to sample (frames == 1)
+        s.process(tone(N, 9, 0.02f), bins);
+        check(std::fabs(bins[static_cast<std::size_t>((9 + half) % N)]
+                        - rawPeakDb(9, 0.02f)) < 0.05f,
+              "clearing peak-hold returns the bare single-frame trace");
+    }
+
+    // ---- reset() drops the detector history (average and held peak) ----
     {
         constexpr int k0 = 13;
         const int pk = (k0 + half) % N;
@@ -283,6 +336,15 @@ int main()
         s.process(tone(N, k0, 0.05f), bins);      // one low frame after the reset
         check(std::fabs(bins[static_cast<std::size_t>(pk)] - rawPeakDb(k0, 0.05f)) < 0.05f,
               "reset() clears the averaging history — the next frame is unaveraged");
+
+        // and the held peak
+        Hl2Spectrum p(N);
+        p.setPeakHold(true);
+        p.process(tone(N, k0, 0.5f), bins);       // hold a loud peak
+        p.reset();
+        p.process(tone(N, k0, 0.05f), bins);
+        check(std::fabs(bins[static_cast<std::size_t>(pk)] - rawPeakDb(k0, 0.05f)) < 0.05f,
+              "reset() clears the held peak — the next frame starts a fresh hold");
     }
 
     if (g_failures == 0)

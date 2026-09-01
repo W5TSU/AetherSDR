@@ -273,6 +273,17 @@ public:
         Q_UNUSED(weighted);
     }
 
+    // The operator's Display → FFT PEAK (max-hold) detector toggle. The third
+    // spectrum-analyser detector mode alongside sample and average (issue #1
+    // story 6). A Flex panadapter has no wire parameter for it; a backend that
+    // shapes its own spectra runs the max-hold in its FFT stage, with the
+    // FFT AVG level as the hold window. Default no-op.
+    virtual void setPanPeakHold(const QString& panId, bool on)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(on);
+    }
+
     // ---- per-slice audio ----
     //
     // A Flex mixes its slices ON THE RADIO, so these are wire commands to it and

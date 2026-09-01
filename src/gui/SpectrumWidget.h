@@ -492,6 +492,9 @@ public:
     void setFftAverage(int frames);
     void setFftWeightedAvg(bool on);
     void setFftFps(int fps);
+    // Peak (max-hold) detector. Local view only, like the setters above; the
+    // control is shown only on a backend that shapes its own spectra.
+    void setFftPeakHold(bool on);
     void setFftFillAlpha(float a);
     void setFftFillColor(const QColor& c);
     void setFftLineColor(const QColor& c);
@@ -511,6 +514,7 @@ public:
     int   fftAverage() const           { return m_fftAverage; }
     int   fftFps() const               { return m_fftFps; }
     bool  fftWeightedAvg() const       { return m_fftWeightedAvg; }
+    bool  fftPeakHold() const          { return m_fftPeakHold; }
     bool panDragActive() const { return m_draggingPan; }
     bool frequencyRangeGestureActive() const
     {
@@ -1477,6 +1481,7 @@ private:
     int   m_panIndex{0};             // per-pan settings index (0, 1, 2, 3)
     int   m_fftAverage{0};           // 0=off, 1-10 frames
     bool  m_fftWeightedAvg{false};
+    bool  m_fftPeakHold{false};      // max-hold detector (local-shaping backends)
     int   m_fftFps{25};
     float m_fftFillAlpha{0.70f};     // client-side fill opacity (0-1)
     QColor m_fftFillColor{0x00, 0xe5, 0xff};  // client-side fill color (default cyan)

@@ -886,6 +886,13 @@ public:
     // setPanAverage. Mirrors requestPanDisplayRates' split. Returns true when
     // the intent was applied or dispatched.
     bool requestPanAverage(const QString& panId, int frames, bool weighted);
+
+    // The operator's Display → FFT PEAK (max-hold) detector toggle for a pan.
+    // A Flex panadapter has no wire parameter for this, so on a Flex it is
+    // simply unsupported (returns false); on a backend that shapes its own
+    // spectra it routes to IRadioBackend::setPanPeakHold. Returns true when the
+    // intent was dispatched.
+    bool requestPanPeakHold(const QString& panId, bool on);
     bool requestPanBand(const QString& panId, const QString& bandKey);
 
     // Retune a slice on behalf of the CAT servers (rigctld / SmartCAT) so a band

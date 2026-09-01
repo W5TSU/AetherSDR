@@ -1726,9 +1726,15 @@ void SpectrumOverlayMenu::buildDisplayPanel()
         makeToggle("Heat Map", m_heatMapBtn);
         makeToggle("Grid", m_showGridBtn, true);
         makeToggle("Wt Avg", m_weightedAvgBtn);
+        makeToggle("Peak", m_peakHoldBtn);
         m_heatMapBtn->setObjectName("displayHeatMapBtn");
         m_showGridBtn->setObjectName("displayShowGridBtn");
         m_weightedAvgBtn->setObjectName("displayWeightedAvgBtn");
+        m_peakHoldBtn->setObjectName("displayPeakHoldBtn");
+        // Max-hold is only wired on a backend that shapes its own spectra
+        // (HL2). setRadioSideDspAvailable() shows it there; hidden until then so
+        // a Flex never gets a control with no wire parameter behind it.
+        m_peakHoldBtn->setVisible(false);
 
         grid->addWidget(toggleRow, row, 0, 1, 4);
         ++row;
@@ -1741,6 +1747,9 @@ void SpectrumOverlayMenu::buildDisplayPanel()
         });
         connect(m_weightedAvgBtn, &QPushButton::toggled, this, [this](bool on) {
             emit fftWeightedAverageChanged(on);
+        });
+        connect(m_peakHoldBtn, &QPushButton::toggled, this, [this](bool on) {
+            emit fftPeakHoldChanged(on);
         });
     }
 
@@ -2331,6 +2340,7 @@ void SpectrumOverlayMenu::buildDisplayPanel()
     if (m_heatMapBtn) m_heatMapBtn->setToolTip("Colors the spectrum trace by signal strength instead of a single color.");
     if (m_showGridBtn) m_showGridBtn->setToolTip("Show or hide the frequency and dB grid lines on the panadapter.");
     if (m_weightedAvgBtn) m_weightedAvgBtn->setToolTip("Weights recent FFT frames more heavily for faster response to signal changes.");
+    if (m_peakHoldBtn) m_peakHoldBtn->setToolTip("Max-hold: each bin shows its peak over the FFT AVG window (0 = hold until the span changes).");
     m_gainSlider->setToolTip("Waterfall color gain. Higher values brighten weak signals.");
     m_blackSlider->setToolTip("Waterfall black level. Decrease to darken the noise floor.");
     if (m_autoBlackBtn) m_autoBlackBtn->setToolTip("Automatically adjusts the waterfall black level to match the current noise floor.");
@@ -2742,6 +2752,15 @@ void SpectrumOverlayMenu::syncPanProcessingSettings(int avg, int fps,
     m_weightedAvgBtn->setChecked(weightedAvg);
 }
 
+void SpectrumOverlayMenu::syncPeakHold(bool on)
+{
+    if (!m_peakHoldBtn) {
+        return;
+    }
+    const QSignalBlocker block(m_peakHoldBtn);
+    m_peakHoldBtn->setChecked(on);
+}
+
 void SpectrumOverlayMenu::syncDssFloorDepth(int dB)
 {
     if (!m_dssFloorSlider) {
@@ -2857,6 +2876,12 @@ void SpectrumOverlayMenu::setRadioSideDspAvailable(bool available)
 {
     if (m_wnbRow) {
         m_wnbRow->setVisible(available);
+    }
+    // The FFT PEAK (max-hold) detector is the mirror case: it exists only where
+    // the client shapes the spectrum itself, i.e. the radio does NOT run its
+    // own DSP.
+    if (m_peakHoldBtn) {
+        m_peakHoldBtn->setVisible(!available);
     }
 }
 

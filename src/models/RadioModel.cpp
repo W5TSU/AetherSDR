@@ -5230,6 +5230,24 @@ bool RadioModel::requestPanAverage(const QString& panId, int frames, bool weight
     return sent;
 }
 
+bool RadioModel::requestPanPeakHold(const QString& panId, bool on)
+{
+    if (panId.isEmpty()) {
+        return false;
+    }
+    // Local-shaping backend only. A Flex runs no max-hold detector and has no
+    // wire parameter to carry one, so there is nothing to send — the overlay
+    // control is hidden on a Flex (see MainWindow's setRadioSideDspAvailable).
+    if (!shapesDisplayRatesLocally()) {
+        return false;
+    }
+    if (!m_backend) {
+        return false;
+    }
+    m_backend->setPanPeakHold(backendPanIdFor(panId), on);
+    return true;
+}
+
 bool RadioModel::requestPanBand(const QString& panId, const QString& bandKey)
 {
     if (panId.isEmpty() || bandKey.isEmpty()) {

@@ -87,10 +87,12 @@ bool Hl2RxDsp::configure(const Config& config, std::string* error)
         return false;
     m_channel = std::move(channel);
     m_spectrum = std::make_unique<Hl2Spectrum>(config.fftSize);
-    // A rebuild (rate change) makes a fresh Hl2Spectrum with averaging off;
-    // replay the operator's Display → FFT AVG choice so a sample-rate change
-    // does not silently drop them back to an unaveraged trace.
+    // A rebuild (rate change) makes a fresh Hl2Spectrum on the defaults;
+    // replay the operator's Display → FFT AVG / detector choice so a
+    // sample-rate change does not silently drop them back to an unaveraged
+    // trace or out of max-hold.
     m_spectrum->setAveraging(m_spectrumAvgFrames, m_spectrumAvgWeighted);
+    m_spectrum->setPeakHold(m_spectrumPeakHold);
 
     m_iqBuffer.clear();
     m_i.assign(static_cast<std::size_t>(config.dspBlockSize), 0.0f);
@@ -217,6 +219,14 @@ void Hl2RxDsp::setSpectrumAveraging(int frames, bool weighted)
     m_spectrumAvgWeighted = weighted;
     if (m_spectrum) {
         m_spectrum->setAveraging(m_spectrumAvgFrames, m_spectrumAvgWeighted);
+    }
+}
+
+void Hl2RxDsp::setSpectrumPeakHold(bool on)
+{
+    m_spectrumPeakHold = on;
+    if (m_spectrum) {
+        m_spectrum->setPeakHold(on);
     }
 }
 

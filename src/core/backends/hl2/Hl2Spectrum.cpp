@@ -2,6 +2,7 @@
 
 #include <fftw3.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace AetherSDR::hl2 {
@@ -99,7 +100,7 @@ void Hl2Spectrum::computeFrame(std::vector<float>& binsDbfs)
             static_cast<float>(20.0 * std::log10(mag + 1e-12));
     }
 
-    applyAveraging(binsDbfs);
+    applyDetector(binsDbfs);
 }
 
 void Hl2Spectrum::setAveraging(int frames, bool weighted) noexcept
@@ -112,16 +113,61 @@ void Hl2Spectrum::setAveraging(int frames, bool weighted) noexcept
     m_avgWeighted = weighted;
     // A window-length or mode change starts a fresh average rather than
     // blending the old shape into the new one.
-    clearAveraging();
+    clearDetector();
 }
 
-void Hl2Spectrum::applyAveraging(std::vector<float>& binsDbfs)
+void Hl2Spectrum::setPeakHold(bool on) noexcept
 {
-    if (m_avgFrames <= 1) {
-        return;   // stage bypassed — binsDbfs is the bare single-frame trace
+    if (on == m_peakHold) {
+        return;
+    }
+    m_peakHold = on;
+    // Switching detector mode starts fresh — a held peak must not bleed into
+    // the average that replaces it, or vice versa.
+    clearDetector();
+}
+
+void Hl2Spectrum::applyDetector(std::vector<float>& binsDbfs)
+{
+    const std::size_t n = binsDbfs.size();
+
+    if (m_peakHold) {
+        if (m_avgFrames <= 1) {
+            // Infinite max-hold: the trace only rises until reset().
+            if (m_peakVec.size() != n) {
+                m_peakVec.assign(binsDbfs.begin(), binsDbfs.end());
+            } else {
+                for (std::size_t k = 0; k < n; ++k) {
+                    m_peakVec[k] = std::max(m_peakVec[k], static_cast<double>(binsDbfs[k]));
+                }
+            }
+            for (std::size_t k = 0; k < n; ++k) {
+                binsDbfs[k] = static_cast<float>(m_peakVec[k]);
+            }
+            return;
+        }
+        // Sliding maximum over the last m_avgFrames frames — an old peak ages
+        // out of the window. Shares m_avgHistory with the boxcar average.
+        if (!m_avgHistory.empty() && m_avgHistory.front().size() != n) {
+            m_avgHistory.clear();
+        }
+        m_avgHistory.push_back(binsDbfs);
+        while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
+            m_avgHistory.pop_front();
+        }
+        for (std::size_t k = 0; k < n; ++k) {
+            float hi = m_avgHistory.front()[k];
+            for (const std::vector<float>& trace : m_avgHistory) {
+                hi = std::max(hi, trace[k]);
+            }
+            binsDbfs[k] = hi;
+        }
+        return;
     }
 
-    const std::size_t n = binsDbfs.size();
+    if (m_avgFrames <= 1) {
+        return;   // "sample" detector — binsDbfs is the bare single-frame trace
+    }
 
     if (m_avgWeighted) {
         // dB-domain EMA. Seed from the first frame so the trace does not have

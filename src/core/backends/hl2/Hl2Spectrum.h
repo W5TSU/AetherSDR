@@ -66,25 +66,42 @@ public:
     // Never touches the FFT plan, size, or the partial-frame buffer.
     void setAveraging(int frames, bool weighted) noexcept;
 
-    // Drop whatever partial frame has accumulated, and the averaging history.
+    // Peak (max-hold) detector — the third of the spectrum-analyser detector
+    // modes (sample / average / peak; issue #1 story 6). When on, the detector
+    // stage outputs a per-bin maximum instead of the average:
+    //
+    //   averaging frames <= 1   infinite max-hold — the trace only ever rises,
+    //                           until reset() (a geometry change) clears it
+    //   averaging frames  > 1   sliding maximum over the last `frames` frames,
+    //                           so an old peak ages out of the window
+    //
+    // Shares the frame history with the boxcar average, so the FFT AVG level
+    // doubles as the hold window. Turning it off returns the stage to
+    // sample / average per setAveraging().
+    void setPeakHold(bool on) noexcept;
+
+    // Drop whatever partial frame has accumulated, and the detector history.
     // Used on a geometry change, where the samples either side — and the frames
     // either side — genuinely describe different windows.
     void reset() noexcept
     {
         m_acc.clear();
-        clearAveraging();
+        clearDetector();
     }
 
 private:
     void computeFrame(std::vector<float>& binsDbfs);
-    // Fold the just-computed raw dBFS trace through the averaging stage,
-    // rewriting binsDbfs in place. A no-op when m_avgFrames <= 1.
-    void applyAveraging(std::vector<float>& binsDbfs);
-    // Forget every accumulated frame so the next one starts a fresh average.
-    void clearAveraging() noexcept
+    // Fold the just-computed raw dBFS trace through the detector stage
+    // (sample / average / peak), rewriting binsDbfs in place. A no-op only for
+    // sample: averaging frames <= 1 with peak-hold off.
+    void applyDetector(std::vector<float>& binsDbfs);
+    // Forget every accumulated frame so the next one starts a fresh average /
+    // peak hold.
+    void clearDetector() noexcept
     {
         m_avgEma.clear();
         m_avgHistory.clear();
+        m_peakVec.clear();
     }
 
     int m_fftSize;
@@ -92,11 +109,14 @@ private:
     std::vector<double> m_window;             // Hanning window
     double m_coherentGain = 1.0;              // sum(window) / 2
 
-    // Averaging state. m_avgFrames <= 1 means the stage is bypassed entirely.
+    // Detector state. With m_peakHold false and m_avgFrames <= 1 the stage is
+    // bypassed entirely (the "sample" detector).
     int m_avgFrames = 1;
     bool m_avgWeighted = true;
-    std::vector<double> m_avgEma;             // weighted: running EMA, per bin
-    std::deque<std::vector<float>> m_avgHistory;  // boxcar: last m_avgFrames traces
+    bool m_peakHold = false;
+    std::vector<double> m_avgEma;             // weighted average: running EMA, per bin
+    std::deque<std::vector<float>> m_avgHistory;  // boxcar / windowed peak: last m_avgFrames traces
+    std::vector<double> m_peakVec;            // infinite max-hold: running per-bin maximum
     // Opaque FFTW handles (kept as void* so fftw3.h stays out of the header).
     void* m_in = nullptr;                     // fftw_complex[m_fftSize]
     void* m_out = nullptr;                     // fftw_complex[m_fftSize]

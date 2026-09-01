@@ -81,38 +81,38 @@ project lead's sign-off; no separate RFC.
 
 ## Scope deviations found during implementation
 
-Two items in the *Decision*'s panadapter-parity bullet were not built. Each
-needs either implementation before the label flips, or the project lead's
-sign-off to accept it as out of scope with the reason recorded here.
+Two items in the *Decision*'s panadapter-parity bullet were tracked separately.
 
-1. **No peak / max-hold detector.** The *Decision* says "the HL2 spectrum engine
-   gains peak/sample/average detector modes"; issue #1 story 6 and its Testing
-   Decisions ("assert the peak detector holds peaks") say the same. Only the
-   averaging lever was built — `Hl2Spectrum::setAveraging(frames, weighted)`,
-   giving *sample* (factor 1, bit-for-bit the raw frame) and *average*
-   (factor > 1, dB-domain EMA or boxcar), wired to the existing Display → FFT
-   AVG / weighted-average controls. There is **no operator control for a
-   max-hold detector** anywhere on the HL2 spectrum path (only a
-   `color.spectrum.peakHold` colour token), so a peak-hold mode with no UI
-   route would be dead code. Closing it means an `Hl2Spectrum` peak-hold mode
-   **and** a detector selector in `SpectrumOverlayMenu` plus its plumbing — a
-   UI change sized as its own task.
+1. **Peak / sample / average detector modes — BUILT.** The *Decision* asks for
+   all three (issue #1 story 6, Testing Decisions "assert the peak detector
+   holds peaks"). Delivered:
+   - *sample* — `Hl2Spectrum::setAveraging(1, *)`, bit-for-bit the raw frame;
+   - *average* — factor > 1, dB-domain EMA or boxcar (Plan 3);
+   - *peak* — `Hl2Spectrum::setPeakHold(true)`, a per-bin max-hold; infinite
+     until the span changes when the FFT AVG level is ≤ 1, else a sliding
+     maximum over that many frames.
+   The peak toggle is a new "Peak" button in the Display overlay's toggle row,
+   shown only where the client shapes its own spectrum
+   (`setRadioSideDspAvailable(false)` — HL2, not Flex). It routes
+   `SpectrumOverlayMenu::fftPeakHoldChanged → RadioModel::requestPanPeakHold →
+   IRadioBackend::setPanPeakHold → Hl2RxDsp::setSpectrumPeakHold`, held across
+   a channel rebuild, and is drivable headlessly via `pan peakhold`.
+   `hl2_spectrum_test` asserts the hold/age-out/reset behaviour.
 
-2. **No span-following bin count.** The *Decision* says "and a configurable bin
-   count"; issue #1 story 8 and its Testing Decisions ("the configured bin
-   count is honoured") say the same. The FFT stays fixed at 1024 bins. Issue
-   #1's own Implementation Decisions concede "the missing lever is a detector /
-   averaging mode, not FFT size", and `HERMES.md §12.4` agrees. A runtime
-   FFT-size change also means reallocating the FFTW plan on the DSP thread and
-   reconciling the partial-frame buffer and the display-rate shaper, with
-   artefact risk on every zoom.
+2. **Span-following bin count — deferred (fast-follow).** The *Decision*'s "and
+   a configurable bin count" and story 8 ("the configured bin count is
+   honoured") are not built; the FFT stays at 1024 bins. Issue #1's own
+   Implementation Decisions concede "the missing lever is a detector /
+   averaging mode, not FFT size", and `HERMES.md §12.4` agrees — the detector
+   work above *is* that lever. A runtime FFT-size change also means
+   reallocating the FFTW plan on the DSP thread and reconciling the
+   partial-frame buffer and the display-rate shaper, with artefact risk on
+   every zoom.
 
-**Recommended disposition:** accept both as out of scope for the label flip —
-(1) because the parity lever operators actually reach is averaging, which is
-delivered, and a detector selector is a UI feature in its own right; (2) on the
-spec's own "not FFT size" reasoning. Record them as named fast-follows
-alongside FreeDV/RADE. This requires the project lead's explicit sign-off, per
-the *Promotion gate* governance line.
+**Disposition:** (1) is delivered. (2) is a named fast-follow alongside
+FreeDV/RADE and the off-thread rebuild — accepted on the spec's own "not FFT
+size" reasoning. The project lead's sign-off on deferring (2) is the remaining
+governance step for this deviation (per the *Promotion gate* line).
 
 ## Considered options
 

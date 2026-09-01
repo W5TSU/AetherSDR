@@ -71,6 +71,9 @@ public:
     void setDssRowSpanSupported(bool supported);
 
     void syncPanProcessingSettings(int avg, int fps, bool weightedAvg);
+    // Reflect the restored / current peak-hold state onto the toggle without
+    // re-emitting.
+    void syncPeakHold(bool on);
     void syncWfLineDuration(int rate);
     void syncKiwiWaterfallSettings(int minDbm, int maxDbm, bool autoScale,
                                    int rate);
@@ -192,6 +195,9 @@ signals:
     void fftAverageChanged(int frames);
     void fftFpsChanged(int fps);
     void fftWeightedAverageChanged(bool on);
+    // Peak (max-hold) detector toggle. Emitted only where the control is shown —
+    // a backend that shapes its own spectra (setRadioSideDspAvailable(false)).
+    void fftPeakHoldChanged(bool on);
     void fftFillAlphaChanged(float alpha);
     void fftFillColorChanged(const QColor& color);
     void fftLineColorChanged(const QColor& color);
@@ -415,6 +421,7 @@ private:
     QSlider*     m_lineWidthSlider{nullptr};
     QLabel*      m_lineWidthLabel{nullptr};
     QPushButton* m_weightedAvgBtn{nullptr};
+    QPushButton* m_peakHoldBtn{nullptr};   // FFT PEAK max-hold; local-shaping backends only
     QSlider*     m_gainSlider{nullptr};
     QLabel*      m_gainTitleLabel{nullptr};
     QLabel*      m_gainLabel{nullptr};

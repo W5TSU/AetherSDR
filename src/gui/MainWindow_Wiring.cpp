@@ -4464,6 +4464,14 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
         // on a raw-spectrum backend and to wire text on a Flex.
         m_radioModel.requestPanAverage(applet->panId(), sw->fftAverage(), on);
     });
+    connect(menu, &SpectrumOverlayMenu::fftPeakHoldChanged,
+            this, [this, applet, sw](bool on) {
+        sw->setFftPeakHold(on);
+        // Peak/max-hold has no Flex wire parameter; requestPanPeakHold routes
+        // it to the engine's FFT stage on a raw-spectrum backend and returns
+        // false on a Flex (where the control is hidden anyway).
+        m_radioModel.requestPanPeakHold(applet->panId(), on);
+    });
     connect(menu, &SpectrumOverlayMenu::wfColorSchemeChanged,
             sw, &SpectrumWidget::setWfColorScheme,
             Qt::UniqueConnection);

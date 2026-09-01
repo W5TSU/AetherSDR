@@ -1260,7 +1260,7 @@ QString sliceActionList()
 QString panActionList()
 {
     return QStringLiteral(
-        "create|add|remove|close|center|rfgain|span|rate|average|float|dock");
+        "create|add|remove|close|center|rfgain|span|rate|average|peakhold|float|dock");
 }
 
 // Likewise for audioCapture; doAudioCapture()'s fallthrough error reads this.
@@ -3266,9 +3266,9 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
         // rfgain branch already splits the joined value and handles both shapes,
         // so the handler was right and only the parser choice was wrong.
         add("pan", {},
-            "pan <create|add|remove|close|center|rfgain|span|rate|average|float|dock> [value] — "
-            "span <[panId] MHz>, rate <[panId] fps wfRate>, average <[panId] frames weighted>; "
-            "float/dock drive PanadapterStack's real reparent path (#4864)",
+            "pan <create|add|remove|close|center|rfgain|span|rate|average|peakhold|float|dock> [value] — "
+            "span <[panId] MHz>, rate <[panId] fps wfRate>, average <[panId] frames weighted>, "
+            "peakhold <[panId] on>; float/dock drive PanadapterStack's real reparent path (#4864)",
             parseActionRest,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 if (a.action.isEmpty())
@@ -10348,6 +10348,46 @@ QJsonObject AutomationServer::doPan(const QString& action, const QString& arg)
                            {QStringLiteral("panId"), target},
                            {QStringLiteral("frames"), frames},
                            {QStringLiteral("weighted"), weighted},
+                           {QStringLiteral("requested"), true}};
+    }
+
+    if (action == QLatin1String("peakhold")) {
+        // `pan peakhold <on>` or `pan peakhold <panId> <on>` — the operator's
+        // Display->FFT PEAK (max-hold) detector toggle. Local-shaping backends
+        // only (HL2); a Flex has no wire parameter for it and requestPanPeakHold
+        // returns false there.
+        const QStringList parts =
+            arg.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        QString panId;
+        int idx = 0;
+        if (parts.size() >= 2) {
+            panId = parts.at(0);
+            idx = 1;
+        }
+        if (parts.size() - idx < 1) {
+            return err(QStringLiteral("pan peakhold requires <on> "
+                                      "(optionally preceded by a panId)"));
+        }
+        const QString tok = parts.at(idx).toLower();
+        const bool on = tok == QLatin1String("1") || tok == QLatin1String("true")
+            || tok == QLatin1String("on");
+        const QString target = !panId.isEmpty()
+            ? panId
+            : (radio->activePanadapter() ? radio->activePanadapter()->panId()
+                                         : QString());
+        if (target.isEmpty()) {
+            return err(QStringLiteral("pan peakhold: no panadapter to address"));
+        }
+        if (!radio->requestPanPeakHold(target, on)) {
+            return err(QStringLiteral("pan peakhold: not supported on this radio "
+                                      "(the client does not shape its own spectrum), "
+                                      "or no panadapter '") + target
+                       + QStringLiteral("'"));
+        }
+        return QJsonObject{{QStringLiteral("ok"), true},
+                           {QStringLiteral("pan"), QStringLiteral("peakhold")},
+                           {QStringLiteral("panId"), target},
+                           {QStringLiteral("on"), on},
                            {QStringLiteral("requested"), true}};
     }
 

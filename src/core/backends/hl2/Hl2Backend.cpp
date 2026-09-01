@@ -2970,6 +2970,19 @@ void Hl2Backend::setPanAverage(const QString& panId, int frames, bool weighted)
         Q_ARG(int, frames), Q_ARG(bool, weighted));
 }
 
+void Hl2Backend::setPanPeakHold(const QString& panId, bool on)
+{
+    // Same route as setPanAverage — per DDC, queued to the DSP thread, held by
+    // Hl2RxDsp across a channel rebuild.
+    const int ddc = ddcForPan(panId);
+    Receiver* r = rx(ddc);
+    if (!r || !r->dsp) {
+        return;
+    }
+    QMetaObject::invokeMethod(r->dsp, "setSpectrumPeakHold", Qt::QueuedConnection,
+        Q_ARG(bool, on));
+}
+
 void Hl2Backend::setKeying(bool key)
 {
     // Keying is gated twice on purpose. capabilities().canTransmit reflects the

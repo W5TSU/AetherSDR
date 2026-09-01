@@ -128,6 +128,12 @@ public:
     // change — see the replay right after m_spectrum is recreated in configure().
     Q_INVOKABLE void setSpectrumAveraging(int frames, bool weighted);
 
+    // Panadapter peak (max-hold) detector — the operator's Display → FFT PEAK
+    // toggle. Forwarded to Hl2Spectrum; the FFT AVG level doubles as the hold
+    // window (<= 1 is an infinite hold). Kept as a member and replayed after a
+    // configure() rebuild, exactly like the averaging pair above.
+    Q_INVOKABLE void setSpectrumPeakHold(bool on);
+
     // Impulse noise blanker, on the raw IQ ahead of the demodulator.
     //
     // THE ONLY NOISE BLANKER THIS RADIO HAS. The HL2 ships raw IQ and runs no
@@ -394,6 +400,7 @@ private:
     // creates. 1 = unaveraged.
     int m_spectrumAvgFrames = 1;
     bool m_spectrumAvgWeighted = true;
+    bool m_spectrumPeakHold = false;   // Display → FFT PEAK; replayed on rebuild
     std::vector<std::complex<float>> m_iqBuffer;   // IQ awaiting a full DSP block
     // Wire IQ conjugated into the analytic convention, for the SPECTRUM only —
     // the demodulator takes the raw wire. A member rather than a local: this
