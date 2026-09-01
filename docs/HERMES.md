@@ -818,12 +818,12 @@ question, but the headline is settled.
 
 ### 12.3 New defects found
 
-**Mute ramps are all zero.** `WdspChannel::open()` passes
-`0.0, 0.0, 0.0, 0.0` for `tdelayup / tslewup / tdelaydown / tslewdown`. Both
-references use `0.010, 0.025, 0.000, 0.010`. §2 calls these the anti-click
-mechanism and "the difference between clean and clicky T/R... easy to leave at
-defaults and never discover" — we did exactly that. Trivial fix, and it matters
-the moment anything mutes or starts a channel.
+**Mute ramps — FIXED (milestone #1 Plan 4.2).** `WdspChannel::open()` now passes
+the reference `0.010, 0.025, 0.000, 0.010` for
+`tdelayup / tslewup / tdelaydown / tslewdown`; `wdsp_channel_test`
+(`runFilterTapsTest`) pins those defaults. Originally all zeros — §2 calls these
+the anti-click mechanism and "the difference between clean and clicky T/R...
+easy to leave at defaults and never discover," which is exactly what happened.
 
 **The S-meter measures the wrong thing.** `Hl2RxDsp::processIqBlock` computes
 `20*log10(rms)` of `m_left` — the *post-AGC* audio. Holding that level constant
@@ -837,16 +837,24 @@ double GetRXAMeter(int channel, int mt);   // RXA_S_PK, RXA_S_AV
 This is a defect that looks like it works — the meter deflects, just not in
 proportion to anything. Worth fixing before anyone calibrates against it.
 
-**`RXASetNC` and `RXASetMP` are never called.** Filter tap count and
-minimum-phase mode — the selectivity-versus-latency controls. piHPSDR sets both
-right after `OpenChannel` (`RXASetNC(id, fft_size)`, `RXASetMP(id,
-low_latency)`); we take WDSP's defaults silently. §7 notes these matter a lot
-to CW operators.
+**`RXASetNC` — now called (milestone #6 Plan 4.1); `RXASetMP` — deliberately
+not.** `WdspChannel::setFilterTaps()` calls `RXASetNC` at runtime: the RX
+bandpass FIR runs at the short 2048-tap low-latency length by default and
+switches to 8192 taps only while a manual notch is placed (`Hl2RxDsp`
+`syncFilterTapsToNotchState()`), so the +64 ms is paid only when a ~50 Hz notch
+floor is actually needed. `wdsp_channel_test` measures the ~3072-sample
+group-delay difference. `RXASetMP` (minimum-phase mode) stays unused on
+purpose — it is the alternative latency lever and the tap-count gate was chosen
+instead; see `docs/adr/0001-hermes-lite-2-supported.md` accepted cost 1.
 
-**`SetChannelState` is never used.** We pass `state = 1` at open and never stop
-the channel. §2 is explicit that `SetChannelState` is the T/R call (it applies
-the ramps) and `CloseChannel` is for teardown only — "conflating them means
-either clicks (closing) or leaks (never closing)."
+**`SetChannelState` — in use (confirmed, milestone #9 Plan 4.2).** `open()`
+starts the channel via `SetChannelState`, `close()` is the only `CloseChannel`,
+and the T/R path never touches channel lifecycle — the channel id is already
+stable across RX→TX→RX. The earlier "never used" reading was wrong: the
+discipline §2 asks for is already present. What the T/R transition does instead
+of stopping the channel is clock it with silence (`Hl2RxDsp::setAudioMuted` +
+`setNoiseBlankerHold`) so the panadapter keeps updating on real IQ during TX and
+the NB running average is frozen, not dragged.
 
 ### 12.4 Divergences that are defensible, but should be deliberate
 
@@ -921,13 +929,13 @@ Effort is rough: **XS** under an hour, **S** a session, **M** a few sessions,
 
 | # | Item | Source | Why it matters | Effort |
 |---|---|---|---|---|
-| 1 | Mute ramps `0.010/0.025/0.000/0.010` instead of all zeros | A3 §2 | The anti-click mechanism; invisible until you are debugging clicks | XS |
+| 1 | ~~Mute ramps `0.010/0.025/0.000/0.010` instead of all zeros~~ **DONE** — Plan 4.2 | A3 §2 | The anti-click mechanism; invisible until you are debugging clicks. `wdsp_channel_test` pins the defaults | XS |
 | 2 | S-meter from `GetRXAMeter(RXA_S_PK)`, not post-AGC audio RMS | A3 §7 | Current meter is held flat by the AGC — it deflects but tracks nothing | XS |
 | 3 | Rename `kC0AdcAssign`; document the `0x0e` dual meaning | O §4 | It is TX LNA gain on HL2. Latent TX/PureSignal hazard | XS |
-| 4 | Pipeline reset `0x39[7:4]=0x8` after an NCO move | A2 §B2 | Decimation state smears a transient across band-scale jumps — which `a1cbe154` made routine | XS |
+| 4 | Pipeline reset `0x39[7:4]=0x8` after an NCO move | A2 §B2 | Decimation state smears a transient across band-scale jumps — which `a1cbe154` made routine. **Out of the `experimental → supported` milestone by decision (issue #1): the naive form has wedged a board; stays a documented known-issue** | XS |
 | 5 | Normalize by `2^23-1`, not `2^23` | A1 §A2 | dBFS parity with piHPSDR. Numerically trivial, but parity is the point | XS |
-| 6 | `RXASetNC` / `RXASetMP` after `OpenChannel` | A3 §7 | Selectivity vs latency; matters to CW operators. We silently take defaults | XS |
-| 6a | Rate-limit the ADC-overload warning | §15.7 | Edge-gated, but the value chatters: **~133 warnings/second** on MW, which flushes the log ring and hides everything else | XS |
+| 6 | ~~`RXASetNC` after `OpenChannel`~~ **DONE** — Plan 4.1 (`RXASetMP` deliberately not; ADR 0001 cost 1) | A3 §7 | Selectivity vs latency; matters to CW operators. Now gated: short filter by default, long only while a notch is placed | XS |
+| 6a | ~~Rate-limit the ADC-overload warning~~ **DONE** — Plan 4.3 | §15.7 | Edge-gated, but the value chattered: **~133 warnings/second** on MW, which flushed the log ring. `AdcOverloadLogGate`: first edge logs, ≤1/s after, swallowed count reported | XS |
 
 ### Tier 2 — correctness gaps
 
@@ -935,12 +943,12 @@ Effort is rough: **XS** under an hour, **S** a session, **M** a few sessions,
 |---|---|---|---|---|
 | 7 | ~~Read receiver count from discovery `0x13`~~ | O §1 | **DONE — §19.** `maxSlices`/`maxPanadapters` report the RUNNING count: requested, clamped by discovery `0x13`, clamped again by the link budget | S |
 | ~~8~~ | ~~Move HL2 wire + DSP off the GUI thread~~ **DONE** | O §2 | `Hl2Backend` runs `MetisClient` and both DSP chains on a dedicated `hl2-io` thread. Note the consequence: EP2 pacing, EP6 ingest, WDSP and the panadapter FFT now share ONE thread, so per-sample cost there scales with the span (§15.2) | — |
-| 9 | `SetChannelState` for start/stop; `CloseChannel` only for teardown | A3 §2 | Conflating them gives clicks or leaks. Needed before T/R | S |
-| 10 | RADE null-deref at `MainWindow_DigitalModes.cpp:461` | ours, gap 9 | Same shape as the DAX crash; will kill HL2 the moment RADE starts | XS |
+| 9 | ~~`SetChannelState` for start/stop; `CloseChannel` only for teardown~~ **RESOLVED — already in place** (confirmed Plan 4.2) | A3 §2 | `open()` uses `SetChannelState`, `close()` is the only `CloseChannel`, channel id stable across RX→TX→RX. The premise "never used" was wrong | S |
+| 10 | RADE null-deref at `MainWindow_DigitalModes.cpp:461` | ours, gap 9 | Same shape as the DAX crash; will kill HL2 the moment RADE starts. **RADE declines cleanly on non-Flex today (Plan 2) — this hardening item is tracked with the FreeDV/RADE fast-follow (ADR 0001, issue #1 story 43)** | XS |
 | 11 | ~~`AETHER_AUTOMATION_NO_AUTOCONNECT` not honoured~~ | ours, gap 10 | **Withdrawn.** The variable was removed application-wide; nothing reads it. See gap 10 and the §10 recipe | — |
-| 12 | One dB-reference object per slice (LNA + calibration + AGC threshold) | A2 §A3 | Every LNA change shifts the absolute reference; the trace jumps and users read it as a real event | S |
+| 12 | ~~One dB-reference object per slice (LNA + calibration + AGC threshold)~~ **DONE (rescoped)** — Plan 4.4 | A2 §A3 | The dBFS↔dBm + AGC-ceiling maths is centralised in `Hl2DbReference` (`agcCeilingDbForThreshold`). The "unified per-slice object" framing was dropped in review: LNA is radio-wide (one AD9866), the LNA-step-leaves-the-trace-still behaviour already existed (`hl2_dbref_test`), and AGC-T stays per-`Receiver` | S |
 | ~~12a~~ | ~~Seam verb for RF/LNA gain~~ **DONE** | §15.7 | `IRadioBackend::setPanRfGain` carries the ANT panel's RF Gain slider to the AD9866. Measured on hardware: a commanded 20 dB step moved the wire noise floor 19.8 dB | — |
-| 12b | Automation verbs `pan span`, `pan rate`, `perf` | §15.7 | Proving §15 needed span driven by repeated `pan_zoom_in`, the FPS slider reached through a menu, and frame rates scraped from a log file the chatter in 6a nearly buried | S |
+| 12b | ~~Automation verbs `pan span`, `pan rate`, `perf`~~ **DONE** — Plan 1.3 (+ `pan average` and `get dsp selector=backend` / `capture_audio analyze` from Plans 1.1–1.3, 3) | §15.7 | Proving §15 needed span driven by repeated `pan_zoom_in`, the FPS slider reached through a menu, and frame rates scraped from a log file the chatter in 6a nearly buried. `automation_pan_perf_verbs_test` covers the seam | S |
 
 ### Tier 3 — absent subsystems, in dependency order
 
@@ -979,7 +987,7 @@ radio. See §18 for the full audit and the proposed seam.
 |---|---|---|---|
 | `output_samplerate` | 48000 | 24000 | AudioEngine's native rate; avoids a resample. Legitimate, but it IS a divergence in the area that produced our worst bug — keep it labelled |
 | Rate change | `SetAllRates` | Rebuild the channel | Dodges the intermediate-inconsistent-state hazard entirely. Heavier, but NOT because of FFTW — a rebuild at a new rate re-plans almost nothing (§22.4). It is heavier because it is a close+open per receiver, and it still blocks the GUI thread |
-| Spectrum | WDSP analyzer (returns pixels) | Own `Hl2Spectrum` FFT | A3 §4 recommends exactly this for our architecture. **If it ever looks noisy, the lever is a detector/averaging mode, not a bigger FFT** |
+| Spectrum | WDSP analyzer (returns pixels) | Own `Hl2Spectrum` FFT + trace averaging | A3 §4 recommends exactly this for our architecture. Plan 3 added the averaging lever: `setAveraging(frames, weighted)` — dB-domain EMA or boxcar, wired to Display→FFT AVG via `IRadioBackend::setPanAverage` / `pan average`. **Peak/max-hold detector and span-following bin count (issue #1 stories 6, 8) are deferred — see ADR 0001 and the milestone plan; they gate the label flip or a spec amendment** |
 | FFTW wisdom | `WDSPwisdom(dir)` | Own `fftw_import_wisdom_from_filename` + eager export | `WDSPwisdom` is Windows-console-only. First-run slowness is expected; the fix was getting the wisdom to actually persist (§22) plus telling the operator what the wait is — in a modal dialog, because the panadapter label that first carried it was drawn behind the Connect Radio window and never seen (#5052). Tests bound the planner instead of paying it; see "AM/SAM hand back a DC pedestal" |
 
 ### Settled — no action
@@ -3525,3 +3533,11 @@ has ordering constraints the connect does not: the DSP must expect the new rate
 before EP6 starts delivering at it, and a partial failure has to roll every
 receiver back to a single rate. Left as a follow-up rather than bolted onto the
 connect fix.
+
+**Milestone status (issue #1, ADR 0001 accepted cost 2):** the freeze stays;
+the off-GUI-thread rebuild is a scheduled fast-follow (tracked separately). What
+Plan 5.1 shipped is the affordance — `Hl2Backend::applyPanBandwidth` raises
+`IRadioBackend::resamplingChanged(true)` on the GUI thread immediately before
+the blocking loop and `false` after, and `MainWindow::wireBackendSeam` turns
+that into a forced-repainted "Resampling…" overlay so the operator sees a
+labelled wait instead of a bare frozen panadapter (issue #1 story 21).

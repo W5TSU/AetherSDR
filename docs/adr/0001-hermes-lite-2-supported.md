@@ -2,6 +2,21 @@
 
 **Status:** proposed
 
+> **Gate progress (updated as the milestone lands):**
+> - Plans 1–4 implemented on `feat/hl2-supported-groundwork` (verification
+>   verbs; RTTY/DFM + authoritative mode list; panadapter trace averaging;
+>   DSP-chain hardening). Plan 5.1 (resampling affordance) and 5.2 (HERMES.md
+>   de-drift) done.
+> - **Certifying unit gateware recorded: v7.4** (0x4A) — Metis discovery reply
+>   from `100.117.237.246`, MAC `00:1C:C0:A2:02:01`, board `0x06`, idle,
+>   2026-08-31. This is the reference gateware; the 2026-08-10 TX-meter
+>   certification ran against the same version, so no gateware-dependent
+>   re-check (drive-nibble decode, `0x0e` dual meaning, discovery `0x13`) is
+>   triggered.
+> - **Still open before Status → accepted:** the deviations in *Scope
+>   deviations* below need the project lead's sign-off or implementation; a
+>   `radiocert` run and the four-receiver soak on hardware (gate items 3–4).
+
 ## Context
 
 The HL2 backend has been `experimental` since v26.7.4 and reached near-parity
@@ -46,7 +61,13 @@ are also out.
    green at one and four receivers;
 3. `radiocert` clean through tune → rx → tx → meters on physical hardware,
    transmitting into a dummy load under the written safety authorization in
-   `docs/radio-certification.md`;
+   `docs/radio-certification.md`. **Note:** this milestone's changes are RX,
+   display and verification only — Plan 4.2 established the T/R path and the
+   channel lifecycle are untouched — so the **2026-08-10 TX-meter
+   certification (gateware v74, `docs/radio-certification.md`) carries
+   forward**; the keyed `tx`/`meters` phases are re-run only if the project
+   lead wants fresh evidence. `tune` and `rx` (non-keying) are re-run for this
+   milestone regardless;
 4. a ten-minute four-receiver soak — no drops, no p99 growth, no crash;
 5. this ADR accepted and the two costs below documented in it;
 6. the certifying unit's gateware version recorded, with the
@@ -57,6 +78,41 @@ are also out.
 The flip touches `ExperimentalRadioSupport.h`, the README and the ROADMAP, and
 is the final PR of the milestone. Governance for this fork: this ADR plus the
 project lead's sign-off; no separate RFC.
+
+## Scope deviations found during implementation
+
+Two items in the *Decision*'s panadapter-parity bullet were not built. Each
+needs either implementation before the label flips, or the project lead's
+sign-off to accept it as out of scope with the reason recorded here.
+
+1. **No peak / max-hold detector.** The *Decision* says "the HL2 spectrum engine
+   gains peak/sample/average detector modes"; issue #1 story 6 and its Testing
+   Decisions ("assert the peak detector holds peaks") say the same. Only the
+   averaging lever was built — `Hl2Spectrum::setAveraging(frames, weighted)`,
+   giving *sample* (factor 1, bit-for-bit the raw frame) and *average*
+   (factor > 1, dB-domain EMA or boxcar), wired to the existing Display → FFT
+   AVG / weighted-average controls. There is **no operator control for a
+   max-hold detector** anywhere on the HL2 spectrum path (only a
+   `color.spectrum.peakHold` colour token), so a peak-hold mode with no UI
+   route would be dead code. Closing it means an `Hl2Spectrum` peak-hold mode
+   **and** a detector selector in `SpectrumOverlayMenu` plus its plumbing — a
+   UI change sized as its own task.
+
+2. **No span-following bin count.** The *Decision* says "and a configurable bin
+   count"; issue #1 story 8 and its Testing Decisions ("the configured bin
+   count is honoured") say the same. The FFT stays fixed at 1024 bins. Issue
+   #1's own Implementation Decisions concede "the missing lever is a detector /
+   averaging mode, not FFT size", and `HERMES.md §12.4` agrees. A runtime
+   FFT-size change also means reallocating the FFTW plan on the DSP thread and
+   reconciling the partial-frame buffer and the display-rate shaper, with
+   artefact risk on every zoom.
+
+**Recommended disposition:** accept both as out of scope for the label flip —
+(1) because the parity lever operators actually reach is averaging, which is
+delivered, and a detector selector is a UI feature in its own right; (2) on the
+spec's own "not FFT size" reasoning. Record them as named fast-follows
+alongside FreeDV/RADE. This requires the project lead's explicit sign-off, per
+the *Promotion gate* governance line.
 
 ## Considered options
 

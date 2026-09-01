@@ -142,6 +142,20 @@ drive by effect on this radio needs either a per-unit power calibration or an
 external power meter; until then the honest claim is "monotonic in drive",
 which is what the nibble sweep in `HERMES.md` 17.7 shows.
 
+#### `experimental → supported` milestone re-certification (issue #1) — status
+
+- **Gateware re-confirmed v7.4** (0x4A) from the Metis discovery reply of the
+  certifying unit `100.117.237.246` (MAC `00:1C:C0:A2:02:01`, board `0x06`,
+  idle), 2026-08-31 — the same gateware the 2026-08-10 run used.
+- The milestone's changes are **RX, display and verification only** (Plan 4.2
+  established the T/R path and channel lifecycle are untouched), so the
+  **2026-08-10 TX-meter certification above carries forward** — the keyed
+  `tx`/`meters` phases are re-run only if fresh evidence is wanted.
+- **Pending on hardware:** `radiocert tune` + `rx` (non-keying) for this
+  milestone, and the ten-minute four-receiver soak. A fresh *Certified by
+  effect* block is appended here when that run completes; `docs/adr/0001`
+  gate items 3–4.
+
 ### Icom (IC-705) — measured with `controls meters`, radio idle on 20 m
 
 Ages are from one live run; the point is the STATUS column, not the numbers.
