@@ -40,10 +40,29 @@ namespace AetherSDR::hl2 {
 // -120 to about -140, because the default LNA gain is 20 dB. Neither number is
 // calibrated, so that shift bought nothing and would have looked to the
 // operator exactly like the regression this class exists to prevent.
+//
+// THE AGC-CEILING CONVERSION LIVES HERE TOO
+//
+// The operator's AGC-T (0..100 operator units) maps to WDSP's AGC gain ceiling
+// in dB by a single scale (kAgcCeilingDbPerUnit). That conversion was copied
+// into six call sites in Hl2Backend -- the same drift surface as the LNA
+// offset, and part of the same antenna->demodulator signal-reference chain, so
+// it belongs here. It is a PURE STATIC: the AGC-T value itself is per-receiver
+// state that stays on Hl2Backend::Receiver; this object only owns the maths.
 class Hl2DbReference {
 public:
     // Matches Hl2Backend/MetisClient's default LNA setting.
     static constexpr double kDefaultLnaGainDb = 20.0;
+
+    // Operator AGC-T units (0..100) -> WDSP AGC gain ceiling in dB. 0.6 dB per
+    // unit puts the slice model's default of 65 at 39 dB, measured clean on
+    // live hardware (Hl2RxDsp::Config::maximumAgcGainDb).
+    static constexpr double kAgcCeilingDbPerUnit = 0.6;
+    [[nodiscard]] static constexpr double agcCeilingDbForThreshold(
+        int operatorUnits) noexcept
+    {
+        return operatorUnits * kAgcCeilingDbPerUnit;
+    }
 
     // Gain we commanded on the AD9866 LNA, in dB.
     void setLnaGainDb(double db) noexcept { m_lnaGainDb = db; }

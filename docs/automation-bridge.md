@@ -2013,9 +2013,15 @@ Panadapter lifecycle — create or tear down a pan regardless of how it was open
 | `create` (alias `add`) | — | create a new panadapter (panafall). The only UI path is an unaddressable label. |
 | `center` | `<mhz>` | recenter the active pan — the band-change lever (a plain `tune` only moves the slice and clamps to the pan's RF range, #292). **MHz, not Hz**: the [four refusals listed under `tune`](#tune) apply here too, with `pan center` in the message. It matters more on this verb — `setPanCenter()` clamps only the low edge, so an unguarded out-of-range centre is stored and advertised over TCI (`dds:`) even though the radio rejects it. |
 | `close` (alias `remove`) | `<panId>` (`0x…`) / `<index>` (panIndex) / `active` / `all` | close pan(s). Sends `display pan remove` **and** `display panafall remove`, so a panafall-created pan closes without the slice-removal workaround. A single target won't close the last pan; `all` will. |
+| `rfgain` | `[<panId>] <dB>` | set the front-end RF/LNA gain. On a radio-wide preamp (the HL2's single AD9866 behind every DDC) the change reaches every pan; the optional `panId` addresses one where the backend supports it. |
+| `span` | `[<panId>] <MHz>` | set the panadapter span. The backend snaps the request to its nearest achievable width and echoes what it took via `panCenterBandwidthChanged`. |
+| `rate` | `[<panId>] <fps> <wfRate>` | set the Display→FFT FPS and Display→Waterfall Rate (1–100) for a pan — the pair `requestPanDisplayRates()` carries. |
+| `average` | `[<panId>] <frames> <weighted>` | set the Display→FFT AVG level (`frames`; `0`/`1` = off) and weighted-average toggle (`weighted`: `1`/`true`/`on`/`weighted` → dB-domain EMA, else boxcar mean) — the pair `requestPanAverage()` carries. On a Flex this goes out as `display pan set` wire text; on a raw-spectrum backend (HL2) it reaches the engine's own FFT stage, which holds it across a sample-rate rebuild. |
+| `peakhold` | `[<panId>] <on>` | set the Display→FFT PEAK (max-hold) detector (`on`: `1`/`true`/`on`) — the third spectrum detector alongside sample and average. `requestPanPeakHold()` routes it to the engine's FFT stage; the FFT AVG level is the hold window (`0`/`1` = hold until the span changes). **Local-shaping backends only** — a Flex has no wire parameter for it and the call returns `ok:false`. |
+| `float` / `dock` | `<panId>` / `<index>` / `active` | undock / redock the pan via `PanadapterStack`'s real reparent path (#2495/#4319/#4617/#4864); re-poll `layout get` for `floatingCount` / `dockedCount`. |
 
-All are async (the radio echoes the change) — re-poll `get pans`. Every `pan`
-action is RX/config only; none keys the transmitter.
+All lifecycle actions are async (the radio echoes the change) — re-poll
+`get pans`. Every `pan` action is RX/config only; none keys the transmitter.
 
 Floating and docking use the production pan title-bar control rather than a
 radio lifecycle command. Target its stable object name through the pan scope;
@@ -2763,6 +2769,16 @@ while the engine runs):
 Bounded, automation-only PCM capture for receive-sync diagnostics. It is active
 only inside an `AETHER_AUTOMATION=1` process, is read-only, and does not change
 audio routing or playback buffers.
+
+| `action` | args | effect |
+|---|---|---|
+| `start` | `[<durationMs>] [<points>]` | begin capturing at the named tap points (`raw`,`post`,`output`,`final`, or `all`); default 5000 ms |
+| `stop` | — | stop early and return a compact snapshot |
+| `status` | — | compact snapshot (metadata only) without stopping |
+| `read` | `[<path>]` | write the full snapshot (base64 PCM) to a file, or return the compact snapshot when no path is given |
+| `analyze` | `<raw\|post\|output\|final>` | run `AudioMetrics` over that tap's captured PCM — dominant tone(s), peak, RMS dBFS, clipped-sample fraction, comb spacing |
+| `probeNr2Stereo` | — | the no-option SpectralNR/`NR2` stereo-balance probe |
+| `probeDspStereo` | `<mode> [key=value …]` | deterministic synthetic RX proof for a DSP module (see the RN2 sub-section) |
 
 ```json
 → {"cmd":"audioCapture","action":"start","value":"5000 raw,post,output,final"}
@@ -3762,11 +3778,12 @@ receiver capacity. It never enables transmit and remains available without
 The complete registry, generated from the `add(...)` table in `AutomationServer.cpp` by `tools/gen_bridge_docs.py`. CI fails if this drifts from the code.
 
 <!-- BEGIN GENERATED VERB TABLE (tools/gen_bridge_docs.py) -->
-<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 71 verbs. -->
+<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 72 verbs. -->
 
 | Verb | Aliases | Description |
 |---|---|---|
 | `ping` | — | liveness check → app + version + whether a token is required |
+| `perf` | — | perf — measured panadapter/waterfall frame rates {panFps, wfFps} (+ the full renderstats totals) |
 | `verbs` | — | list every bridge verb with aliases and help (this table) |
 | `dumpTree` | — | serialize the full widget tree as JSON |
 | `floors` | — | per-pan measured noise + display floor (dBm) |
@@ -3805,7 +3822,7 @@ The complete registry, generated from the `add(...)` table in `AutomationServer.
 | `sim` | — | sim <swr\|dropslice\|stallscope\|disconnect\|malformed\|clear> [arg] — demo fault injection (RFC #4288; only valid when the demo is connected) |
 | `record` | — | record <start\|stop\|status\|path\|dir> [args] |
 | `testtone` | — | testtone <on\|off> [freqHz levelDb] |
-| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|float\|dock> [value] — float/dock drive PanadapterStack's real reparent path (#4864) |
+| `pan` | — | pan <create\|add\|remove\|close\|center\|rfgain\|span\|rate\|average\|peakhold\|float\|dock> [value] — span <[panId] MHz>, rate <[panId] fps wfRate>, average <[panId] frames weighted>, peakhold <[panId] on>; float/dock drive PanadapterStack's real reparent path (#4864) |
 | `workspace` | — | workspace <status\|enable\|disable\|edit\|place\|list\|switch\|create\|bind\|import-floats\|pan-layout\|palette\|window\|move\|add> — the canvas, its workspaces and its extra windows as data; arg shapes in docs/automation-bridge.md (#4887 ph4/ph6/ph7) |
 | `layout` | — | layout <rearrange <id>\|get> — splitter layout exerciser |
 | `scale` | — | scale [pct] — report/persist the UI scale factor |
@@ -3817,10 +3834,10 @@ The complete registry, generated from the `add(...)` table in `AutomationServer.
 | `link` | `ax25` | link <status\|connect <call> [via <digi>]\|disconnect\|mycall <call>\|listen <call>\|alias <call>\|pms on\|off> — connected-mode AX.25 terminal + mailbox, with measured RTT vs configured T1 |
 | `memprofile` | — | memprofile <snapshot\|start\|sample\|status\|report\|samples\|stop\|reset> [intervalMs maxSamples] |
 | `tci` | — | tci start\|status\|stop\|send\|trace\|routes [@id] [rx=N] — TCI simulator (multi-client: @id names a client, rx=N its audio_start receiver) and protocol diagnostics |
-| `audioCapture` | — | audioCapture <start\|stop\|status\|read\|probeNr2Stereo\|probeDspStereo> [args] — RN2 probe accepts rate=Legacy24k\|Native48k output=PreserveRxStereo\|ProcessedMono blocks=<frames,...> |
+| `audioCapture` | — | audioCapture <start\|stop\|status\|read\|analyze\|probeNr2Stereo\|probeDspStereo> [args] — analyze <raw\|post\|output\|final> reports dominant tone/level/clip/comb; RN2 probe accepts rate=Legacy24k\|Native48k output=PreserveRxStereo\|ProcessedMono blocks=<frames,...> |
 | `txwaterfall` | — | txwaterfall <on\|off> — show keyed TX in the waterfall |
 | `liveness` | — | liveness — per-class data ages and the producer->consumer meter join |
-| `civ` | — | civ <send <hex>\|trace [all]\|session\|scheduler> — CI-V inject, frame trace, RS-BA1 lease health, or command-scheduler health (Icom; send is TX-gated) |
+| `civ` | — | civ <send <hex>\|trace [all]\|session\|scheduler\|incident> — CI-V inject, frame trace, lease/scheduler health, or last incident (Icom; send is TX-gated) |
 | `controls` | — | controls <map\|meters\|scrub [id\|plane]> — the CI-V control and meter registry joined against what is actually wired, and a linkage check that drives every settable control without moving any of them (Icom) |
 | `radiocert` | — | radiocert <tune\|rx\|tx\|meters\|all> [freqMhz] — radio bring-up diagnostic, in dependency order (tx/meters key) |
 | `transmit` | — | transmit <rfpower\|tunepower> <0..100> — transmit drive (TX-gated) |

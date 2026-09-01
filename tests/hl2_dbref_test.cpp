@@ -62,6 +62,17 @@ int main()
     check(near(-13.0 + ref.offsetDb(), ref.toDbm(-13.0)),
           "offsetDb() and toDbm() agree (spectrum vs S-meter)");
 
+    // The AGC-ceiling conversion now lives on this object as a pure static
+    // (Plan 4.4): one scale, one place, instead of `x * 0.6` copied into six
+    // Hl2Backend sites. The AGC-T value itself stays per-receiver on
+    // Hl2Backend::Receiver — this is just the maths.
+    check(near(Hl2DbReference::agcCeilingDbForThreshold(65), 39.0),
+          "AGC-T 65 -> 39 dB ceiling (the slice model's default, measured on hardware)");
+    check(near(Hl2DbReference::agcCeilingDbForThreshold(0), 0.0),
+          "AGC-T 0 -> 0 dB");
+    check(near(Hl2DbReference::agcCeilingDbForThreshold(100), 60.0),
+          "AGC-T 100 -> 60 dB");
+
     if (g_failures == 0)
         std::fprintf(stderr, "hl2_dbref_test: all checks passed\n");
     return g_failures == 0 ? 0 : 1;

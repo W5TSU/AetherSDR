@@ -496,6 +496,35 @@ bool WdspChannel::setAgc(int agcMode, double maximumGainDb) noexcept
     return true;
 }
 
+bool WdspChannel::setFilterTaps(int taps) noexcept
+{
+    if (m_config.direction != Direction::Receive || taps <= 0) {
+        return false;
+    }
+    if (taps == m_config.filterTaps) {
+        return true;   // already there — not a failure
+    }
+    if (!beginControlOperation()) {
+        return false;
+    }
+    {
+        const std::scoped_lock setupLock(g_setupMutex);
+        // Same call open() makes. RXASetNC reallocates the NBP FIR and cycles
+        // the channel state. The notch database is preserved
+        // (tests/hl2_notch_seed_test asserts it), but re-assert the shift: the
+        // NBP keeps its own copy of the shift frequency and a FIR realloc is
+        // exactly the kind of rebuild that can drop it, which would silently
+        // zero the operator's slice offset on every notch add/remove.
+        RXASetNC(m_channelId, taps);
+        SetRXAShiftFreq(m_channelId, m_shiftHz);
+        SetRXAShiftRun(m_channelId, m_shiftHz != 0.0 ? 1 : 0);
+        applyNotchShift();
+    }
+    m_config.filterTaps = taps;
+    endControlOperation();
+    return true;
+}
+
 bool WdspChannel::setShift(double shiftHz) noexcept
 {
     if (m_config.direction != Direction::Receive || !std::isfinite(shiftHz)

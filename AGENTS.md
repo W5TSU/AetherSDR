@@ -174,6 +174,30 @@ When in doubt, the agent should implement the fix and note in the PR that
 design decisions need maintainer review. The project maintainer (Jeremy/KK7GWY)
 is the sole authority on visual design and UX direction.
 
+## Agent skills
+
+Configuration the Matt Pocock engineering skills (`to-spec`, `triage`,
+`domain-modeling`, `grill-with-docs`, …) read from. Full details live in
+`docs/agents/`.
+
+### Issue tracker
+
+Issues and specs are tracked as GitHub issues in `W5TSU/AetherSDR` via the
+`gh` CLI. "Publish to the issue tracker" means `gh issue create`. See
+[`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its role name:
+`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`.
+See [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` (short, numbered,
+one-decision ADRs) at the repo root. Longer engineering design notes stay
+under `docs/architecture/`. See [`docs/agents/domain.md`](docs/agents/domain.md).
+
 ## C++ Style Guide
 
 - **No `goto`** — use early returns, break, or restructure the logic
@@ -286,7 +310,7 @@ so the seam is a `tests.cmake` entry, not a missing capability.
 
 ### Version and release files
 
-Current version: **26.9.1**.
+Current version: **26.9.2**.
 Versioning scheme is **CalVer** (`YY.M.patch[.hotfix]`) starting from v26.5.1,
 the 1.0-equivalent. Hotfix sub-patches use a 4th component (e.g. 26.5.2.1).
 Earlier tags used semver through v0.9.8.

@@ -6697,6 +6697,23 @@ void MainWindow::wireBackendSeam(IRadioBackend* backend)
     // and Qt::UniqueConnection cannot protect the lambda connects at all.
     disconnect(backend, &IRadioBackend::audioFrameReady, m_audio, nullptr);
 
+    // Transient "Resampling…" affordance for an in-place receive-chain rebuild
+    // that blocks the GUI thread (today: the HL2 span change across a DDC-rate
+    // boundary — 0.6–1.1 s with four panes, HERMES.md §22.4; the off-thread fix
+    // is a separate follow-up). Raised true on the GUI thread immediately
+    // before the block, so a forced repaint here gets the overlay on screen
+    // before the freeze rather than after it; false clears it — and a resumed
+    // frame would clear it anyway. Generic on IRadioBackend: any future backend
+    // that rebuilds in place gets the same affordance for free.
+    disconnect(backend, &IRadioBackend::resamplingChanged, this, nullptr);
+    connect(backend, &IRadioBackend::resamplingChanged, this,
+            [this](bool active) {
+        setPanadapterConnectionAnimation(active, tr("Resampling…"));
+        if (active && m_panStack) {
+            m_panStack->repaint();
+        }
+    });
+
     // Demo/sim backend delivers RX audio directly over the seam (no VITA-49, no
     // PanadapterStream) — same 24 kHz stereo float32 format, so it feeds the
     // identical AudioEngine path.

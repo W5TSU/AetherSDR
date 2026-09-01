@@ -329,10 +329,11 @@ bool runNotchAttenuationTest()
     config.agcMode = 0;
     config.agcFixedGainDb = 0.0;
     config.blockForOutput = true;
-    // The tap count HL2 actually runs (Hl2RxDsp::kRxFilterTaps), so the null is
-    // measured in the configuration the operator hears rather than in WDSP's
-    // 2048 default — which is also the one whose 200 Hz notch floor this PR
-    // exists to get away from.
+    // The notch-capable tap count HL2 runs while a notch is placed
+    // (Hl2RxDsp::kRxFilterTapsLong), so the null is measured in the
+    // configuration the operator hears rather than in WDSP's 2048 default —
+    // which is also the one whose 200 Hz notch floor this measurement exists
+    // to get away from.
     config.filterTaps = 8192;
 
     const double tuneHz = 7'000'000.0;
@@ -439,6 +440,154 @@ bool runLifecycleTest()
 //
 } // namespace
 
+// Plan 4.1/4.2: runtime FIR-length change and the T/R invariants.
+//
+// setFilterTaps() switches the RX bandpass FIR at runtime (RXASetNC) without
+// closing the channel, so the notch-latency gate can drop 8192 -> 2048 when
+// the last notch goes. The mute-envelope defaults are the anti-click ramps
+// both reference clients use (HERMES.md §12.3) — a T/R transition clocks the
+// channel with silence rather than stopping it, so these ramps and a stable
+// channel id are the invariants that keep the transition clean.
+bool runFilterTapsTest()
+{
+    WdspChannel::Config defaults;
+    if (!require(defaults.filterTaps == 2048,
+                 "Config default filterTaps is no longer WDSP's 2048") ||
+        !require(defaults.muteDelayUpSec == 0.010
+                     && defaults.muteSlewUpSec == 0.025
+                     && defaults.muteDelayDownSec == 0.000
+                     && defaults.muteSlewDownSec == 0.010,
+                 "mute-envelope defaults drifted off the reference ramps "
+                 "(0.010 / 0.025 / 0.000 / 0.010)")) {
+        return false;
+    }
+
+    WdspChannel::Config config;
+    config.inputBlockSize = 256;
+    config.dspBlockSize = 256;
+    config.inputSampleRate = 48000;
+    config.dspSampleRate = 48000;
+    config.outputSampleRate = 48000;
+    config.blockForOutput = true;
+    config.filterTaps = 2048;
+    // AGC off with unity fixed gain: the impulse-delay measurement below needs
+    // an undistorted impulse response.
+    config.agcMode = 0;
+    config.agcFixedGainDb = 0.0;
+
+    std::string error;
+    std::unique_ptr<WdspChannel> channel = WdspChannel::create(config, &error);
+    if (!require(channel != nullptr, error.c_str())) {
+        return false;
+    }
+    const int id = channel->channelIdForTest();
+
+    // Group delay: settle past the startup mute ramp on silence (RXASetNC
+    // re-triggers it, so every call settles), then feed a continuous in-band
+    // tone and return the first output-sample index that reaches half the
+    // eventual steady amplitude. That onset index is filter delay + rise time;
+    // the mute ramp is identical for both tap lengths, so it cancels in the
+    // delta and what is left is the (8192-2048)/2 FIR-delay difference.
+    const auto toneOnsetSamples = [&](WdspChannel& ch) -> long {
+        const double w = 2.0 * std::numbers::pi * (-1500.0) / 48000.0;
+        std::vector<float> inI(config.inputBlockSize, 0.0f);
+        std::vector<float> inQ(config.inputBlockSize, 0.0f);
+        std::vector<float> outL(ch.outputBlockSize());
+        std::vector<float> outR(ch.outputBlockSize());
+        for (int blk = 0; blk < 30; ++blk) {
+            ch.processIq(inI, inQ, outL, outR);   // silence — settle the ramp
+        }
+        std::vector<float> out;
+        long phase = 0;
+        for (int blk = 0; blk < 200; ++blk) {
+            for (std::size_t n = 0; n < inI.size(); ++n, ++phase) {
+                inI[n] = 0.2f * static_cast<float>(std::cos(w * phase));
+                inQ[n] = 0.2f * static_cast<float>(std::sin(w * phase));
+            }
+            ch.processIq(inI, inQ, outL, outR);
+            out.insert(out.end(), outL.begin(), outL.end());
+        }
+        double peak = 0.0;
+        for (const float s : out) {
+            peak = std::max(peak, std::fabs(static_cast<double>(s)));
+        }
+        if (peak <= 0.0) {
+            return -1;
+        }
+        const double threshold = peak * 0.5;
+        for (long i = 0; i < static_cast<long>(out.size()); ++i) {
+            if (std::fabs(static_cast<double>(out[i])) >= threshold) {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    const long delayShort = toneOnsetSamples(*channel);
+
+    if (!require(channel->setFilterTaps(8192),
+                 "setFilterTaps(8192) failed on an RX channel") ||
+        !require(channel->config().filterTaps == 8192,
+                 "config().filterTaps did not follow setFilterTaps(8192)") ||
+        !require(channel->channelIdForTest() == id,
+                 "setFilterTaps closed and reopened the channel") ||
+        !require(channel->setFilterTaps(8192),
+                 "setFilterTaps() to the current value should be a no-op success")) {
+        return false;
+    }
+
+    // Adding the long FIR must add the deeper group delay — the +64 ms the
+    // notch-latency gate exists to avoid paying when no notch is placed.
+    // (8192 - 2048) / 2 = 3072 samples at the 48 kHz DSP rate.
+    const long delayLong = toneOnsetSamples(*channel);
+    const long delta = delayLong - delayShort;
+    if (!require(delta > 2700 && delta < 3400,
+                 "8192 taps did not add ~3072 samples (~64 ms) of group delay "
+                 "over 2048")) {
+        std::cerr << "  measured delay: short=" << delayShort
+                  << " long=" << delayLong << " delta=" << delta << '\n';
+        return false;
+    }
+
+    if (!require(channel->setFilterTaps(2048),
+                 "setFilterTaps(2048) failed") ||
+        !require(channel->config().filterTaps == 2048,
+                 "config().filterTaps did not fall back to 2048") ||
+        !require(channel->channelIdForTest() == id,
+                 "the return to 2048 closed and reopened the channel") ||
+        !require(!channel->setFilterTaps(0),
+                 "setFilterTaps(0) was accepted")) {
+        return false;
+    }
+
+    // The notch database AND the frequency shift survive a tap change (the
+    // whole point of doing it in place rather than via reconfigure()).
+    if (!require(channel->setShift(1000.0), "could not set the RX shift") ||
+        !require(channel->setNotchTuneFrequency(7'000'000.0),
+                 "could not set the notch tune frequency") ||
+        !require(channel->addNotch(0, 7'001'500.0, 50.0, true),
+                 "could not add a notch at 8192 taps")) {
+        return false;
+    }
+    channel->setFilterTaps(8192);
+    if (!require(channel->notchCount() == 1,
+                 "the notch did not survive a redundant setFilterTaps") ||
+        !require(channel->shiftHz() == 1000.0,
+                 "setFilterTaps dropped the RX frequency shift")) {
+        return false;
+    }
+
+    WdspChannel::Config txConfig = config;
+    txConfig.direction = WdspChannel::Direction::Transmit;
+    std::unique_ptr<WdspChannel> tx = WdspChannel::create(txConfig, &error);
+    if (!require(tx != nullptr, error.c_str()) ||
+        !require(!tx->setFilterTaps(4096),
+                 "setFilterTaps was accepted on a transmit channel")) {
+        return false;
+    }
+    return true;
+}
+
 int main()
 {
     const uint64_t allocationBaseline = WdspChannel::outstandingAllocationsForTest();
@@ -458,6 +607,7 @@ int main()
         !runLeakChecked("underrun test", runUnderrunTest) ||
         !runLeakChecked("reconfiguration test", runReconfigurationTest) ||
         !runLeakChecked("notch index test", runNotchIndexTest) ||
+        !runLeakChecked("filter taps / T-R invariants", runFilterTapsTest) ||
         !runLeakChecked("notch attenuation test", runNotchAttenuationTest) ||
         !require(WdspChannel::outstandingAllocationsForTest() == allocationBaseline,
                  "WDSP test suite left allocations outstanding")) {

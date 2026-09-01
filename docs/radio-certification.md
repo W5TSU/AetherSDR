@@ -142,6 +142,41 @@ drive by effect on this radio needs either a per-unit power calibration or an
 external power meter; until then the honest claim is "monotonic in drive",
 which is what the nibble sweep in `HERMES.md` 17.7 shows.
 
+#### `experimental → supported` milestone re-certification (issue #1) — status
+
+- **Gateware re-confirmed v7.4** (0x4A) from the Metis discovery reply of the
+  certifying unit `100.117.237.246` (MAC `00:1C:C0:A2:02:01`, board `0x06`,
+  idle), 2026-08-31 — the same gateware the 2026-08-10 run used.
+- The milestone's changes are **RX, display and verification only** (Plan 4.2
+  established the T/R path and channel lifecycle are untouched), so the
+  **2026-08-10 TX-meter certification above carries forward** — the keyed
+  `tx`/`meters` phases are re-run only if fresh evidence is wanted.
+- **Headless bring-up run, 2026-08-31** (AetherSDR offscreen + automation
+  bridge → `100.117.237.246`, gateware v7.4, over a routed/VPN path, ~200 ms
+  RTT — *not* the local 100BASE-T link the §2 link budget assumes):
+  - `radiocert tune` — **clean.** Tuning error **0 Hz** at 14.2 / 15.2 / 7.1 /
+    3.7 MHz (spans forcing a DDC re-centre). Mode-map round-trips: RTTY →
+    `1950..2350`, DIGU → `150..3000`, DIGL → `-3000..-150`, FM/NFM →
+    `-8000..8000`, CW → `-250..250` — the Plan 2 mode/passband work confirmed on
+    real gateware. CWU/CWL fold to CW as designed.
+  - `radiocert rx` — **structurally clean, signal-inconclusive.** Zero-shift
+    geometry established; passband correctly widens on a CW→DIGU change
+    (`-250..250` → `150..3000`). The four-SSB-mode sideband-recovery stage read
+    the noise floor (−240 dBFS, 0 frames) because no carrier was present at the
+    test frequency — inconclusive, not failing. A real RX cert needs a signal
+    source (ideally third-party spots).
+  - Four-receiver soak — **90 s only, over the VPN path:** `rxPacketsLost`
+    2966 → 2974 (**+8**, ~0.0018 % of ~455 k packets), most of the 2966
+    baseline being EP6 stream restarts from the diagnostic's own retuning. Not
+    the ten-minute local-link soak the gate wants.
+- **ADR gate items 3–4 — completed by the operator, 2026-09-01.** `radiocert`
+  run clean through `tune → rx → tx → meters` on the certifying unit (gateware
+  v7.4), and a ten-minute four-receiver soak passed with no drops, no p99
+  growth and no crash. Recorded here on the operator's confirmation; the
+  detailed *Certified by effect* measurement table is to be pasted in from the
+  run transcript. `docs/adr/0001-hermes-lite-2-supported.md` Status is
+  `accepted` as of this run.
+
 ### Icom (IC-705) — measured with `controls meters`, radio idle on 20 m
 
 Ages are from one live run; the point is the STATUS column, not the numbers.

@@ -73,11 +73,11 @@ int main(int argc, char** argv)
     RadioModel model;
 
     const auto icomNotice = experimentalRadioDescriptor(QStringLiteral("icom"));
-    const auto hl2Notice = experimentalRadioDescriptor(QStringLiteral("hl2"));
     check(icomNotice && icomNotice->displayName == QStringLiteral("Icom"),
           "Icom is identified as an experimental radio family");
-    check(hl2Notice && hl2Notice->displayName == QStringLiteral("Hermes-Lite 2"),
-          "Hermes-Lite 2 is identified as an experimental radio family");
+    check(!experimentalRadioDescriptor(QStringLiteral("hl2")),
+          "Hermes-Lite 2 is no longer an experimental radio family "
+          "(promoted to supported — ADR 0001)");
     check(!experimentalRadioDescriptor(QStringLiteral("flex")),
           "Flex is not marked as an experimental radio family");
     check(icomNotice

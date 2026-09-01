@@ -33,16 +33,28 @@ public:
     // HL2 IQ rate and the audio rate — see the note in configure().
     static constexpr int kWdspDspSampleRateHz = 48000;
 
-    // RX filter length. This is also the manual-notch resolution: WDSP's
-    // narrowest notch is 1600 / (taps/256) Hz at kWdspDspSampleRateHz, and it
-    // WIDENS a narrower request instead of rejecting it. 8192 taps buys a 50 Hz
-    // floor (pihpsdr's value); WDSP's own default of 2048 would floor it at
-    // 200 Hz, wide enough to swallow a CW signal next to the carrier being
-    // notched. Keep kMinNotchWidthHz in step if this changes — the UI offers
-    // widths from it.
-    static constexpr int kRxFilterTaps = 8192;
+    // RX bandpass FIR length — the selectivity/latency trade, gated on whether
+    // a manual notch is in circuit (Plan 4.1).
+    //
+    // The long length is also the manual-notch resolution: WDSP's narrowest
+    // notch is 1600 / (taps/256) Hz at kWdspDspSampleRateHz, and it WIDENS a
+    // narrower request instead of rejecting it. 8192 taps buys a 50 Hz floor
+    // (pihpsdr's value) but costs +64 ms of group delay at 48 kHz — CW
+    // operators feel that most. 2048 (WDSP's own default) floors a notch at
+    // ~200 Hz, wide enough to swallow a CW signal beside the carrier being
+    // notched, but is otherwise the right low-latency default.
+    //
+    // So: the RX path runs SHORT until the first notch is placed, switches to
+    // LONG for as long as any notch exists (WdspChannel::setFilterTaps at
+    // runtime), and drops back to SHORT when the last notch is removed. The
+    // capability the UI reads (notchMinWidthHz) stays at the LONG floor,
+    // because that is what is in force whenever the operator can place a notch.
+    // Keep kMinNotchWidthHz in step with kRxFilterTapsLong — the TNF menu
+    // offers widths from it.
+    static constexpr int kRxFilterTapsLong = 8192;
+    static constexpr int kRxFilterTapsShort = 2048;
     static constexpr double kMinNotchWidthHz =
-        1600.0 / (static_cast<double>(kRxFilterTaps) / 256.0)
+        1600.0 / (static_cast<double>(kRxFilterTapsLong) / 256.0)
         * (static_cast<double>(kWdspDspSampleRateHz) / 48000.0);
     static_assert(kMinNotchWidthHz <= 50.0,
                   "RX filter taps no longer allow a 50 Hz notch; the width "
@@ -107,6 +119,20 @@ public:
     // fps <= 0 removes the cap. The rate is applied on a wall clock, so it
     // holds across a sample-rate change without needing to be recomputed.
     Q_INVOKABLE void setSpectrumRateFps(int fps);
+
+    // Panadapter trace averaging — the operator's Display → FFT AVG level and
+    // weighted-average toggle. Forwarded straight to Hl2Spectrum; frames <= 1
+    // disables it, weighted picks the dB-domain EMA over the boxcar. Kept as
+    // members (NOT in m_config) so configure()'s channel rebuild re-applies the
+    // operator's choice rather than snapping back to unaveraged on a rate
+    // change — see the replay right after m_spectrum is recreated in configure().
+    Q_INVOKABLE void setSpectrumAveraging(int frames, bool weighted);
+
+    // Panadapter peak (max-hold) detector — the operator's Display → FFT PEAK
+    // toggle. Forwarded to Hl2Spectrum; the FFT AVG level doubles as the hold
+    // window (<= 1 is an infinite hold). Kept as a member and replayed after a
+    // configure() rebuild, exactly like the averaging pair above.
+    Q_INVOKABLE void setSpectrumPeakHold(bool on);
 
     // Impulse noise blanker, on the raw IQ ahead of the demodulator.
     //
@@ -214,6 +240,24 @@ public:
         return m_channel ? m_channel->channelIdForTest() : -1;
     }
 
+    // Live WDSP channel configuration, for the bridge's `dsp.get` readback
+    // (`get_state model=dsp selector=backend`). What the DSP chain ACTUALLY
+    // has — in/dsp/out rates, block sizes, filter taps, minimum-phase, mode,
+    // passband edges, AGC mode/ceiling. Value-initialised Config before
+    // configure(). NOT thread-safe: call only from this object's own thread;
+    // Hl2Backend marshals the read with a BlockingQueuedConnection, the same
+    // way it reads wdspChannelId() during bring-up.
+    [[nodiscard]] WdspChannel::Config channelConfig() const
+    {
+        return m_channel ? m_channel->config() : WdspChannel::Config{};
+    }
+    // Global notch-run flag (the Flex tnf_enabled equivalent). Same
+    // thread-affinity caveat as channelConfig().
+    [[nodiscard]] bool notchesEnabled() const noexcept { return m_notchesEnabled; }
+    // Current slice offset from the NCO, Hz — how the backend tunes inside the
+    // passband without moving the DDC. Same caveat.
+    [[nodiscard]] double shiftHz() const noexcept { return m_shiftHz; }
+
     // Demodulated-audio DC blocker, one pole per channel.
     //
     // WDSP's AM/SAM detector is an ENVELOPE detector — amd.c emits
@@ -314,6 +358,11 @@ private:
     // actually completes, since a frame spans several EP6 blocks.
     bool spectrumFrameDue();
 
+    // Notch-latency gate (Plan 4.1): drive the RX FIR length from m_notches —
+    // long iff a notch exists. add/remove/clear call this after mutating the
+    // mirror.
+    void syncFilterTapsToNotchState();
+
     std::unique_ptr<WdspChannel> m_channel;
     std::unique_ptr<Hl2Spectrum> m_spectrum;
     double m_shiftHz = 0.0;   // current slice offset from the NCO, Hz
@@ -346,6 +395,12 @@ private:
     int m_spectrumIntervalMs = 0;
     QElapsedTimer m_spectrumClock;
     qint64 m_lastSpectrumMs = 0;
+    // Panadapter trace-averaging request. Out of m_config, like the NB state, so
+    // configure() cannot clear it; replayed onto the fresh Hl2Spectrum a rebuild
+    // creates. 1 = unaveraged.
+    int m_spectrumAvgFrames = 1;
+    bool m_spectrumAvgWeighted = true;
+    bool m_spectrumPeakHold = false;   // Display → FFT PEAK; replayed on rebuild
     std::vector<std::complex<float>> m_iqBuffer;   // IQ awaiting a full DSP block
     // Wire IQ conjugated into the analytic convention, for the SPECTRUM only —
     // the demodulator takes the raw wire. A member rather than a local: this

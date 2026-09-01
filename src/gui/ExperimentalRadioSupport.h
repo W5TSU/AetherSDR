@@ -20,11 +20,9 @@ inline std::optional<ExperimentalRadioDescriptor> experimentalRadioDescriptor(
             QStringLiteral("Icom"),
             QStringLiteral("ShowExperimentalRadioNoticeIcomV1")};
     }
-    if (normalized == QLatin1String("hl2")) {
-        return ExperimentalRadioDescriptor{
-            QStringLiteral("Hermes-Lite 2"),
-            QStringLiteral("ShowExperimentalRadioNoticeHl2V1")};
-    }
+    // Hermes-Lite 2 was promoted from experimental to supported (ADR 0001):
+    // truthful mode menu, panadapter parity with the Flex path, a hardened
+    // raw-IQ DSP chain, behind a hardware certification gate.
     return std::nullopt;
 }
 

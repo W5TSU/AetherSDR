@@ -2,6 +2,7 @@
 
 #include <fftw3.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace AetherSDR::hl2 {
@@ -97,6 +98,115 @@ void Hl2Spectrum::computeFrame(std::vector<float>& binsDbfs)
         // IQ is normalized to full scale 1.0, so this is dBFS directly.
         binsDbfs[static_cast<std::size_t>(k)] =
             static_cast<float>(20.0 * std::log10(mag + 1e-12));
+    }
+
+    applyDetector(binsDbfs);
+}
+
+void Hl2Spectrum::setAveraging(int frames, bool weighted) noexcept
+{
+    const int f = frames < 1 ? 1 : frames;
+    if (f == m_avgFrames && weighted == m_avgWeighted) {
+        return;
+    }
+    m_avgFrames = f;
+    m_avgWeighted = weighted;
+    // A window-length or mode change starts a fresh average rather than
+    // blending the old shape into the new one.
+    clearDetector();
+}
+
+void Hl2Spectrum::setPeakHold(bool on) noexcept
+{
+    if (on == m_peakHold) {
+        return;
+    }
+    m_peakHold = on;
+    // Switching detector mode starts fresh — a held peak must not bleed into
+    // the average that replaces it, or vice versa.
+    clearDetector();
+}
+
+void Hl2Spectrum::pushFrameHistory(const std::vector<float>& binsDbfs)
+{
+    // A geometry change can hand us a different-length trace before reset()
+    // has run; drop the stale window rather than mixing widths.
+    if (!m_avgHistory.empty() && m_avgHistory.front().size() != binsDbfs.size()) {
+        m_avgHistory.clear();
+    }
+    m_avgHistory.push_back(binsDbfs);
+    while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
+        m_avgHistory.pop_front();
+    }
+}
+
+void Hl2Spectrum::applyDetector(std::vector<float>& binsDbfs)
+{
+    const std::size_t n = binsDbfs.size();
+
+    if (m_peakHold) {
+        if (m_avgFrames <= 1) {
+            // Infinite max-hold: the trace only rises until reset().
+            if (m_peakVec.size() != n) {
+                m_peakVec.assign(binsDbfs.begin(), binsDbfs.end());
+            } else {
+                for (std::size_t k = 0; k < n; ++k) {
+                    m_peakVec[k] = std::max(m_peakVec[k], static_cast<double>(binsDbfs[k]));
+                }
+            }
+            for (std::size_t k = 0; k < n; ++k) {
+                binsDbfs[k] = static_cast<float>(m_peakVec[k]);
+            }
+            return;
+        }
+        // Sliding maximum over the last m_avgFrames frames — an old peak ages
+        // out of the window. Shares m_avgHistory with the boxcar average.
+        pushFrameHistory(binsDbfs);
+        for (std::size_t k = 0; k < n; ++k) {
+            float hi = m_avgHistory.front()[k];
+            for (const std::vector<float>& trace : m_avgHistory) {
+                hi = std::max(hi, trace[k]);
+            }
+            binsDbfs[k] = hi;
+        }
+        return;
+    }
+
+    if (m_avgFrames <= 1) {
+        return;   // "sample" detector — binsDbfs is the bare single-frame trace
+    }
+
+    if (m_avgWeighted) {
+        // dB-domain EMA. Seed from the first frame so the trace does not have
+        // to crawl up from silence over the first time constant.
+        if (m_avgEma.size() != n) {
+            m_avgEma.assign(binsDbfs.begin(), binsDbfs.end());
+        } else {
+            const double alpha = 2.0 / (m_avgFrames + 1);
+            for (std::size_t k = 0; k < n; ++k) {
+                m_avgEma[k] += alpha * (static_cast<double>(binsDbfs[k]) - m_avgEma[k]);
+            }
+        }
+        for (std::size_t k = 0; k < n; ++k) {
+            binsDbfs[k] = static_cast<float>(m_avgEma[k]);
+        }
+        return;
+    }
+
+    // Boxcar: the plain arithmetic mean of the last m_avgFrames traces. Summed
+    // fresh each frame — m_avgFrames is an operator slider value (tens, not
+    // thousands) and n is the FFT size, so O(n * frames) per frame is cheap and
+    // it sidesteps the slow drift a kept running-sum accumulates.
+    pushFrameHistory(binsDbfs);
+    std::vector<double> sum(n, 0.0);
+    for (const std::vector<float>& trace : m_avgHistory) {
+        for (std::size_t k = 0; k < n; ++k) {
+            sum[k] += static_cast<double>(trace[k]);
+        }
+    }
+    const double inv = 1.0 / static_cast<double>(m_avgHistory.size());
+    for (std::size_t k = 0; k < n; ++k) {
+        binsDbfs[k] = static_cast<float>(sum[k] * inv);
     }
 }
 

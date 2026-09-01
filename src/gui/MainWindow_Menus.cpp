@@ -1404,7 +1404,7 @@ void MainWindow::buildMenuBar()
         vbox->addWidget(contribTitle);
 
         // Scrollable contributors list
-        auto* contribLabel = new QLabel("Jeremy (KK7GWY)<br>Claude &middot; Anthropic<br>rfoust<br>Ian (M7HNF)<br>VE3NEM<br>jensenpat<br>chibondking<br>Dependabot");
+        auto* contribLabel = new QLabel("W5TSU &middot; fork maintainer<br>Jeremy (KK7GWY)<br>Claude &middot; Anthropic<br>rfoust<br>Ian (M7HNF)<br>VE3NEM<br>jensenpat<br>chibondking<br>Dependabot");
         contribLabel->setAlignment(Qt::AlignCenter);
         AetherSDR::ThemeManager::instance().applyStyleSheet(contribLabel, "QLabel { color: {{color.text.primary}}; font-size: 11px; }");
         contribLabel->setWordWrap(true);
@@ -1488,7 +1488,10 @@ void MainWindow::buildMenuBar()
             auto doc = QJsonDocument::fromJson(reply->readAll());
             if (!doc.isArray()) return;
             QStringList names;
-            names << "Jeremy (KK7GWY)" << "Claude &middot; Anthropic";
+            // This is W5TSU's fork; the maintainer leads, then the upstream
+            // project lead, then the GitHub contributor graph.
+            names << "W5TSU &middot; fork maintainer"
+                  << "Jeremy (KK7GWY)" << "Claude &middot; Anthropic";
             for (const auto& val : doc.array()) {
                 auto obj = val.toObject();
                 QString login = obj.value("login").toString();

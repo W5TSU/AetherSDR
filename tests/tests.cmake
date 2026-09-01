@@ -607,6 +607,30 @@ target_include_directories(hl2_noise_blanker_test PRIVATE src)
 target_link_libraries(hl2_noise_blanker_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME hl2_noise_blanker_test COMMAND hl2_noise_blanker_test)
 
+# Hl2RxDsp read accessors behind the bridge's `dsp.get` extension:
+# channelConfig() / notchesEnabled() / shiftHz() / notchCount() must echo the
+# live WDSP configuration (HERMES.md §8.1 — the readback that catches model/DSP
+# divergence).
+add_executable(hl2_dsp_readback_test tests/hl2_dsp_readback_test.cpp)
+target_include_directories(hl2_dsp_readback_test PRIVATE src)
+target_link_libraries(hl2_dsp_readback_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME hl2_dsp_readback_test COMMAND hl2_dsp_readback_test)
+
+# AdcOverloadLogGate — rate limiter on the chattering HPSDR ADC-overload bit
+# (HERMES.md §15.7 / §13 T1-6a). Header-only policy; pure Core.
+add_executable(hl2_adc_overload_ratelimit_test tests/hl2_adc_overload_ratelimit_test.cpp)
+target_include_directories(hl2_adc_overload_ratelimit_test PRIVATE src)
+target_link_libraries(hl2_adc_overload_ratelimit_test PRIVATE Qt6::Core)
+add_test(NAME hl2_adc_overload_ratelimit_test COMMAND hl2_adc_overload_ratelimit_test)
+
+# The HL2 RX mode table (Plan 2): operator mode -> WDSP mode + passband, the
+# restore-boundary guard, and the authoritative supported-mode list. Header-only
+# (Hl2ModeTable.h); pure Core, no WDSP channel.
+add_executable(hl2_mode_table_test tests/hl2_mode_table_test.cpp)
+target_include_directories(hl2_mode_table_test PRIVATE src)
+target_link_libraries(hl2_mode_table_test PRIVATE Qt6::Core)
+add_test(NAME hl2_mode_table_test COMMAND hl2_mode_table_test)
+
 # AM/SAM come back from WDSP's envelope detector with the carrier as a DC
 # pedestal; the blocker on the audio output must strip it without touching the
 # modes that were already zero-mean, and without its corner creeping up into
@@ -801,6 +825,17 @@ add_executable(slice_model_squelch_memory_test
 target_include_directories(slice_model_squelch_memory_test PRIVATE src)
 target_link_libraries(slice_model_squelch_memory_test PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME slice_model_squelch_memory_test COMMAND slice_model_squelch_memory_test)
+
+# Plan 2.4: setMode() refuses a mode outside the backend's published modeList;
+# applyChanges() (status) is unaffected.
+add_executable(slice_model_mode_list_guard_test
+    tests/slice_model_mode_list_guard_test.cpp
+    src/models/SliceModel.cpp
+    src/core/DigitalVoiceModeRegistry.cpp
+)
+target_include_directories(slice_model_mode_list_guard_test PRIVATE src)
+target_link_libraries(slice_model_mode_list_guard_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME slice_model_mode_list_guard_test COMMAND slice_model_mode_list_guard_test)
 
 # ThemeManager — RFC #3076 Phase 1.  Verifies the built-in default-dark
 # theme loads from Qt resources, scalar tokens resolve, missing tokens
@@ -1601,6 +1636,17 @@ add_executable(spectral_nr_test
 target_include_directories(spectral_nr_test PRIVATE src)
 target_link_libraries(spectral_nr_test PRIVATE Qt6::Core)
 add_test(NAME spectral_nr_test COMMAND spectral_nr_test)
+
+# Pure DSP metrics over captured PCM (dominant tone, RMS dBFS, clip fraction,
+# spectral-autocorrelation comb spacing). Feeds `capture_audio analyze`; self-contained
+# radix-2 FFT, so no aethercore / Qt link beyond Core.
+add_executable(audio_metrics_test
+    tests/audio_metrics_test.cpp
+    src/core/dsp/AudioMetrics.cpp
+)
+target_include_directories(audio_metrics_test PRIVATE src)
+target_link_libraries(audio_metrics_test PRIVATE Qt6::Core)
+add_test(NAME audio_metrics_test COMMAND audio_metrics_test)
 
 add_executable(mono_dsp_stereo_adapter_test
     tests/mono_dsp_stereo_adapter_test.cpp
@@ -2417,6 +2463,11 @@ if(PYTHON3_EXECUTABLE)
     add_test(NAME bridge_docs_check
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_bridge_docs.py --check)
+    # Guards the generalised sub-action audit itself: pan/audioCapture actions,
+    # not just slice, must round-trip against their *ActionList() single source.
+    add_test(NAME bridge_docs_subaction_audit
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_gen_bridge_docs.py)
 endif()
 
 # Retired local-listener fixture. Positive behavior is covered through the live
@@ -3328,6 +3379,29 @@ target_link_libraries(automation_rn2_probe_test PRIVATE
     aethercore Qt6::Core Qt6::Network
 )
 add_test(NAME automation_rn2_probe_test COMMAND automation_rn2_probe_test)
+
+# `audioCapture analyze <tap>` — AudioMetrics over the captured PCM, surfaced
+# as a bridge verb so a pitch/level/clip/comb regression is one call.
+add_executable(automation_audio_analyze_test
+    tests/automation_audio_analyze_test.cpp
+)
+target_include_directories(automation_audio_analyze_test PRIVATE src)
+target_link_libraries(automation_audio_analyze_test PRIVATE
+    aethercore Qt6::Core Qt6::Network
+)
+add_test(NAME automation_audio_analyze_test COMMAND automation_audio_analyze_test)
+
+# pan span / pan rate / perf / get dsp selector=backend — boundary rows over a
+# real QLocalSocket with a panadapter-less, backend-less RadioModel.
+add_executable(automation_pan_perf_verbs_test tests/automation_pan_perf_verbs_test.cpp)
+target_include_directories(automation_pan_perf_verbs_test PRIVATE src)
+target_link_libraries(automation_pan_perf_verbs_test PRIVATE
+    aethercore Qt6::Core Qt6::Network Qt6::Widgets
+)
+set_target_properties(automation_pan_perf_verbs_test PROPERTIES AUTOMOC ON)
+add_test(NAME automation_pan_perf_verbs_test COMMAND automation_pan_perf_verbs_test)
+set_tests_properties(automation_pan_perf_verbs_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(aetherclock_model_test tests/aetherclock_model_test.cpp)
 target_include_directories(aetherclock_model_test PRIVATE src)

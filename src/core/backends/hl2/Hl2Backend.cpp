@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 
+#include "core/backends/hl2/Hl2ModeTable.h"
 #include "core/backends/hl2/Hl2RxDsp.h"
 #include "core/backends/hl2/Hl2TxDsp.h"
 #include "core/backends/hl2/Hl2TxLevelPolicy.h"
@@ -169,46 +170,11 @@ int wdspAgcMode(const QString& mode) noexcept
     return 3;                                  // medium: WDSP's own default
 }
 
-WdspChannel::Mode modeFromString(const QString& mode) noexcept
-{
-    const QString u = mode.toUpper();
-    if (u == QLatin1String("LSB"))  return WdspChannel::Mode::Lsb;
-    if (u == QLatin1String("USB"))  return WdspChannel::Mode::Usb;
-    if (u == QLatin1String("DSB"))  return WdspChannel::Mode::Dsb;
-    if (u == QLatin1String("CWL"))  return WdspChannel::Mode::Cwl;
-    // "CW" is the upper-sideband CW mode name the rest of the app uses (it is
-    // what TciProtocol::tciToSmartSDR produces for TCI's `cw`, and what a Flex
-    // reports); "CWU" is the explicit spelling. Only CWU was listed, so plain CW
-    // fell through to the USB fallback below and was demodulated as SSB -- the
-    // mode indicator read CW while the passband and detector were not.
-    if (u == QLatin1String("CWU") || u == QLatin1String("CW"))
-        return WdspChannel::Mode::Cwu;
-    if (u == QLatin1String("FM") || u == QLatin1String("NFM"))
-        return WdspChannel::Mode::Fm;
-    if (u == QLatin1String("AM"))   return WdspChannel::Mode::Am;
-    if (u == QLatin1String("DIGU")) return WdspChannel::Mode::Digu;
-    if (u == QLatin1String("DIGL")) return WdspChannel::Mode::Digl;
-    if (u == QLatin1String("SAM"))  return WdspChannel::Mode::Sam;
-    if (u == QLatin1String("DRM"))  return WdspChannel::Mode::Drm;
-    if (u == QLatin1String("WBFM") || u == QLatin1String("WFM")) return WdspChannel::Mode::Wbfm;
-    return WdspChannel::Mode::Usb;
-}
-
-// Is `mode` a name modeFromString() genuinely maps (rather than falling back
-// to USB)? The restore boundary uses this so a corrupt document's mode string
-// is dropped instead of reaching Receiver::mode, the UI, and — via capture —
-// re-persisting itself (PR #4619 review, Ozy311).
-bool isKnownModeString(const QString& mode) noexcept
-{
-    static const QStringList kKnown = {
-        QStringLiteral("LSB"), QStringLiteral("USB"), QStringLiteral("DSB"),
-        QStringLiteral("CWL"), QStringLiteral("CWU"), QStringLiteral("CW"),
-        QStringLiteral("FM"),  QStringLiteral("NFM"), QStringLiteral("AM"),
-        QStringLiteral("DIGU"), QStringLiteral("DIGL"), QStringLiteral("SAM"),
-        QStringLiteral("DRM"), QStringLiteral("WBFM"), QStringLiteral("WFM"),
-    };
-    return kKnown.contains(mode.toUpper());
-}
+// modeFromString(), isKnownModeString(), wdspModeName() and
+// defaultPassbandForMode() now live in Hl2ModeTable.h so they are unit-testable
+// without a connected backend (tests/hl2_mode_table_test.cpp). This TU is inside
+// namespace AetherSDR::hl2, so the calls below resolve to the header's versions
+// with no `using`.
 
 // The same question for the AGC vocabulary, and it needs asking for the same
 // reason: wdspAgcMode() FALLS BACK to medium for anything it does not
@@ -225,50 +191,6 @@ bool isKnownAgcModeString(const QString& mode) noexcept
     const QString m = mode.trimmed().toLower();
     return m == QLatin1String("off") || m == QLatin1String("slow")
            || m == QLatin1String("med") || m == QLatin1String("fast");
-}
-
-// Default RX passband per mode, in Hz relative to the carrier. Sign carries the
-// sideband, matching SliceModel's convention (USB-family positive, LSB-family
-// negative, carrier-straddling modes symmetric) -- a table with the wrong sign
-// here would be silently "corrected" by SliceModel::normalizeFilterPolarity and
-// the mistake would never surface.
-//
-// The digital entries are deliberately the widest of the set. DIGU is the mode
-// WSJT-X selects, and it must pass the whole 3 kHz audio window the decoder
-// expects; a snug SSB passband would clip the top of the FT8 sub-band and drop
-// exactly the signals at the edges.
-std::pair<int, int> defaultPassbandForMode(const QString& mode) noexcept
-{
-    const QString u = mode.toUpper();
-    if (u == QLatin1String("USB"))  return {100, 2900};
-    if (u == QLatin1String("LSB"))  return {-2900, -100};
-    if (u == QLatin1String("DIGU")) return {150, 3000};
-    if (u == QLatin1String("DIGL")) return {-3000, -150};
-    // CW: 500 Hz CENTRED ON THE CARRIER, both sidebands, because in CW the
-    // operator-facing passband is measured from the signal and not from the
-    // audio it becomes. The pitch offset lives in the BFO (cwBfoHz) instead —
-    // see the note there — so CWU and CWL share one table entry and differ only
-    // in which way the BFO leans.
-    //
-    // This is the convention the rest of the app already assumes:
-    // VfoWidget::applyFilterPreset builds every CW preset as {-w/2, +w/2}
-    // ("centred on carrier — radio's BFO handles pitch offset"), and a Flex
-    // reports CW cuts the same way (FlexLib Slice.cs clamps them to
-    // ±12000 - CWPitch, which only makes sense for cuts measured from the
-    // carrier). Returning {350, 850} here put the passband skirt a whole pitch
-    // to the RIGHT of the marker on the panadapter and, worse, meant the
-    // gateware transmitted a CW carrier at the marker while the receiver
-    // listened 600 Hz above it.
-    if (u == QLatin1String("CWU") || u == QLatin1String("CW")
-        || u == QLatin1String("CWL")) return {-250, 250};
-    // Carrier-straddling modes: symmetric about the carrier, which the envelope
-    // and synchronous detectors both need.
-    if (u == QLatin1String("AM") || u == QLatin1String("SAM")) return {-4000, 4000};
-    if (u == QLatin1String("DSB")) return {-3000, 3000};
-    if (u == QLatin1String("FM") || u == QLatin1String("NFM")) return {-8000, 8000};
-    if (u == QLatin1String("WBFM") || u == QLatin1String("WFM")) return {-40000, 40000};
-    if (u == QLatin1String("DRM")) return {-5000, 5000};
-    return {150, 3000};   // matches modeFromString's USB fallback
 }
 
 // The CW BFO offset for `mode`, in Hz of audio: where a signal sitting exactly
@@ -884,7 +806,7 @@ bool Hl2Backend::createPanadapter()
     dc.mode = modeFromString(r.mode);
     std::tie(dc.filterLowHz, dc.filterHighHz) = dspFilterHz(r);
     dc.agcMode = wdspAgcMode(r.agcMode);
-    dc.maximumAgcGainDb = r.agcThresholdDb * kAgcCeilingDbPerUnit;
+    dc.maximumAgcGainDb = Hl2DbReference::agcCeilingDbForThreshold(r.agcThresholdDb);
     bool ok = false;
     Hl2RxDsp* dsp = r.dsp;
     QMetaObject::invokeMethod(dsp, [dsp, &dc, &err, &ok] {
@@ -1932,7 +1854,7 @@ void Hl2Backend::beginDspSetup()
         // rather than as a restore bug, which is why the three sites should
         // look identical.
         dc.agcMode = wdspAgcMode(r.agcMode);
-        dc.maximumAgcGainDb = r.agcThresholdDb * kAgcCeilingDbPerUnit;
+        dc.maximumAgcGainDb = Hl2DbReference::agcCeilingDbForThreshold(r.agcThresholdDb);
         chains.push_back(r.dsp);
         configs.push_back(dc);
     }
@@ -2405,7 +2327,8 @@ void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
     // surface nobody can see. It also fixes the empty-mode call (a
     // threshold-only change), which used to send medium over whatever mode the
     // receiver was actually running.
-    const double ceilingDb = r->agcThresholdDb * kAgcCeilingDbPerUnit;
+    const double ceilingDb =
+        Hl2DbReference::agcCeilingDbForThreshold(r->agcThresholdDb);
     if (r->dsp)
         QMetaObject::invokeMethod(r->dsp, "setAgc", Qt::QueuedConnection,
             Q_ARG(int, wdspAgcMode(r->agcMode)), Q_ARG(double, ceilingDb));
@@ -2880,6 +2803,11 @@ void Hl2Backend::applyPanBandwidth(double hz)
 
     m_sampleRateHz = rate;
 
+    // Put up the "Resampling…" affordance before the blocking rebuild below.
+    // Raised here, on the GUI thread, so the consumer's forced repaint lands
+    // before the freeze; cleared on every path out of the rebuild.
+    emit resamplingChanged(true);
+
     // The DDC rate lives in the config register (C0=0x00), latched into the next
     // C&C round. Deliberately NOT followed by a filter-pipeline reset: sending
     // 0x39 on every geometry change is what wedged a board hard enough to need a
@@ -2931,7 +2859,7 @@ void Hl2Backend::applyPanBandwidth(double hz)
         // moved their AGC would have had it silently snap back to medium/39 dB
         // every time they zoomed.
         dc.agcMode = wdspAgcMode(r.agcMode);
-        dc.maximumAgcGainDb = r.agcThresholdDb * kAgcCeilingDbPerUnit;
+        dc.maximumAgcGainDb = Hl2DbReference::agcCeilingDbForThreshold(r.agcThresholdDb);
         std::string err;
         bool ok = false;
         Hl2RxDsp* dsp = r.dsp;
@@ -2962,7 +2890,8 @@ void Hl2Backend::applyPanBandwidth(double hz)
                 rc.mode = modeFromString(m_rx[k].mode);
                 std::tie(rc.filterLowHz, rc.filterHighHz) = dspFilterHz(m_rx[k]);
                 rc.agcMode = wdspAgcMode(m_rx[k].agcMode);
-                rc.maximumAgcGainDb = m_rx[k].agcThresholdDb * kAgcCeilingDbPerUnit;
+                rc.maximumAgcGainDb = Hl2DbReference::agcCeilingDbForThreshold(
+                    m_rx[k].agcThresholdDb);
                 std::string backErr;
                 bool backOk = false;
                 QMetaObject::invokeMethod(back, [back, &rc, &backErr, &backOk] {
@@ -2979,10 +2908,13 @@ void Hl2Backend::applyPanBandwidth(double hz)
                     Qt::QueuedConnection,
                     Q_ARG(AetherSDR::hl2::SampleRate,
                           sampleRateEnum(previousRate)));
+            emit resamplingChanged(false);
             emitAllPanState();
             return;
         }
     }
+
+    emit resamplingChanged(false);
 
     // Remember it. The span is the operator's deliberate choice about how much
     // network and CPU this radio may consume, so it survives the session rather
@@ -3018,6 +2950,37 @@ void Hl2Backend::setPanFrameRate(const QString& panId, int fps)
         return;
     QMetaObject::invokeMethod(r->dsp, "setSpectrumRateFps", Qt::QueuedConnection,
         Q_ARG(int, fps));
+}
+
+void Hl2Backend::setPanAverage(const QString& panId, int frames, bool weighted)
+{
+    // Straight through to the DSP's FFT stage, which runs the trace average
+    // itself — a Flex would have the firmware do it and echo the level back.
+    // Queued: Hl2Spectrum lives on the DSP thread.
+    //
+    // PER PAN, like the frame rate and for the same reason: averaging is a
+    // display choice, not a hardware register, so each receiver's panadapter
+    // keeps its own. Hl2RxDsp holds the value across a channel rebuild.
+    const int ddc = ddcForPan(panId);
+    Receiver* r = rx(ddc);
+    if (!r || !r->dsp) {
+        return;
+    }
+    QMetaObject::invokeMethod(r->dsp, "setSpectrumAveraging", Qt::QueuedConnection,
+        Q_ARG(int, frames), Q_ARG(bool, weighted));
+}
+
+void Hl2Backend::setPanPeakHold(const QString& panId, bool on)
+{
+    // Same route as setPanAverage — per DDC, queued to the DSP thread, held by
+    // Hl2RxDsp across a channel rebuild.
+    const int ddc = ddcForPan(panId);
+    Receiver* r = rx(ddc);
+    if (!r || !r->dsp) {
+        return;
+    }
+    QMetaObject::invokeMethod(r->dsp, "setSpectrumPeakHold", Qt::QueuedConnection,
+        Q_ARG(bool, on));
 }
 
 void Hl2Backend::setKeying(bool key)
@@ -3839,6 +3802,75 @@ void Hl2Backend::invokeExtension(const QString& ns, const QString& verb, quint64
             }
             return;
         }
+        // Live per-receiver WDSP channel config, for `get_state model=dsp
+        // selector=backend`. Reports what the DSP chain ACTUALLY has, read on
+        // its own thread with a blocking hop — the same discipline nb.get
+        // follows with atomics, here through a marshalled lambda because Config
+        // is a struct, not a scalar (the pattern is beginDspSetup()'s
+        // wdspChannelId() read). HERMES.md §8.1: this readback would have
+        // caught the dsp_rate, passband and sideband gaps immediately.
+        if (verb == QLatin1String("dsp.get")) {
+            if (requestId != 0) {
+                QVariantList rxList;
+                for (std::size_t i = 0; i < m_rx.size(); ++i) {
+                    const Receiver& r = m_rx[i];
+                    const auto* ids = m_ids.byDdc(static_cast<int>(i));
+                    QVariantMap m{
+                        {QStringLiteral("ddc"), static_cast<int>(i)},
+                        {QStringLiteral("uiNumber"), ids ? ids->uiNumber : -1},
+                        {QStringLiteral("panId"), ids ? ids->panId : QString()},
+                        {QStringLiteral("hasChain"), r.dsp != nullptr},
+                    };
+                    if (r.dsp && m_ioThread && m_ioThread->isRunning()) {
+                        Hl2RxDsp* dsp = r.dsp;
+                        WdspChannel::Config c;
+                        bool notchesOn = false;
+                        double shiftHz = 0.0;
+                        int notches = 0;
+                        auto readDsp = [dsp, &c, &notchesOn, &shiftHz, &notches] {
+                            c = dsp->channelConfig();
+                            notchesOn = dsp->notchesEnabled();
+                            shiftHz = dsp->shiftHz();
+                            notches = dsp->notchCount();
+                        };
+                        // The DSP lives on m_ioThread. Marshal the read there,
+                        // unless this call is ALREADY on that thread (a future
+                        // caller) — a BlockingQueuedConnection to your own
+                        // thread deadlocks. Same guard shape as publishIoDsps().
+                        if (QThread::currentThread() == m_ioThread) {
+                            readDsp();
+                        } else {
+                            QMetaObject::invokeMethod(dsp, readDsp,
+                                                      Qt::BlockingQueuedConnection);
+                        }
+                        m.insert(QStringLiteral("inputSampleRate"), c.inputSampleRate);
+                        m.insert(QStringLiteral("dspSampleRate"), c.dspSampleRate);
+                        m.insert(QStringLiteral("outputSampleRate"), c.outputSampleRate);
+                        m.insert(QStringLiteral("inputBlockSize"),
+                                 static_cast<qlonglong>(c.inputBlockSize));
+                        m.insert(QStringLiteral("dspBlockSize"),
+                                 static_cast<qlonglong>(c.dspBlockSize));
+                        m.insert(QStringLiteral("filterTaps"), c.filterTaps);
+                        m.insert(QStringLiteral("minimumPhase"), c.minimumPhase);
+                        m.insert(QStringLiteral("mode"), wdspModeName(c.mode));
+                        m.insert(QStringLiteral("filterLowHz"), c.filterLowHz);
+                        m.insert(QStringLiteral("filterHighHz"), c.filterHighHz);
+                        m.insert(QStringLiteral("agcMode"), c.agcMode);
+                        m.insert(QStringLiteral("maximumAgcGainDb"), c.maximumAgcGainDb);
+                        m.insert(QStringLiteral("agcSlopeDb"), c.agcSlopeDb);
+                        m.insert(QStringLiteral("notchesEnabled"), notchesOn);
+                        m.insert(QStringLiteral("notchCount"), notches);
+                        m.insert(QStringLiteral("shiftHz"), shiftHz);
+                    }
+                    rxList.append(m);
+                }
+                emit extensionResult(requestId, QVariantMap{
+                    {QStringLiteral("family"), QStringLiteral("hl2")},
+                    {QStringLiteral("receivers"), rxList},
+                });
+            }
+            return;
+        }
     }
     // No other HL2 extension verbs; honor the async contract without hanging.
     if (requestId != 0)
@@ -4640,7 +4672,7 @@ void Hl2Backend::pushInitialState()
         // which is the rule the passband derivation guard exists to enforce.
         QMetaObject::invokeMethod(r.dsp, "setAgc", Qt::QueuedConnection,
             Q_ARG(int, wdspAgcMode(r.agcMode)),
-            Q_ARG(double, r.agcThresholdDb * kAgcCeilingDbPerUnit));
+            Q_ARG(double, Hl2DbReference::agcCeilingDbForThreshold(r.agcThresholdDb)));
         QMetaObject::invokeMethod(r.dsp, "setAudioMuted", Qt::QueuedConnection,
             Q_ARG(bool, false));
         // The notch axis, which is measured from the NCO and defaults to ZERO.
@@ -4851,10 +4883,24 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
     }
 
     m_telemetry = t;
-    if (t.adcOverload && *t.adcOverload != m_adcOverload) {
-        m_adcOverload = *t.adcOverload;
-        if (m_adcOverload)
-            qWarning() << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
+    if (t.adcOverload) {
+        if (!m_telemetryClock.isValid()) {
+            m_telemetryClock.start();
+        }
+        const auto d = m_adcOverloadGate.update(*t.adcOverload,
+                                                m_telemetryClock.elapsed());
+        if (d.log) {
+            if (d.suppressedSinceLast > 0) {
+                qCWarning(lcHl2).nospace()
+                    << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate ("
+                    << d.suppressedSinceLast
+                    << " further edge(s) suppressed in the last "
+                    << AdcOverloadLogGate::kCooldownMs << " ms)";
+            } else {
+                qCWarning(lcHl2)
+                    << "Hl2Backend: ADC OVERLOAD — reduce LNA gain or attenuate";
+            }
+        }
     }
 }
 
@@ -5051,6 +5097,12 @@ void Hl2Backend::emitSliceState(int ddc)
     d.panId = ids->panId;
     d.frequency = r->sliceFreqHz / 1.0e6;   // MHz
     d.mode = r->mode;
+    // The backend is authoritative about which modes it supports (Plan 2): the
+    // VFO combo shows exactly this list instead of the Flex fallback set, so no
+    // mode can be selected that silently demodulates as something else, and
+    // D-STAR / DRM / FreeDV — which need a decoder or an audio path this raw-IQ
+    // backend does not have — are simply not offered.
+    d.modeList = supportedModes();
     d.filterLow = r->filterLowHz;
     d.filterHigh = r->filterHighHz;
     // The AGC pair the DSP is actually running.

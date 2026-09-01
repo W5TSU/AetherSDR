@@ -257,6 +257,33 @@ public:
         Q_UNUSED(fps);
     }
 
+    // The operator's Display → FFT AVG level and weighted-average toggle.
+    //
+    // A Flex runs the trace averaging in firmware and echoes the level back
+    // through pan status, so its wire text has somewhere to land. A backend
+    // that streams cooked spectra has no such engine — it runs the average in
+    // its own FFT stage instead. `frames` is 0/1 = off, N = the EMA / boxcar
+    // length; `weighted` picks the dB-domain EMA over the boxcar mean.
+    //
+    // Default no-op: a Flex radio's display engine owns this.
+    virtual void setPanAverage(const QString& panId, int frames, bool weighted)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(frames);
+        Q_UNUSED(weighted);
+    }
+
+    // The operator's Display → FFT PEAK (max-hold) detector toggle. The third
+    // spectrum-analyser detector mode alongside sample and average (issue #1
+    // story 6). A Flex panadapter has no wire parameter for it; a backend that
+    // shapes its own spectra runs the max-hold in its FFT stage, with the
+    // FFT AVG level as the hold window. Default no-op.
+    virtual void setPanPeakHold(const QString& panId, bool on)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(on);
+    }
+
     // ---- per-slice audio ----
     //
     // A Flex mixes its slices ON THE RADIO, so these are wire commands to it and
@@ -825,6 +852,16 @@ signals:
     // heartbeat's alarm path is waiting for. A backend that emits only on
     // receive can never report its own silence.
     void linkStatsUpdated(const IRadioBackend::LinkStats& stats);
+
+    // The backend is rebuilding the receive chain in place and the UI is about
+    // to be unresponsive for it. Raised true immediately before the blocking
+    // work and false immediately after, on the GUI thread, so a consumer can
+    // put up a transient "resampling…" affordance instead of a bare frozen
+    // window (issue #1 story 21; the only emitter today is the HL2 span change
+    // that crosses one of the four DDC-rate boundaries — 0.6–1.1 s with four
+    // panadapters open, HERMES.md §22.4). A backend that rebuilds off-thread
+    // never emits this.
+    void resamplingChanged(bool active);
 
     // ---- vendor-extension replies UP (correlate to invokeExtension) ----
     // The async result of an invokeExtension() call, keyed by the caller's

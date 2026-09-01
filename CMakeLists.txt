@@ -7,7 +7,7 @@ if(POLICY CMP0156)
     cmake_policy(SET CMP0156 NEW)
 endif()
 
-project(AetherSDR VERSION 26.9.1 LANGUAGES C CXX)
+project(AetherSDR VERSION 26.9.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -636,6 +636,7 @@ set(CORE_SOURCES
     src/core/backends/icom/IcomSettings.cpp  # owned config, "Icom" root key (Principle V)
     src/core/backends/icom/IcomCredentials.cpp # password -> keychain, NEVER settings
     src/core/dsp/WdspChannel.cpp
+    src/core/dsp/AudioMetrics.cpp
     ${AETHER_SETTINGS_SOURCES}
     src/core/RadioStateMemory.cpp   # RFC #4603 client-side radio memory
     src/core/GpuSelector.cpp

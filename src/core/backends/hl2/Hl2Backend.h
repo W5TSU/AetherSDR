@@ -8,6 +8,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include "core/backends/hl2/AdcOverloadLogGate.h"
 #include "core/backends/hl2/Hl2DbReference.h"
 #include "core/backends/hl2/Hl2Receivers.h"
 #include "core/backends/hl2/MetisProtocol.h"   // Hl2Telemetry
@@ -87,6 +88,8 @@ private:
 
 public:
     void setPanFrameRate(const QString& panId, int fps) override;
+    void setPanAverage(const QString& panId, int frames, bool weighted) override;
+    void setPanPeakHold(const QString& panId, bool on) override;
     bool createPanadapter() override;
     bool removePanadapter(const QString& panId) override;
     void createNotch(double centerHz, double widthHz) override;
@@ -644,7 +647,10 @@ private:
     // can answer "is the radio still sending", which a cumulative total cannot.
     quint64 m_linkRxPacketsAtLastTick = 0;
     static constexpr int kLinkStatsIntervalMs = 1000;
-    bool m_adcOverload = false;
+    // Rate-limits the chattering ADC-overload warning (HERMES.md §15.7); the
+    // clock is a plain monotonic source started on the first telemetry frame.
+    AdcOverloadLogGate m_adcOverloadGate;
+    QElapsedTimer m_telemetryClock;
     bool m_keyed = false;
     bool m_tuning = false;
     bool m_cwAutoKeyed = false;
@@ -852,9 +858,9 @@ private:
 
     // Fraction of the half-span the slice may occupy before the NCO re-centres.
     // 0.8 leaves the outer 20% of each side for filter roll-off.
-    // Slice AGC threshold (0..100) -> WDSP gain ceiling in dB. 0.6 spans
-    // 0..60 dB; see the measurement in setSliceAgc().
-    static constexpr double kAgcCeilingDbPerUnit = 0.6;
+    // Slice AGC threshold (0..100) -> WDSP gain ceiling in dB lives on
+    // Hl2DbReference now (kAgcCeilingDbPerUnit / agcCeilingDbForThreshold) —
+    // one object owns the whole signal-reference chain. See setSliceAgc().
     static constexpr double kUsablePassbandFraction = 0.8;
     // Ceiling on host-mixed slice audio. N demodulated receivers are summed
     // here, so N loud slices can sum past full scale where one never could.

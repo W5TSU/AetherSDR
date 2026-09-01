@@ -3118,6 +3118,12 @@ void SpectrumWidget::setFftFps(int fps) {
             m_fftAverage, m_fftFps, m_fftWeightedAvg);
     }
 }
+void SpectrumWidget::setFftPeakHold(bool on) {
+    m_fftPeakHold = on;
+    if (m_overlayMenu) {
+        m_overlayMenu->syncPeakHold(m_fftPeakHold);
+    }
+}
 void SpectrumWidget::setFftHeatMap(bool on) {
     m_fftHeatMap = on;
     auto& s = AppSettings::instance();

@@ -29,6 +29,7 @@
 #include "OpusCodec.h"
 #include "ReceivePresentationSync.h"
 #include "SpectralNR.h"
+#include "dsp/AudioMetrics.h"
 #include "models/Nr2SettingsModel.h"
 #include "models/Rn2SettingsModel.h"
 #ifdef HAVE_SPECBLEACH
@@ -3760,6 +3761,82 @@ QJsonObject AudioEngine::automationAudioCaptureSnapshot(bool includePcm) const
          static_cast<double>(captureMaxBytes)},
         {QStringLiteral("chunkCount"), chunks.size()},
         {QStringLiteral("chunks"), chunks},
+    };
+}
+
+QJsonObject AudioEngine::automationAudioCaptureAnalyze(const QString& tap) const
+{
+    if (!qEnvironmentVariableIsSet("AETHER_AUTOMATION")) {
+        return QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"),
+             QStringLiteral("audioCapture analyze requires AETHER_AUTOMATION=1")},
+        };
+    }
+
+    const QString want = tap.trimmed().toLower();
+    if (!want.isEmpty() && want != QLatin1String("raw")
+        && want != QLatin1String("post") && want != QLatin1String("output")
+        && want != QLatin1String("final")) {
+        return QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"),
+             QStringLiteral("analyze tap must be raw, post, output, final, or empty for all")},
+        };
+    }
+
+    QByteArray pcm;
+    int sampleRate = 0;
+    int channels = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_automationAudioCaptureMutex);
+        for (const AutomationAudioCaptureChunk& chunk : m_automationCaptureChunks) {
+            if (!want.isEmpty() && chunk.point != want) {
+                continue;
+            }
+            pcm.append(chunk.pcm);
+            sampleRate = chunk.sampleRate;
+            channels = chunk.channels;
+        }
+    }
+
+    if (pcm.isEmpty() || sampleRate <= 0 || channels <= 0) {
+        return QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"),
+             QStringLiteral("no captured audio for tap '")
+                 + (want.isEmpty() ? QStringLiteral("all") : want)
+                 + QStringLiteral("'")},
+        };
+    }
+
+    const qsizetype frameBytes =
+        channels * static_cast<qsizetype>(sizeof(float));
+    const std::size_t frames =
+        static_cast<std::size_t>(pcm.size() / frameBytes);
+    const auto* interleaved = reinterpret_cast<const float*>(pcm.constData());
+    const std::vector<float> mono =
+        AudioMetrics::toMono(interleaved, frames, channels);
+
+    const auto tones = AudioMetrics::dominantFrequencies(
+        mono.data(), mono.size(), sampleRate, 2);
+
+    return QJsonObject{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("tap"), want.isEmpty() ? QStringLiteral("all") : want},
+        {QStringLiteral("frames"), static_cast<int>(mono.size())},
+        {QStringLiteral("sampleRate"), sampleRate},
+        {QStringLiteral("channels"), channels},
+        {QStringLiteral("dominantHz"), tones.size() > 0 ? tones[0].hz : 0.0},
+        {QStringLiteral("dominantHz2"), tones.size() > 1 ? tones[1].hz : 0.0},
+        {QStringLiteral("peak"),
+         AudioMetrics::peakAbs(mono.data(), mono.size())},
+        {QStringLiteral("rmsDbfs"),
+         AudioMetrics::rmsDbfs(mono.data(), mono.size())},
+        {QStringLiteral("clippedFraction"),
+         AudioMetrics::clippedFraction(mono.data(), mono.size())},
+        {QStringLiteral("combSpacingHz"),
+         AudioMetrics::combSpacingHz(mono.data(), mono.size(), sampleRate)},
     };
 }
 

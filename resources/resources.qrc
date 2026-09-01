@@ -24,6 +24,7 @@
     </qresource>
     <qresource prefix="/images">
         <file alias="aurora-cutout.png">aurora-cutout.png</file>
+        <file alias="w5tsu-fork.png">images/w5tsu-fork.png</file>
     </qresource>
     <qresource prefix="/themes">
         <file alias="default-dark.json">themes/default-dark.json</file>
