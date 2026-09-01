@@ -29,6 +29,11 @@
 #include <QSurfaceFormat>
 #include <memory>
 #include <QStyleFactory>
+#include <QSplashScreen>
+#include <QPainter>
+#include <QPixmap>
+#include <QFont>
+#include <QScreen>
 #include <QDir>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -97,6 +102,99 @@ __declspec(dllexport) int   AmdPowerXpressRequestHighPerformance = 1;
 static void messageHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg)
 {
     AetherSDR::LogManager::instance().enqueueMessage(type, ctx, msg);
+}
+
+// ── Fork-disclosure splash ─────────────────────────────────────────────────
+// This is an UNOFFICIAL fork of AetherSDR, maintained by W5TSU. The splash is
+// shown for a minimum of kForkSplashMs so a user cannot miss that this is not
+// the official build (see main() for the minimum-hold timing). Suppressed for
+// automation / headless / CI, and with `--no-splash` for anyone who has read it
+// once. Returns the shown splash (owned by the caller), or nullptr when
+// suppressed.
+static constexpr int kForkSplashMs = 5000;
+
+static bool forkSplashSuppressed(int argc, char* argv[])
+{
+    if (qEnvironmentVariableIsSet("AETHER_AUTOMATION"))
+        return true;
+    if (qEnvironmentVariable("QT_QPA_PLATFORM").contains(
+            QLatin1String("offscreen"), Qt::CaseInsensitive))
+        return true;
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--no-splash") == 0)
+            return true;
+    }
+    return false;
+}
+
+static std::unique_ptr<QSplashScreen> showForkSplash(int argc, char* argv[])
+{
+    if (forkSplashSuppressed(argc, argv))
+        return nullptr;
+
+    const qreal dpr = QApplication::primaryScreen()
+        ? QApplication::primaryScreen()->devicePixelRatio()
+        : 1.0;
+
+    // Logical layout: a dark card, the fork mark centred at the top, then the
+    // disclosure. Painted at dpr for crisp text on HiDPI.
+    constexpr int kW = 560;
+    constexpr int kH = 470;
+    QPixmap canvas(qRound(kW * dpr), qRound(kH * dpr));
+    canvas.setDevicePixelRatio(dpr);
+    canvas.fill(QColor(0x0b, 0x0b, 0x12));
+
+    QPainter p(&canvas);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    p.setPen(QColor(0x2a, 0x2a, 0x3a));
+    p.drawRect(0, 0, kW - 1, kH - 1);
+
+    const QPixmap mark(QStringLiteral(":/images/w5tsu-fork.png"));
+    if (!mark.isNull()) {
+        const QPixmap scaled = mark.scaled(180, 180, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+        p.drawPixmap((kW - scaled.width()) / 2, 28, scaled);
+    }
+
+    int y = 232;
+    QFont f = QApplication::font();
+
+    f.setPointSizeF(15.0);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(QColor(0xe8, 0xb2, 0x3a));   // the mark's gold
+    p.drawText(QRect(0, y, kW, 26), Qt::AlignHCenter,
+               QStringLiteral("W5TSU AetherSDR — UNOFFICIAL FORK"));
+    y += 40;
+
+    f.setPointSizeF(10.5);
+    f.setBold(false);
+    p.setFont(f);
+    p.setPen(QColor(0xcf, 0xcf, 0xda));
+    p.drawText(QRect(36, y, kW - 72, 110), Qt::AlignHCenter | Qt::TextWordWrap,
+               QStringLiteral(
+                   "A personal fork maintained by W5TSU, built from the "
+                   "open-source AetherSDR project. This is NOT an official "
+                   "AetherSDR release and is not supported by the AetherSDR "
+                   "project. Report problems with this build to the fork."));
+    y += 118;
+
+    f.setPointSizeF(9.5);
+    p.setFont(f);
+    p.setPen(QColor(0x7f, 0xc9, 0xd6));
+    p.drawText(QRect(0, y, kW, 20), Qt::AlignHCenter,
+               QStringLiteral("Official project:  github.com/aethersdr/AetherSDR"));
+    p.drawText(QRect(0, y + 20, kW, 20), Qt::AlignHCenter,
+               QStringLiteral("This fork:  github.com/W5TSU/AetherSDR"));
+    p.end();
+
+    auto splash = std::make_unique<QSplashScreen>(canvas);
+    splash->setAttribute(Qt::WA_DeleteOnClose, false);
+    splash->show();
+    QApplication::processEvents();
+    return splash;
 }
 
 // ── `AetherSDR --config` — settings CLI (RFC #4603 proposal D MVO) ───────────
@@ -442,6 +540,15 @@ int main(int argc, char* argv[])
     app.setOrganizationName("AetherSDR");
     app.setDesktopFileName("AetherSDR");  // matches .desktop file for taskbar icon
 
+    // ── Fork-disclosure splash ───────────────────────────────────────────
+    // Shown as early as possible (so it covers the whole startup) and held
+    // for at least kForkSplashMs before the main window is revealed — see the
+    // window block below. Nothing about this build should reach a user without
+    // it being obvious this is an unofficial fork.
+    QElapsedTimer forkSplashClock;
+    forkSplashClock.start();
+    std::unique_ptr<QSplashScreen> forkSplash = showForkSplash(argc, argv);
+
     // ── Main-thread stall watchdog (diagnostic, log-only) ─────────────────
     // 250 ms heartbeat on the GUI event loop. If a tick arrives late by more
     // than the threshold, the main thread was blocked — e.g. the ~2 s
@@ -723,6 +830,27 @@ int main(int argc, char* argv[])
     {
         AetherSDR::MainWindow window;
         window.show();
+
+        // Keep the fork splash on top of the (now visible) window until it has
+        // been up for its full minimum, then close it. Showing the window
+        // underneath first means an early click on the splash — QSplashScreen
+        // hides on mouse press — reveals a live window rather than a blank
+        // screen, and the window gets its first paint done behind the splash.
+        // If startup already exceeded kForkSplashMs the splash closes now.
+        if (forkSplash) {
+            const qint64 remainMs = kForkSplashMs - forkSplashClock.elapsed();
+            if (remainMs > 0) {
+                forkSplash->raise();
+                QTimer::singleShot(
+                    static_cast<int>(remainMs), &window,
+                    [s = std::move(forkSplash), &window]() mutable {
+                        s->finish(&window);
+                    });
+            } else {
+                forkSplash->finish(&window);
+                forkSplash.reset();
+            }
+        }
 
         // Settings-store notices a user must see (RFC #4603): a backup was
         // restored after corruption, a newer-schema store opened read-only, or
