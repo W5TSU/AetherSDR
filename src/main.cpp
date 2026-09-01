@@ -33,10 +33,8 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QFont>
-#include <QMouseEvent>
 #include <QScreen>
 #include <QWindow>
-#include <functional>
 #include <QDir>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -109,39 +107,15 @@ static void messageHandler(QtMsgType type, const QMessageLogContext& ctx, const 
 
 // ── Fork-disclosure splash ─────────────────────────────────────────────────
 // This is an UNOFFICIAL fork of AetherSDR, maintained by W5TSU. The splash is
-// the only window on screen for kForkSplashMs and then times out, so a user
-// cannot miss that this is not the official build. "Always on top" is enforced
-// by NOT showing the main window until the splash goes away: Wayland
-// compositors (e.g. GNOME/Mutter) ignore Qt::WindowStaysOnTopHint and raise()
-// for an ordinary client, so a splash shown over an already-mapped main window
-// gets buried the moment that window maps. See main() for the reveal timing.
+// held above everything for kForkSplashMs and then times out, so a user cannot
+// miss that this is not the official build. How it is kept on top — a modal
+// transient of the main window — is explained where it is wired, in main().
 // Suppressed for automation / headless / CI, and with `--no-splash` for anyone
 // who has read it once. Returns the shown splash (owned by the caller), or
-// nullptr when suppressed.
+// nullptr when suppressed. A plain QSplashScreen: it hides itself on a mouse
+// press, and the main window is already up behind it, so an early click needs
+// no extra handling.
 static constexpr int kForkSplashMs = 10000;
-
-// QSplashScreen hides itself on a mouse press but reports nothing, so a click
-// through the splash would otherwise leave the user staring at an empty
-// desktop until the timeout. This subclass runs a callback on that press so
-// main() can reveal the real window immediately.
-class ForkSplashScreen : public QSplashScreen
-{
-public:
-    ForkSplashScreen(const QPixmap& pixmap, Qt::WindowFlags f)
-        : QSplashScreen(pixmap, f)
-    {
-    }
-
-    std::function<void()> onDismiss;
-
-protected:
-    void mousePressEvent(QMouseEvent* event) override
-    {
-        QSplashScreen::mousePressEvent(event);  // base hides the splash
-        if (onDismiss)
-            onDismiss();
-    }
-};
 
 static bool forkSplashSuppressed(int argc, char* argv[])
 {
@@ -157,7 +131,7 @@ static bool forkSplashSuppressed(int argc, char* argv[])
     return false;
 }
 
-static std::unique_ptr<ForkSplashScreen> showForkSplash(int argc, char* argv[])
+static std::unique_ptr<QSplashScreen> showForkSplash(int argc, char* argv[])
 {
     if (forkSplashSuppressed(argc, argv))
         return nullptr;
@@ -220,13 +194,11 @@ static std::unique_ptr<ForkSplashScreen> showForkSplash(int argc, char* argv[])
                QStringLiteral("This fork:  github.com/W5TSU/AetherSDR"));
     p.end();
 
-    auto splash = std::make_unique<ForkSplashScreen>(canvas,
-                                                     Qt::WindowStaysOnTopHint);
+    // WindowStaysOnTopHint is the whole story on X11/KWin/Windows/macOS;
+    // application-modal is what carries it on Wayland (see main()).
+    auto splash = std::make_unique<QSplashScreen>(canvas,
+                                                  Qt::WindowStaysOnTopHint);
     splash->setAttribute(Qt::WA_DeleteOnClose, false);
-    // Application-modal so the compositor keeps it above the whole app: Wayland
-    // honours modal stacking but not WindowStaysOnTopHint/raise() for a plain
-    // client, and startup pops other top-levels (the auto "Connect to Radio"
-    // panel) that would otherwise land on top.
     splash->setWindowModality(Qt::ApplicationModal);
     splash->show();
     QApplication::processEvents();
@@ -585,7 +557,7 @@ int main(int argc, char* argv[])
     // reach a user without it being obvious this is a fork.
     QElapsedTimer forkSplashClock;
     forkSplashClock.start();
-    std::unique_ptr<ForkSplashScreen> forkSplash = showForkSplash(argc, argv);
+    std::unique_ptr<QSplashScreen> forkSplash = showForkSplash(argc, argv);
 
     // ── Main-thread stall watchdog (diagnostic, log-only) ─────────────────
     // 250 ms heartbeat on the GUI event loop. If a tick arrives late by more
@@ -874,13 +846,11 @@ int main(int argc, char* argv[])
         // ordinary client; the one relationship Mutter does honour is a modal
         // transient, which it keeps above its parent AND above the parent's
         // non-modal transients — so the auto "Connect to Radio" panel that
-        // startup pops a moment from now stays behind it. The splash is created
-        // application-modal (see showForkSplash); here, now that the main
-        // window has a native handle, it is re-mapped as that window's
-        // transient child so the compositor gets the set_parent at map time.
-        // WindowStaysOnTopHint still covers X11/KWin/Windows/macOS. The splash
-        // goes away when it times out kForkSplashMs after first being shown, or
-        // when the user clicks through it, whichever comes first.
+        // startup pops a moment from now stays behind it. The splash is already
+        // application-modal (showForkSplash); here, now that the main window
+        // has a native handle, it is re-mapped as that window's transient child
+        // so the compositor gets the set_parent at map time. On
+        // X11/KWin/Windows/macOS the WindowStaysOnTopHint alone already did it.
         if (forkSplash) {
             if (window.windowHandle() && forkSplash->windowHandle()) {
                 forkSplash->hide();
@@ -890,15 +860,13 @@ int main(int argc, char* argv[])
             }
             forkSplash->raise();
 
-            ForkSplashScreen* splash = forkSplash.get();
-            auto dismiss = [&window, splash] {
-                if (splash->isVisible())
-                    splash->finish(&window);
-            };
-            splash->onDismiss = dismiss;
+            // Time out kForkSplashMs after the splash first appeared. An
+            // earlier click dismisses it sooner on its own — QSplashScreen
+            // hides on mouse press and the window is already up behind it.
             const qint64 remainMs = kForkSplashMs - forkSplashClock.elapsed();
-            QTimer::singleShot(static_cast<int>(qMax<qint64>(0, remainMs)),
-                               &window, dismiss);
+            QTimer::singleShot(
+                static_cast<int>(qMax<qint64>(0, remainMs)), &window,
+                [splash = forkSplash.get(), &window] { splash->finish(&window); });
         }
 
         // Settings-store notices a user must see (RFC #4603): a backup was
