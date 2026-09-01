@@ -57,28 +57,25 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   cycle — a cross-top-level reparent is the #2495/#4617/#4319 crash lineage, so
   moves go through one deliberate menu path for now), and field time on real
   stations against the Classic shell.
-- **Hermes-Lite 2 — from experimental to supported** — the backend arrived
-  experimental in v26.7.4 and grew most of the way to parity in v26.8.1: four
-  independent receivers, the SSB voice chain, CW/RTTY decoding and the QSO
-  recorder, AX.25 packet with an on-air-proven mailbox, band switching with
-  hardware filters and preamp, host-side memory channels, per-MAC operating-state
-  restore with per-band drive/LNA memory, live connection health and a Radio
-  Health dialog. v26.8.2 added **manual notch filters** and **manual frequency
-  calibration**, DC-blocked the AM/SAM audio, and unfroze the first connect.
-  v26.8.3 gave it a working **NB** button (WDSP's impulse blanker on the raw IQ,
-  the only place it can run on this radio), a **real BFO** so a CW passband
-  straddles the marker instead of sitting where a USB filter would, **AGC mode
-  and threshold that survive a restart**, and a **TX ALC that no longer
-  normalises away a TCI/DAX client's own level control**. Its meter surface is
-  now certified against physical hardware.
-  **The experimental → supported call itself is still open**; what remains
-  before making it is wider mode coverage, panadapter/waterfall parity with the
-  Flex path, and hardening the raw-IQ DSP chain (HL2 ships raw IQ, so the client
-  does all the tune/decimate/demodulate work a Flex does on-radio). Two known
-  costs are on the record rather than hidden: the **+64 ms of RX latency** the
-  8192-tap notch filter buys unconditionally, and the 0.6–1.1 s UI stall when a
-  pan-bandwidth change crosses a sample-rate boundary and rebuilds every
-  receiver.
+- **Hermes-Lite 2 — from experimental to supported** — **the promotion work is
+  done and the `experimental` label is off; final hardware certification on
+  gateware v7.4 is the last gate before it ships in a release.** The backend
+  arrived experimental in v26.7.4 and grew to parity through v26.8.x (four
+  receivers, the SSB voice chain, decoders, packet, band switching, memory,
+  operating-state restore, NB, a real CW BFO, restart-surviving AGC). This
+  milestone closed the ROADMAP bar: the mode menu is backend-authoritative with
+  real **RTTY** and **DFM** support and no silent fall-through (D-STAR / DRM /
+  FreeDV / RADE are simply not offered); the panadapter reaches Flex parity with
+  **sample / average / peak detector modes** and configurable averaging; the
+  raw-IQ DSP chain is hardened — the notch-filter latency is **opt-in** (paid
+  only while a notch is placed), the ADC-overload log is rate-limited, and the
+  dBFS↔dBm maths is centralised so an LNA change does not slide the trace. The
+  decision and its two accepted costs are recorded in
+  [`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md):
+  a deep 50 Hz notch still trades ~64 ms of RX latency **while placed**, and a
+  span change that crosses a sample-rate boundary still rebuilds every receiver
+  (now behind a "Resampling…" affordance; the off-thread fix is a fast-follow).
+  Span-following FFT bin count is a named fast-follow.
 - **AppSettings nested-JSON refactor** — ~460 flat call sites today;
   the new pattern is one nested-JSON value per feature (Principle V).
   The storage layer moved to SQLite and the scoped feature-document store,

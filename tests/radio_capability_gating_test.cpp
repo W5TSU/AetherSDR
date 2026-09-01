@@ -114,6 +114,7 @@
 #include "core/backends/sim/SimBackend.h"
 #include "core/backends/icom/IcomCivBackend.h"
 #include "core/backends/icom/IcomSession.h"
+#include "gui/ExperimentalRadioSupport.h"
 
 #include "TestEventLoop.h"
 
@@ -406,6 +407,11 @@ int main(int argc, char** argv)
     model.connectToRadio(hl2Info());
     {
         const RadioCapabilities caps = model.backendCapabilities();
+        // Promotion (ADR 0001): the experimental notice no longer fires for the
+        // HL2 — the descriptor is gone, so the connect path never builds the
+        // dialog. Icom keeps its descriptor (checked in icom_family_test).
+        check(!AetherSDR::experimentalRadioDescriptor(QStringLiteral("hl2")),
+              "HL2 is a supported family — no experimental descriptor");
         check(!caps.hasProfiles,
               "HL2 declares hasProfiles=false (no on-radio configuration store)");
         check(caps.receiveOnlyModes.isEmpty(),

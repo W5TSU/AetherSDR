@@ -75,13 +75,20 @@ amplifiers over TCP control with UDP telemetry.
 Active test target is FLEX-8600 firmware 4.2.18 (SmartSDR protocol v1.4.0.0);
 earlier 4.x firmware works; v3.x is unsupported.
 
-**Other radio families** ride the vendor-neutral `IRadioBackend` seam. Neither
-is a supported family yet, and FlexRadio remains the supported target:
+**Other radio families** ride the vendor-neutral `IRadioBackend` seam.
+FlexRadio and the Hermes-Lite 2 are supported targets; networked Icom is early.
 
-- **Hermes-Lite 2** — **experimental**. Four independent receivers, SSB voice,
-  CW/RTTY decoding, AX.25 packet, band switching with hardware filters, manual
-  notch filters, a host-side impulse noise blanker, host frequency calibration
-  and per-radio state restore (including AGC mode and threshold).
+- **Hermes-Lite 2** — **supported**. Four independent receivers, SSB voice,
+  CW/RTTY/DFM decoding, AX.25 packet, band switching with hardware filters,
+  manual notch filters (low-latency by default, the deep filter only while a
+  notch is placed), a host-side impulse noise blanker, host frequency
+  calibration and per-radio state restore (AGC mode and threshold included).
+  HL2 ships raw IQ, so the client runs the whole tune/decimate/demodulate
+  chain a Flex does on-radio; the panadapter has sample/average/peak detector
+  modes and configurable averaging to match the Flex display. Promoted behind a
+  hardware certification gate (ADR 0001). Two costs are on the record: a
+  sample-rate-boundary span change briefly rebuilds every receiver, and a deep
+  50 Hz notch trades ~64 ms of receive latency while it is placed.
 - **Networked Icom** — **early**. CI-V over the RS-BA1 UDP transport, brought up
   on the IC-705 (receive, scope, transmit, FT8) and completed against a live
   IC-7300MK2 (controls, meters, ATU, WSPR, PC Audio routing and the CW decoder).
@@ -359,13 +366,6 @@ Currently in flight:
   lives behind a stable interface. Four backends ride it today (Flex, HL2,
   networked Icom, and the demo simulator); the remaining step is the versioned
   protocol that splits a headless engine from thin UI clients.
-- **Hermes-Lite 2** — an **experimental** non-Flex backend on that seam, now
-  running four independent receivers, the SSB voice chain, CW/RTTY decoding,
-  AX.25 packet, band switching with hardware filters, memory channels, manual
-  notch filters, a host-side noise blanker, host frequency calibration and
-  per-radio operating-state restore. Not yet a supported radio family:
-  remaining work is wider mode coverage, panadapter parity with the Flex path,
-  and hardening the raw-IQ DSP chain.
 - **Networked Icom** — an **early** CI-V/RS-BA1 backend on the same seam,
   brought up on the IC-705 and IC-7300, now with a scheduled command plane and a
   completed IC-7300MK2 control surface. Remaining work is transmit confirmation
