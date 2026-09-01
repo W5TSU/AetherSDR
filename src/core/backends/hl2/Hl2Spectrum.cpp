@@ -127,6 +127,19 @@ void Hl2Spectrum::setPeakHold(bool on) noexcept
     clearDetector();
 }
 
+void Hl2Spectrum::pushFrameHistory(const std::vector<float>& binsDbfs)
+{
+    // A geometry change can hand us a different-length trace before reset()
+    // has run; drop the stale window rather than mixing widths.
+    if (!m_avgHistory.empty() && m_avgHistory.front().size() != binsDbfs.size()) {
+        m_avgHistory.clear();
+    }
+    m_avgHistory.push_back(binsDbfs);
+    while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
+        m_avgHistory.pop_front();
+    }
+}
+
 void Hl2Spectrum::applyDetector(std::vector<float>& binsDbfs)
 {
     const std::size_t n = binsDbfs.size();
@@ -148,13 +161,7 @@ void Hl2Spectrum::applyDetector(std::vector<float>& binsDbfs)
         }
         // Sliding maximum over the last m_avgFrames frames — an old peak ages
         // out of the window. Shares m_avgHistory with the boxcar average.
-        if (!m_avgHistory.empty() && m_avgHistory.front().size() != n) {
-            m_avgHistory.clear();
-        }
-        m_avgHistory.push_back(binsDbfs);
-        while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
-            m_avgHistory.pop_front();
-        }
+        pushFrameHistory(binsDbfs);
         for (std::size_t k = 0; k < n; ++k) {
             float hi = m_avgHistory.front()[k];
             for (const std::vector<float>& trace : m_avgHistory) {
@@ -190,13 +197,7 @@ void Hl2Spectrum::applyDetector(std::vector<float>& binsDbfs)
     // fresh each frame — m_avgFrames is an operator slider value (tens, not
     // thousands) and n is the FFT size, so O(n * frames) per frame is cheap and
     // it sidesteps the slow drift a kept running-sum accumulates.
-    if (!m_avgHistory.empty() && m_avgHistory.front().size() != n) {
-        m_avgHistory.clear();
-    }
-    m_avgHistory.push_back(binsDbfs);
-    while (static_cast<int>(m_avgHistory.size()) > m_avgFrames) {
-        m_avgHistory.pop_front();
-    }
+    pushFrameHistory(binsDbfs);
     std::vector<double> sum(n, 0.0);
     for (const std::vector<float>& trace : m_avgHistory) {
         for (std::size_t k = 0; k < n; ++k) {

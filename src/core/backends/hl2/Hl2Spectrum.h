@@ -95,6 +95,10 @@ private:
     // (sample / average / peak), rewriting binsDbfs in place. A no-op only for
     // sample: averaging frames <= 1 with peak-hold off.
     void applyDetector(std::vector<float>& binsDbfs);
+    // Append the trace to m_avgHistory, trim to m_avgFrames, and drop a stale
+    // window whose width no longer matches. Shared by the boxcar average and
+    // the windowed peak.
+    void pushFrameHistory(const std::vector<float>& binsDbfs);
     // Forget every accumulated frame so the next one starts a fresh average /
     // peak hold.
     void clearDetector() noexcept

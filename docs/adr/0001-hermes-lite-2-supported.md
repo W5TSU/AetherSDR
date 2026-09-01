@@ -7,10 +7,11 @@
 >   verbs; RTTY/DFM + authoritative mode list; panadapter trace averaging;
 >   DSP-chain hardening). Plan 5.1 (resampling affordance) and 5.2 (HERMES.md
 >   de-drift) done.
-> - **Certifying unit gateware recorded: v7.4** (0x4A) — Metis discovery reply
->   from `100.117.237.246`, MAC `00:1C:C0:A2:02:01`, board `0x06`, idle,
->   2026-08-31. This is the reference gateware; the 2026-08-10 TX-meter
->   certification ran against the same version, so no gateware-dependent
+> - **Certifying unit gateware recorded: v7.4** — Metis discovery reply from
+>   `100.117.237.246`, MAC `00:1C:C0:A2:02:01`, board `0x06`, idle, 2026-08-31.
+>   The version byte is `0x4A` = 74 decimal; the app reports it as `"74"` and
+>   `tools/hl2/discover.py` as `"7.4"` — the same value, and the same version
+>   the 2026-08-10 TX-meter certification ran against, so no gateware-dependent
 >   re-check (drive-nibble decode, `0x0e` dual meaning, discovery `0x13`) is
 >   triggered.
 > - **Still open before Status → accepted:** the deviations in *Scope

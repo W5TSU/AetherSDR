@@ -2340,7 +2340,9 @@ void SpectrumOverlayMenu::buildDisplayPanel()
     if (m_heatMapBtn) m_heatMapBtn->setToolTip("Colors the spectrum trace by signal strength instead of a single color.");
     if (m_showGridBtn) m_showGridBtn->setToolTip("Show or hide the frequency and dB grid lines on the panadapter.");
     if (m_weightedAvgBtn) m_weightedAvgBtn->setToolTip("Weights recent FFT frames more heavily for faster response to signal changes.");
-    if (m_peakHoldBtn) m_peakHoldBtn->setToolTip("Max-hold: each bin shows its peak over the FFT AVG window (0 = hold until the span changes).");
+    if (m_peakHoldBtn) {
+        m_peakHoldBtn->setToolTip("Max-hold: each bin shows its peak over the FFT AVG window (0 = hold until the span changes).");
+    }
     m_gainSlider->setToolTip("Waterfall color gain. Higher values brighten weak signals.");
     m_blackSlider->setToolTip("Waterfall black level. Decrease to darken the noise floor.");
     if (m_autoBlackBtn) m_autoBlackBtn->setToolTip("Automatically adjusts the waterfall black level to match the current noise floor.");
