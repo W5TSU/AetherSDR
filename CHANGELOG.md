@@ -8,6 +8,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.2] — 2026-09-01
+
+### Hermes-Lite 2 promoted to supported · deeper automation bridge · W5TSU fork disclosure
+
+The Hermes-Lite 2 backend graduates from experimental to a supported radio: the
+panadapter gains frame averaging (weighted EMA and unweighted boxcar) and a peak
+(max-hold) detector, the mode list is now authoritative with real RTTY and
+digital-FM paths, T/R-transition and notch-latency invariants are pinned by
+tests, the ADC-overload warning is rate-limited and logged through `lcHl2`, and a
+"Resampling…" affordance covers the span-change GUI freeze. Promotion rationale
+is recorded in ADR 0001.
+
+The agent automation bridge adds `get dsp selector=backend`, `pan span`, `pan
+rate` and `perf` verbs, a `capture_audio analyze` metric path (pitch, level,
+clip, comb) backed by a new `AudioMetrics` helper, and a `dsp.get` extension
+verb exposing live per-receiver WDSP config.
+
+### Fork
+
+- **Fork-disclosure splash at startup.** This unofficial W5TSU fork now shows a
+  modal splash — the W5TSU mark, "UNOFFICIAL FORK", a plain-language note that
+  this is not an official AetherSDR release, and both the upstream and fork URLs
+  — held on top for 10 s or until clicked.
+- **Help → About** credits W5TSU as the fork maintainer.
+
 ## [v26.9.1] — 2026-08-29
 
 ### Globe maps, antenna control and operator polish · sharper Flex behavior · deeper evidence-gated Icom support
