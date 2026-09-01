@@ -1267,10 +1267,11 @@ second receiver remains the only check that comes from outside it.
   above where it claims. Harmless for FT8 and unrelated to handedness (§16), but
   it is a real frequency error with no calibration knob. A per-unit ppm trim
   belongs alongside the power-calibration curve above.
-- **`RTTY` has no HL2 mode mapping.** It is advertised in the TCI
-  `modulations_list` and falls through `modeFromString` to the USB fallback —
-  the same class of silent defect as the `CW` gap in §16.7. Left unmapped rather
-  than guessed at; WDSP has no RTTY mode, so it needs a deliberate decision.
+- ~~**`RTTY` has no HL2 mode mapping.**~~ **DONE — Plan 2 (`2c46db5b`).**
+  `Hl2ModeTable.h` maps `RTTY` to a deliberate narrow-USB slice (`{1950, 2350}`
+  Hz over `RttyDecoder`'s default mark/shift) and `DFM` to FM with an FM-width
+  passband. WDSP still has no RTTY mode — the Baudot decode stays client-side —
+  but the silent fall-through to a plain SSB passband is gone.
 
 ### 14.9 The voice chain: what persists per radio, and what does not
 
@@ -1916,7 +1917,8 @@ Also fixed here: `modeFromString` knew `"CWU"` but not `"CW"` — the spelling
 reports — so plain CW fell through to the USB fallback and was demodulated as
 SSB. `NFM` was missing for the same reason. **Any mode name that appears in the
 TCI `modulations_list` needs a mapping, or it silently becomes USB.** `RTTY`
-still has this gap.
+and `DFM` were the last such gaps, closed in Plan 2 (`Hl2ModeTable.h`): `RTTY`
+maps to a narrow USB slice for the client-side decoder, `DFM` to FM.
 
 ---
 
