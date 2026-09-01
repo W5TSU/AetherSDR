@@ -1,9 +1,15 @@
 # Hermes-Lite 2 Backend — Design Note
 
-**Status:** Draft for maintainer review. A *new radio family* under the accepted
-aetherd RFC §5.5, gated by AGENTS.md's rule that a new family "requires an
-approved design doc naming its open protocol authority" (`AGENTS.md:334`). This
-note is that prerequisite.
+**Status:** Historical. This is the design note that gated the backend under the
+accepted aetherd RFC §5.5 (AGENTS.md's rule that a new family "requires an
+approved design doc naming its open protocol authority"). It has since been
+implemented and gone well past what it planned: `Hl2Backend` is in-tree with
+transmit, multiple DDC receivers, host frequency calibration and the `hl2`
+extension namespace, and the Hermes-Lite 2 is a **supported** radio as of
+[ADR 0001](../adr/0001-hermes-lite-2-supported.md). For current behaviour read
+[`HERMES.md`](../HERMES.md), [`CONTEXT.md`](../../CONTEXT.md) and ADR 0001 — the
+"Phase 1", "Proposal" and "out of scope for Phase 1" framing below is the
+original plan, kept for the record.
 
 **Scope:** An in-tree `Hl2Backend : IRadioBackend` for the Hermes-Lite 2 (HPSDR
 Protocol 1 / "Metis", raw-IQ over UDP:1024). Phase-1 target is a **working
@@ -345,6 +351,10 @@ but clean-room is chosen to match project convention.
 ---
 
 ## 9. Phasing
+
+**All of the below has shipped** — and TX, multiple DDC receivers, host
+frequency calibration and the `hl2` extension namespace beyond it. This section
+is the original sequencing plan, not a status board.
 
 0. **Foundation — complete.** Pinned WDSP 2.00 static library, portability
    boundary, RAII channel owner, and deterministic RX/TX/lifecycle tests. This

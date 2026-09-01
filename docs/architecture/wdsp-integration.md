@@ -1,16 +1,17 @@
 # WDSP 2.00 integration boundary
 
-**Status:** Foundation implemented; Hermes-Lite 2 backend integration remains a
-separate phase. This boundary is engine-only and introduces no radio behavior.
+**Status:** In use. `Hl2RxDsp` and `Hl2TxDsp` (`src/core/backends/hl2/`) each
+own a `WdspChannel` for the live Hermes-Lite 2 receive and transmit chains; the
+boundary rules below are what those two obey.
 
 ## Decision
 
 AetherSDR uses WDSP as a **whole-channel DSP engine** for raw-IQ radio backends.
 It does not select individual WDSP stages and interleave them with
-`AudioEngine`. For Hermes-Lite 2, one RX `WdspChannel` will own the complete
-IQ-to-audio receive chain; a separate TX `WdspChannel` will later own the
-complete audio-to-IQ transmit chain. A spectrum tap may observe the raw IQ, but
-must not participate in or mutate the audio DSP chain.
+`AudioEngine`. For Hermes-Lite 2, one RX `WdspChannel` owns the complete
+IQ-to-audio receive chain (`Hl2RxDsp`) and a separate TX `WdspChannel` owns the
+complete audio-to-IQ transmit chain (`Hl2TxDsp`). A spectrum tap may observe the
+raw IQ, but must not participate in or mutate the audio DSP chain.
 
 This makes the ownership line testable:
 
@@ -84,19 +85,18 @@ boundary and retire the old instance off the real-time path. This also makes
 
 ## HL2 staging and safety
 
-Phase 1 is one receiver and no transmission:
+The receive path:
 
 1. packet parsing and loss accounting feed a bounded SPSC IQ queue;
-2. a fixed-block DSP worker owns one preplanned RX `WdspChannel`;
+2. a fixed-block DSP worker owns one preplanned RX `WdspChannel` per DDC;
 3. queue starvation inserts a timestamped zero-IQ gap and increments an
    underrun counter rather than blocking the UDP thread;
-4. demodulated PCM and spectrum frames leave through backend-owned outlets;
-5. `canTransmit` remains false and no MOX-bearing packet is generated.
+4. demodulated PCM and spectrum frames leave through backend-owned outlets.
 
-Phase 2 adds a distinct TX channel only after live RX is stable. TX construction
-does not imply authorization to key: the operator-intent/arbiter gate must pass
-before the backend sets MOX or emits a nonzero TX IQ sample. Teardown clears MOX
-first, stops EP2 production second, then destroys the TX channel.
+The transmit path is a distinct `WdspChannel`. Its construction does not imply
+authorization to key: the operator-intent/arbiter gate must pass before the
+backend sets MOX or emits a nonzero TX IQ sample. Teardown clears MOX first,
+stops EP2 production second, then destroys the TX channel.
 
 ## Verification and future performance matrix
 
@@ -108,8 +108,8 @@ first, stops EP2 production second, then destroys the TX channel.
 - rate/block reconfiguration outside the callback;
 - unique concurrent channel IDs and leak-free repeated teardown.
 
-Captured Metis frames and packet-gap fixtures belong in the future HL2 backend
-test, not in this generic WDSP test.
+Captured Metis frames and packet-gap fixtures belong in the HL2 backend tests
+(`tests/hl2_*`), not in this generic WDSP test.
 
 Performance work starts only after the live RX path is correct. Record p50/p95/
 p99 block time, CPU, peak resident memory, underruns, and queue high-water mark
