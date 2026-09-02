@@ -554,9 +554,11 @@ int main(int argc, char* argv[])
     // application-modal and (from the window block below) a transient child of
     // the main window — the combination a Wayland compositor honours to keep it
     // above the window and its startup dialogs. Nothing about this build should
-    // reach a user without it being obvious this is a fork.
-    QElapsedTimer forkSplashClock;
-    forkSplashClock.start();
+    // reach a user without it being obvious this is a fork. The timeout is armed
+    // in the window block, not here: it must count kForkSplashMs of *event-loop*
+    // time, and the loop does not start until app.exec() — everything between
+    // here and there (the MainWindow build, DSP/model init) runs with no loop,
+    // and on a cold start that alone can exceed kForkSplashMs.
     std::unique_ptr<QSplashScreen> forkSplash = showForkSplash(argc, argv);
 
     // ── Main-thread stall watchdog (diagnostic, log-only) ─────────────────
@@ -860,12 +862,13 @@ int main(int argc, char* argv[])
             }
             forkSplash->raise();
 
-            // Time out kForkSplashMs after the splash first appeared. An
-            // earlier click dismisses it sooner on its own — QSplashScreen
-            // hides on mouse press and the window is already up behind it.
-            const qint64 remainMs = kForkSplashMs - forkSplashClock.elapsed();
+            // Time out kForkSplashMs from here — the event loop is about to
+            // start, so this is the first point the splash is actually on
+            // screen and repainting. An earlier click dismisses it sooner on
+            // its own: QSplashScreen hides on mouse press and the window is
+            // already up behind it.
             QTimer::singleShot(
-                static_cast<int>(qMax<qint64>(0, remainMs)), &window,
+                kForkSplashMs, &window,
                 [splash = forkSplash.get(), &window] { splash->finish(&window); });
         }
 
