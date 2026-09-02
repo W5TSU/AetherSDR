@@ -414,10 +414,12 @@ the native backend does not yet cover.
 
 ## Verifying Downloads
 
-Linux and Windows binaries are GPG-signed. macOS artifacts are Apple notarized. Each release includes `.asc` signatures and `SHA256SUMS.txt`.
+Linux and Windows binaries are GPG-signed with the **W5TSU fork** key
+(fingerprint `D179 B7F0 75A9 EAA0 27B4  8E30 B05C EE12 778F BEC5`), not the
+upstream key. Each release includes `.asc` signatures and `SHA256SUMS.txt`.
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/aethersdr/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
+curl -sSL https://raw.githubusercontent.com/W5TSU/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
 gpg --verify AetherSDR-vX.Y.Z-x86_64.AppImage.asc AetherSDR-vX.Y.Z-x86_64.AppImage
 ```
 

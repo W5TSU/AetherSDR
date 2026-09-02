@@ -1,4 +1,8 @@
-# Verifying AetherSDR Releases
+# Verifying W5TSU AetherSDR Releases
+
+> This is the **W5TSU fork**. Releases here are signed with W5TSU's own key,
+> **not** the upstream `aethersdr/AetherSDR` release key. The fingerprint below
+> is the one to trust for downloads from `github.com/W5TSU/AetherSDR`.
 
 ## Signing Overview
 
@@ -8,28 +12,29 @@
 | Windows .exe | GPG detached signature (`.asc`) |
 | Windows .zip | GPG detached signature (`.asc`) |
 | Source archive | GPG detached signature (`.asc`) |
-| macOS DMG | Apple codesign + notarization |
-| macOS .pkg | Apple codesign + notarization |
+| macOS DMG / .pkg | not currently produced by this fork |
 
 Each release also includes a GPG-signed `SHA256SUMS.txt` covering all
-Linux and source artifacts.
+Linux, Windows and source artifacts.
 
 ## GPG Key Fingerprint
 
-    B765 6E6B CB2E 022B 79F0  F97B 5578 D10E 3D59 18F3
+    D179 B7F0 75A9 EAA0 27B4  8E30 B05C EE12 778F BEC5
+
+    Mark Grennan (W5TSU) <mark@w5tsu.net>  —  rsa4096, key id B05CEE12778FBEC5
 
 ## Import the Public Key
 
 From the repository:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/aethersdr/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
+curl -sSL https://raw.githubusercontent.com/W5TSU/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
 ```
 
 Or from keys.openpgp.org:
 
 ```bash
-gpg --keyserver keys.openpgp.org --recv-keys <KEY_ID>
+gpg --keyserver keys.openpgp.org --recv-keys B05CEE12778FBEC5
 ```
 
 ## Verify a Linux Download
@@ -47,7 +52,8 @@ gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 sha256sum -c SHA256SUMS.txt
 ```
 
-Expected output should show **"Good signature from AetherSDR Release Signing"**.
+Expected output should show
+**`Good signature from "Mark Grennan (W5TSU) (Used for AetherSDR releases) <mark@w5tsu.net>"`**.
 
 GPG is typically pre-installed on Linux. If not:
 
@@ -61,8 +67,8 @@ sudo apt install gnupg
 
 ## macOS Users
 
-The DMG and .pkg are Apple notarized. macOS Gatekeeper verifies the Apple
-signature automatically — no manual steps required.
+This fork does not currently publish macOS DMG or `.pkg` artifacts. Build
+from source, or use the upstream `aethersdr/AetherSDR` macOS release.
 
 ## Windows Users
 
