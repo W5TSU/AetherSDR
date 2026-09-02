@@ -35,6 +35,7 @@ Or from keys.openpgp.org:
 
 ```bash
 gpg --keyserver keys.openpgp.org --recv-keys B05CEE12778FBEC5
+# if the keyserver does not have it yet, use the repository URL above
 ```
 
 ## Verify a Linux Download

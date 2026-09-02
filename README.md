@@ -119,13 +119,13 @@ MIDI, Stream Deck/StreamController plugins, and generic USB-serial adapters:
 
 ## Download
 
-Pre-built binaries are available from [Releases](https://github.com/aethersdr/AetherSDR/releases/latest):
+Pre-built binaries are available from [Releases](https://github.com/W5TSU/AetherSDR/releases/latest):
 
 | Platform | Download | Notes |
 |----------|----------|-------|
 | **Linux x86_64** | `AetherSDR-*-x86_64.AppImage` | Single file, no install needed. `chmod +x` and run. |
 | **Linux ARM** | `AetherSDR-*-aarch64.AppImage` | Raspberry Pi, ARM laptops. `chmod +x` and run. |
-| **macOS** | `AetherSDR-*-macOS-apple-silicon.dmg` | Apple Silicon (M1+). Intel Macs via Rosetta. Signed & notarized. |
+| **macOS** | *(not published by this fork)* | Build [from source](#building-from-source), or use the [upstream release](https://github.com/aethersdr/AetherSDR/releases/latest). |
 | **Windows Installer** | `AetherSDR-*-Windows-x64-setup.exe` | Setup wizard with Start Menu shortcut and uninstaller. |
 | **Windows Portable** | `AetherSDR-*-Windows-x64-portable.zip` | No install needed. Extract and run. |
 
