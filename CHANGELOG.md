@@ -8,6 +8,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.3] — 2026-09-02
+
+### Fork-disclosure splash fix · release-signing docs
+
+A patch release. The fork-disclosure splash now actually appears on a slow cold
+start, and the release-verification docs point at this fork's own signing key.
+
+### Fork
+
+- **The fork-disclosure splash now shows on a slow start.** Its timeout was
+  counted from a clock started before `QApplication::exec()`, so on a cold start
+  (AppImage mount, bundled-Qt plugin scan, ONNX/whisper init) the whole budget
+  was already spent by the time the event loop ran — the splash was created and
+  shown but closed on the first tick, never getting a visible, repainting
+  moment. The Help → About fork credit, which has no timing, was unaffected. The
+  timeout is now armed once the event loop is up. Display time raised from 10 s
+  to 15 s.
+
+### Documentation
+
+- Release verification switched to the W5TSU fork's GPG signing key: new
+  fingerprint (`D179 B7F0 75A9 EAA0 27B4 8E30 B05C EE12 778F BEC5`), keyserver
+  key id, and `raw.githubusercontent.com` paths in `docs/VERIFYING-RELEASES.md`
+  and `README.md`. The macOS notarization note is gone — this fork ships no DMG.
+- `HERMES.md`: retired the pre-promotion phase framing now that Hermes-Lite 2 is
+  a supported radio.
+
 ## [v26.9.2] — 2026-09-01
 
 ### Hermes-Lite 2 promoted to supported · deeper automation bridge · W5TSU fork disclosure
