@@ -115,7 +115,7 @@ static void messageHandler(QtMsgType type, const QMessageLogContext& ctx, const 
 // nullptr when suppressed. A plain QSplashScreen: it hides itself on a mouse
 // press, and the main window is already up behind it, so an early click needs
 // no extra handling.
-static constexpr int kForkSplashMs = 10000;
+static constexpr int kForkSplashMs = 15000;
 
 static bool forkSplashSuppressed(int argc, char* argv[])
 {
