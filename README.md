@@ -1,3 +1,8 @@
+#THIS IS A FORK
+DO NOT consider this version as an update to other versions just because of the version number! Read the release notes. Consider this ALPHA code.
+
+I'm maintaining this fork for my own use. The purpose is to add more support for the HERMES-LITE-2. 
+
 # AetherSDR
 
 **A cross-platform, open-source client for FlexRadio Systems transceivers**
