@@ -119,13 +119,13 @@ MIDI, Stream Deck/StreamController plugins, and generic USB-serial adapters:
 
 ## Download
 
-Pre-built binaries are available from [Releases](https://github.com/aethersdr/AetherSDR/releases/latest):
+Pre-built binaries are available from [Releases](https://github.com/W5TSU/AetherSDR/releases/latest):
 
 | Platform | Download | Notes |
 |----------|----------|-------|
 | **Linux x86_64** | `AetherSDR-*-x86_64.AppImage` | Single file, no install needed. `chmod +x` and run. |
 | **Linux ARM** | `AetherSDR-*-aarch64.AppImage` | Raspberry Pi, ARM laptops. `chmod +x` and run. |
-| **macOS** | `AetherSDR-*-macOS-apple-silicon.dmg` | Apple Silicon (M1+). Intel Macs via Rosetta. Signed & notarized. |
+| **macOS** | *(not published by this fork)* | Build [from source](#building-from-source), or use the [upstream release](https://github.com/aethersdr/AetherSDR/releases/latest). |
 | **Windows Installer** | `AetherSDR-*-Windows-x64-setup.exe` | Setup wizard with Start Menu shortcut and uninstaller. |
 | **Windows Portable** | `AetherSDR-*-Windows-x64-portable.zip` | No install needed. Extract and run. |
 
@@ -414,10 +414,12 @@ the native backend does not yet cover.
 
 ## Verifying Downloads
 
-Linux and Windows binaries are GPG-signed. macOS artifacts are Apple notarized. Each release includes `.asc` signatures and `SHA256SUMS.txt`.
+Linux and Windows binaries are GPG-signed with the **W5TSU fork** key
+(fingerprint `D179 B7F0 75A9 EAA0 27B4  8E30 B05C EE12 778F BEC5`), not the
+upstream key. Each release includes `.asc` signatures and `SHA256SUMS.txt`.
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/aethersdr/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
+curl -sSL https://raw.githubusercontent.com/W5TSU/AetherSDR/main/docs/RELEASE-SIGNING-KEY.pub.asc | gpg --import
 gpg --verify AetherSDR-vX.Y.Z-x86_64.AppImage.asc AetherSDR-vX.Y.Z-x86_64.AppImage
 ```
 
