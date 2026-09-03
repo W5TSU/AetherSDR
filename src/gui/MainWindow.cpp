@@ -831,6 +831,11 @@ void MainWindow::disconnectWanRadioClients(const WanRadioInfo& info)
 
 void MainWindow::showMultiFlexDialog()
 {
+    if (m_radioModel.isConnected()
+        && !m_radioModel.backendCapabilities().hasMultiClientSessions) {
+        return;
+    }
+
     MultiFlexDialog dlg(&m_radioModel, this);
     connect(&dlg, &MultiFlexDialog::disconnectClientRequested,
             this, &MainWindow::handleMultiFlexClientDisconnect);
@@ -2302,6 +2307,17 @@ MainWindow::MainWindow(QWidget* parent)
             this, [this](bool) { updatePaTempLabel(); });
     connect(&m_radioModel.transmitModel(), &TransmitModel::tuneChanged,
             this, [this](bool) { updatePaTempLabel(); });
+    // stateChanged() too, now that the gate above reads isMox(). Backend MOX
+    // is assigned with a bare `changed |= assign(d.mox, m_mox)`
+    // (TransmitModel.cpp:84) and deliberately does NOT raise moxChanged --
+    // routing it through setTransmitting() would open this client's
+    // mic/DAX/serial-PTT paths when the radio is keyed by someone else. It
+    // folds into the catch-all stateChanged() instead, so that is the only
+    // signal a radio-initiated key actually raises. Without this the label
+    // would refresh only when a paCurrent sample happened to arrive -- correct
+    // by luck rather than by wiring.
+    connect(&m_radioModel.transmitModel(), &TransmitModel::stateChanged,
+            this, [this]() { updatePaTempLabel(); });
 
     auto normalizeOscillatorValue = [](QString value) {
         value = value.trimmed().toLower();
@@ -2450,7 +2466,11 @@ MainWindow::MainWindow(QWidget* parent)
         m_connPanel->setStatusText("Looking for your radio…");
         setPanadapterConnectionAnimation(true, "Looking for your radio…");
     } else if (!autoConnectToLastRadio) {
-        QTimer::singleShot(0, this, &MainWindow::toggleConnectionDialog);
+        QTimer::singleShot(0, this, &MainWindow::showConnectionDialog);
+    } else {
+        // No saved radio exists for the enabled auto-connect path. Delay until
+        // the main window is mapped, matching the established first-run flow.
+        QTimer::singleShot(500, this, [this]() { showConnectionDialog(); });
     }
 
     // Auto-connect to routed radios (probed, not broadcast-discovered)
@@ -2561,12 +2581,6 @@ MainWindow::MainWindow(QWidget* parent)
         }
         m_splitter->setSizes(sizes);
     });
-
-    // Auto-popup connection dialog if no saved radio
-    QString lastSerial = s.value("LastConnectedRadioSerial", "").toString();
-    if (lastSerial.isEmpty()) {
-        QTimer::singleShot(500, this, [this]() { toggleConnectionDialog(); });
-    }
 
     // Restore the Memory dialog if it was open when the app last exited.
     QTimer::singleShot(0, this, [this]() {
@@ -3252,7 +3266,8 @@ RadioSetupDialog* MainWindow::openRadioSetupPage(const QString& page)
     showOrRaisePersistent(m_radioSetupDialog,
                           &m_radioModel, m_audio,
                           &m_tgxlConn, &m_pgxlConn, &m_antennaGenius,
-                          m_kiwiSdrManager, &m_acomConn, &m_speConn, &m_vkampConn);
+                          m_kiwiSdrManager, &m_acomConn, &m_speConn, &m_vkampConn,
+                          &m_lpMeterConn);
     if (wasFresh && m_radioSetupDialog)
         wireRadioSetupDialogSignals(m_radioSetupDialog, prevComp);
     if (m_radioSetupDialog && !page.isEmpty())
@@ -3760,6 +3775,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // this function returns, leaving the amp holding a stale half-open
     // connection instead of seeing a clean close.
     m_vkampConn.disconnect();
+    // The LP-100A is likewise independent of the radio lifecycle and may be
+    // connected through a shared ser2net proxy. Close it explicitly while
+    // the event loop is still live instead of relying on member destruction.
+    m_lpMeterConn.disconnect();
 
     // Same event-loop reasoning: the operating-state capture flush normally
     // rides the queued backend disconnected() signal, which never lands
@@ -4466,9 +4485,34 @@ void MainWindow::updatePaTempLabel()
 {
     const auto& meters = m_radioModel.meterModel();
     if (m_paCurrentStatusPreferred && meters.hasPaCurrentMeter()) {
+        // isMox() BELONGS HERE, and its absence was the whole of #5306.
+        //
+        // isTransmitting() and isMox() are separate members: m_transmitting is
+        // written only by the client-initiated setMox()/setTransmitting()
+        // paths, while m_mox is assigned from the radio's own status payload
+        // (TransmitModel.cpp:84). Key an Icom AT THE RADIO and only m_mox goes
+        // true — so this gate stayed false for the whole transmission and the
+        // label showed "Id —" while a live 3.4 A sample sat in the model.
+        //
+        // Measured on an IC-9700 (dummy load, 145.050 FM): across eight
+        // key-downs mox was true with real forward power and hasPaCurrent()
+        // was true with paCurrent tracking 3.30-3.47 A, while isTransmitting()
+        // was false in every sample. The sample path was never the problem.
+        //
+        // That supersedes #5306's second root cause, which reported
+        // paCurrent=ABSENT and blamed the !m_keyed guard suppressing Id
+        // samples. Both readings were honest; the backend moved between them.
+        // onMeterTick() now polls the radio's own PTT every kPttPollMs and
+        // sets m_keyed from the 1C 00 readback, so m_keyed tracks a
+        // radio-initiated key and the Id samples do arrive. Only this GUI
+        // gate was still dropping them.
+        //
+        // Seven other keyed-state checks in this tree already read
+        // isTransmitting() || isTuning() || isMox(); this one had drifted.
         const bool liveTxCurrent =
             (m_radioModel.transmitModel().isTransmitting()
-             || m_radioModel.transmitModel().isTuning())
+             || m_radioModel.transmitModel().isTuning()
+             || m_radioModel.transmitModel().isMox())
             && meters.hasPaCurrent();
         m_paTempLabel->setText(liveTxCurrent
             ? QString("Id %1 A").arg(meters.paCurrent(), 0, 'f', 1)
@@ -5887,6 +5931,21 @@ void MainWindow::onConnectionStateChanged(bool connected)
 
     m_connPanel->setConnected(connected);
     updateExperimentalRadioSupport(connected);
+
+    // Keyed off RadioCapabilities::hasDdcPanEdgeRolloff (see its own
+    // comment), not a family-name check -- a future DDC-based backend gets
+    // this automatically instead of needing its own family string added
+    // here. Re-evaluate on every connect and disconnect, since
+    // backendCapabilities() only knows the CURRENTLY connected radio.
+    if (m_panStack) {
+        const bool edgeTaperEnabled =
+            connected && m_radioModel.backendCapabilities().hasDdcPanEdgeRolloff;
+        for (auto* applet : m_panStack->allApplets()) {
+            if (applet && applet->spectrumWidget()) {
+                applet->spectrumWidget()->setPanEdgeTaperEnabled(edgeTaperEnabled);
+            }
+        }
+    }
 
     // Demo scene push on connect: the applet owns the startup scene, so its
     // control state is pushed to the engine the moment the demo connects (no
@@ -7431,6 +7490,15 @@ void MainWindow::applyCapabilitiesToUi(bool connected, const RadioCapabilities& 
     }
     if (m_multiFlexAction) {
         m_multiFlexAction->setVisible(!connected || caps.hasMultiClientSessions);
+    }
+    if (m_aetherControlAction) {
+        m_aetherControlAction->setVisible(!connected || caps.hasFlexControlIntegration);
+    }
+    if (m_flexControlKnobAction) {
+        m_flexControlKnobAction->setVisible(!connected || caps.hasFlexControlIntegration);
+    }
+    if (connected && !caps.hasFlexControlIntegration && m_flexControlDialog) {
+        m_flexControlDialog->close();
     }
 
     // Demo Noise tile: a sim-cluster applet, so applet-granularity hiding is

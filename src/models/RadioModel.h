@@ -248,6 +248,7 @@ public:
     QString ip()          const { return m_ip; }
     QString netmask()     const { return m_netmask; }
     QString gateway()     const { return m_gateway; }
+    QString networkName() const { return m_networkName; }
     QString mac()         const { return m_mac; }
     bool    enforcePrivateIp() const { return m_enforcePrivateIp; }
 
@@ -504,6 +505,15 @@ public:
                || m_gpsdoPresent
                || (!m_gpsStatus.isEmpty()
                    && m_gpsStatus != QLatin1String("Not Present"));
+    }
+    // Settings needs a hardware-presence answer across families. Flex's backend
+    // declaration is intentionally coarse (the family can carry an optional
+    // GPSDO), so retain the live per-unit check above there. Other backends use
+    // their model profile for fixed hardware such as the IC-705's internal GPS.
+    bool hasGpsSetupHardware() const {
+        const RadioCapabilities caps = backendCapabilities();
+        return caps.hasGpsHardware
+               && (!caps.gpsHardwareRequiresPresence || hasGpsHardware());
     }
     bool    tcxoPresent()  const { return m_tcxoPresent; }
     bool    binauralRx()   const { return m_binauralRx; }
@@ -1259,7 +1269,6 @@ public:
     bool sendCommand(const QString& cmd);
     // Backend family currently in use ("flex", "hl2", "icom", "sim", ...).
     QString family() const { return m_family; }
-
     // Flush any pending operating-state capture immediately (RFC #4603 PR 3).
     // PUBLIC because MainWindow::closeEvent() must call it explicitly: quit
     // tears down without pumping the event loop, so the queued
@@ -1688,6 +1697,7 @@ private:
     QString     m_ip;
     QString     m_netmask;
     QString     m_gateway;
+    QString     m_networkName;
     QString     m_mac;
     bool        m_hasStaticIp{false};
     QString     m_staticIp;

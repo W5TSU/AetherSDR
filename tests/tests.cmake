@@ -394,6 +394,33 @@ add_executable(hl2_metis_protocol_test
 target_include_directories(hl2_metis_protocol_test PRIVATE src)
 add_test(NAME hl2_metis_protocol_test COMMAND hl2_metis_protocol_test)
 
+# ANAN P2 protocol — pure wire encode/decode, standalone (no Qt / aethercore).
+# Direct port of the live-validated anan/spike/phase1a.py spike (aetherd ANAN
+# P2 Phase 1a), run against a real ANAN-G2 on the bench.
+add_executable(anan_p2_protocol_test
+    tests/anan_p2_protocol_test.cpp
+    src/core/backends/anan/P2Protocol.cpp)
+target_include_directories(anan_p2_protocol_test PRIVATE src)
+add_test(NAME anan_p2_protocol_test COMMAND anan_p2_protocol_test)
+
+# ANAN RX DSP — IQ -> WdspChannel demod + AnanSpectrum. Links aethercore
+# (WDSP+FFTW), unlike anan_p2_protocol_test above. *** READ HERMES.md §16
+# and this file's own header comment before touching expected values here —
+# the handedness pin is bench-confirmed (2026-08-21, radiocert rx +
+# independent RSP1B), not a guess. ***
+add_executable(anan_rxdsp_handedness_test tests/anan_rxdsp_handedness_test.cpp)
+target_include_directories(anan_rxdsp_handedness_test PRIVATE src)
+target_link_libraries(anan_rxdsp_handedness_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME anan_rxdsp_handedness_test COMMAND anan_rxdsp_handedness_test)
+
+# ANAN backend -- IRadioBackend implementor. Pieces testable without a live
+# radio: capabilities() defaults, mode-string parsing, CW BFO math, and the
+# passband-reset-only-on-actual-mode-change idempotence rule.
+add_executable(anan_backend_test tests/anan_backend_test.cpp)
+target_include_directories(anan_backend_test PRIVATE src)
+target_link_libraries(anan_backend_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME anan_backend_test COMMAND anan_backend_test)
+
 # IcomCIV wire layers — pure encode/decode, standalone (no Qt / aethercore).
 # An Icom networked radio is two protocols stacked: CI-V is the command plane
 # and RS-BA1 is the UDP transport it travels inside. Both halves unit-test
@@ -720,6 +747,14 @@ target_include_directories(hl2_link_stats_model_test PRIVATE src tests)
 target_link_libraries(hl2_link_stats_model_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME hl2_link_stats_model_test COMMAND hl2_link_stats_model_test)
 ]==]
+
+if(AETHER_BACKEND_RTL)
+    # Socket-free RTL-SDR backend seam, DSP, and discovery contract.
+    add_executable(rtl_backend_test tests/rtl_backend_test.cpp)
+    target_include_directories(rtl_backend_test PRIVATE src)
+    target_link_libraries(rtl_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME rtl_backend_test COMMAND rtl_backend_test)
+endif()
 
 # HL2 receiver churn — add/close receivers against a LIVE EP6 stream. The only
 # test that puts the m_rx reshape and the I/O-thread fan-out in contention, which
@@ -2025,6 +2060,14 @@ target_include_directories(acom_protocol_test PRIVATE src)
 target_link_libraries(acom_protocol_test PRIVATE Qt6::Core)
 add_test(NAME acom_protocol_test COMMAND acom_protocol_test)
 
+add_executable(lp100a_protocol_test
+    tests/lp100a_protocol_test.cpp
+    src/core/LpMeterProtocol.cpp
+)
+target_include_directories(lp100a_protocol_test PRIVATE src)
+target_link_libraries(lp100a_protocol_test PRIVATE Qt6::Core)
+add_test(NAME lp100a_protocol_test COMMAND lp100a_protocol_test)
+
 add_executable(spe_protocol_test
     tests/spe_protocol_test.cpp
     src/core/SpeProtocol.cpp
@@ -3224,6 +3267,13 @@ target_include_directories(icom_settings_test PRIVATE src tests)
 target_link_libraries(icom_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME icom_settings_test COMMAND icom_settings_test)
 
+# ANAN-G2 settings ("Anan" root key, Principle V). Own process because
+# AppSettings is a process-wide singleton, same reasoning as icom_settings_test.
+add_executable(anan_settings_test tests/anan_settings_test.cpp)
+target_include_directories(anan_settings_test PRIVATE src tests)
+target_link_libraries(anan_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME anan_settings_test COMMAND anan_settings_test)
+
 add_executable(icom_family_test tests/icom_family_test.cpp)
 target_include_directories(icom_family_test PRIVATE src)
 target_link_libraries(icom_family_test PRIVATE aethercore Qt6::Core Qt6::Test)
@@ -3242,6 +3292,18 @@ add_executable(radio_capability_gating_test tests/radio_capability_gating_test.c
 target_include_directories(radio_capability_gating_test PRIVATE src tests)
 target_link_libraries(radio_capability_gating_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME radio_capability_gating_test COMMAND radio_capability_gating_test)
+
+# Radio Setup owns a persistent widget tree. Capability/session transitions must
+# refresh DHCP/static presentation without unrelated GPS/oscillator updates
+# cancelling an operator's pending Apply action. Socket-free Qt widget test.
+add_executable(radio_setup_ip_config_presentation_test
+    tests/radio_setup_ip_config_presentation_test.cpp)
+target_include_directories(radio_setup_ip_config_presentation_test PRIVATE src)
+target_link_libraries(radio_setup_ip_config_presentation_test PRIVATE Qt6::Core Qt6::Widgets)
+add_test(NAME radio_setup_ip_config_presentation_test
+    COMMAND radio_setup_ip_config_presentation_test)
+set_tests_properties(radio_setup_ip_config_presentation_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # RadioStateMemory + the radio-scoped feature-document store (RFC #4603 PR 2):
 # capability-shaped engagement (empty domains ⇒ inert), per-domain gating on
@@ -3554,6 +3616,15 @@ target_include_directories(memory_field_values_test PRIVATE src)
 target_link_libraries(memory_field_values_test PRIVATE Qt6::Core)
 add_test(NAME memory_field_values_test COMMAND memory_field_values_test)
 
+add_executable(ctcss_tone_label_test
+    tests/ctcss_tone_label_test.cpp
+)
+target_include_directories(ctcss_tone_label_test PRIVATE src)
+target_link_libraries(ctcss_tone_label_test PRIVATE Qt6::Widgets)
+add_test(NAME ctcss_tone_label_test COMMAND ctcss_tone_label_test)
+set_tests_properties(ctcss_tone_label_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(local_memory_store_test
     tests/local_memory_store_test.cpp
     src/core/LocalMemoryStore.cpp
@@ -3712,6 +3783,8 @@ target_include_directories(connection_panel_size_test PRIVATE src tests)
 target_link_libraries(connection_panel_size_test PRIVATE
     aethercore Qt6::Core Qt6::Network Qt6::Widgets Qt6::Test
 )
+target_compile_definitions(connection_panel_size_test PRIVATE
+    AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 set_target_properties(connection_panel_size_test PROPERTIES AUTOMOC ON)
 add_test(NAME connection_panel_size_test COMMAND connection_panel_size_test)
 set_tests_properties(connection_panel_size_test PROPERTIES
