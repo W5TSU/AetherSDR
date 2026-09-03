@@ -3494,7 +3494,7 @@ The dialog is gated on elapsed time (1500 ms), not on a cold-cache predicate —
 that imports cleanly may still lack plans for these geometries and would report
 "warm" while the open measured regardless. See `MainWindow::armWdspSetupDialog`.
 
-### 22.4 Still open: two paths that still block the GUI thread
+### 22.4 The GUI-thread blockers: one fixed, one still open
 
 #### Backend teardown waits out an in-flight build
 
@@ -3513,15 +3513,16 @@ state over the teardown or a backend that can be abandoned rather than joined �
 and the second one also has to replace the `QPointer` guard in
 `beginDspSetup()`, which is sound today *because* teardown blocks.
 
-#### The span change rebuilds every receiver
+#### The span change rebuilds every receiver — off-thread (issue #7)
 
-`applyPanBandwidth()` has the same shape the connect used to have. Crossing one
-of the four rate boundaries rebuilds **every** receiver (the rate register is
-radio-wide) through `Qt::BlockingQueuedConnection`, and each receiver costs an
-open (40–175 ms, per §22.3) plus a close, which flushes and is bounded by WDSP's
-own 100 ms timeout. Four panadapters open is roughly **0.6–1.1 s of frozen UI
-per boundary crossing** — the "chunky zoom" operators describe, layered on top
-of two things that are not bugs:
+`applyPanBandwidth()` used to have the same shape the connect used to have.
+Crossing one of the four rate boundaries rebuilds **every** receiver (the rate
+register is radio-wide), and each receiver costs an open (40–175 ms, per §22.3)
+plus a close, which flushes and is bounded by WDSP's own 100 ms timeout. Run
+through `Qt::BlockingQueuedConnection` on the GUI thread, four panadapters open,
+that was roughly **0.6–1.1 s of frozen UI per boundary crossing** — the "chunky
+zoom" operators describe. Two things around it that are not bugs and did not
+change:
 
 - **The span IS the sample rate.** Four rates only, snapped log-nearest, so the
   boundaries sit near 68 / 136 / 272 kHz. Zoom within a rate is free display
@@ -3530,16 +3531,50 @@ of two things that are not bugs:
 - **A 150 ms coalescing throttle** (`kBandwidthThrottleMs`, #4470), because a
   drag delivers ~30 span changes a second and each one is a full rebuild.
 
-The three-phase split from §22.2 is directly reusable here, but the rate change
-has ordering constraints the connect does not: the DSP must expect the new rate
-before EP6 starts delivering at it, and a partial failure has to roll every
-receiver back to a single rate. Left as a follow-up rather than bolted onto the
-connect fix.
+The rebuild now runs on the I/O thread, the same three-phase hand-off §22.2 gave
+the connect: `applyPanBandwidth()` snapshots the chains and their reconfigure
+Configs on the GUI thread, raises `resamplingChanged(true)`, posts one task, and
+returns. `finishSpanRebuild()` resumes on the GUI thread when the task lands.
+Two things the connect did not have to deal with:
 
-**Milestone status (issue #1, ADR 0001 accepted cost 2):** the freeze stays;
-the off-GUI-thread rebuild is a scheduled fast-follow (tracked separately). What
-Plan 5.1 shipped is the affordance — `Hl2Backend::applyPanBandwidth` raises
-`IRadioBackend::resamplingChanged(true)` on the GUI thread immediately before
-the blocking loop and `false` after, and `MainWindow::wireBackendSeam` turns
-that into a forced-repainted "Resampling…" overlay so the operator sees a
-labelled wait instead of a bare frozen panadapter (issue #1 story 21).
+- **Ordering.** The hardware rate-register command is sent by the I/O task
+  *after* every channel has reconfigured — EP6 keeps arriving at the old rate
+  until the DSP is ready for the new one, so no chain ever decimates for the
+  wrong rate.
+- **Rollback.** A receiver that fails to reopen at the new rate leaves the set
+  split across two rates unless the converted ones are walked back. The serial
+  reconfigure-then-rollback sequence is `rebuildReceiversForRate()` in
+  `Hl2SpanRebuild.h` — a pure function returning `Ok` / `RolledBack` /
+  `Inconsistent`, tested in isolation (`hl2_span_rebuild_test`). On `RolledBack`
+  the hardware goes back to the previous rate and the zoom reads as not taken;
+  on `Inconsistent` (a restore also failed) the backend raises
+  `connectionError`.
+
+A span request that lands while a rebuild is in flight is held in
+`m_queuedSpanHz` (latest wins) and re-driven by `finishSpanRebuild()` — the
+connect path's `m_queuedConnect` pattern. `resamplingChanged(true)`'s contract
+is now that consumers mute RX audio and hold the last spectrum frame until it
+clears; `MainWindow::wireBackendSeam` does both under the "Resampling…" overlay.
+
+The one blocker this does **not** remove is the teardown wait above: the I/O
+task's `QPointer<Hl2Backend>` capture is sound only because `~Hl2Backend()`
+blocks on the I/O thread, exactly as `beginDspSetup()` depends on it.
+
+**Verification.** The off-thread structure, the pure rollback sequence, the
+latest-wins queue and the no-op / link-budget-refused paths are covered by
+`hl2_span_rebuild_test` and `hl2_span_rebuild_async_test` — the latter asserts
+`setPanBandwidth()` now returns while the rebuild is still in flight, which the
+blocking version could not. The end-to-end freeze number is **still to be
+measured on hardware**, the §22.1 way — four receivers, `hpsdrsim -hermeslite2
+-P1`, the automation bridge pinged every 100 ms across a `pan span` boundary
+crossing — and recorded here against the "before":
+
+| | Before | After |
+|---|---|---|
+| Longest unanswered bridge gap during the zoom | 0.6–1.1 s | _pending hardware run_ |
+| Bridge pings answered during it | 0 | _pending hardware run_ |
+
+**Milestone status (issue #1, ADR 0001 accepted cost 2):** the rebuild is off
+the GUI thread; the accepted-cost note in
+`docs/adr/0001-hermes-lite-2-supported.md` is annotated *Resolved* with the
+same "hardware re-measurement pending" caveat.

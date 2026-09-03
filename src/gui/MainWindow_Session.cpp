@@ -219,6 +219,11 @@ void MainWindow::wireDiscovery()
         // feeding live receive UNDER the playback. Reachable in practice only
         // now that the recorder captures RX on such a radio at all. (#4537.)
         if (m_rxMutedForPlayback) return;
+        // Muted for the ~1 s an in-place receive-chain rebuild takes (the HL2
+        // span change — resamplingChanged). The chains are being torn down and
+        // reopened; frames still arriving over the seam are from before the
+        // rebuild and would play as a glitch under the "Resampling…" overlay.
+        if (m_rxMutedForResampling) return;
         m_audio->feedAudioData(pcm);
     });
 
