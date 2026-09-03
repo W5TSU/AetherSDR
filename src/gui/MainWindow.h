@@ -530,6 +530,11 @@ private:
     // to drop, so its relay consults this instead. See the muteRxRequested
     // handlers in MainWindow.cpp. (PR #4537 review.)
     bool m_rxMutedForPlayback{false};
+    // Live RX is also muted while a seam backend rebuilds its receive chain in
+    // place (the HL2 span change — IRadioBackend::resamplingChanged). Separate
+    // from the playback flag so the two cannot clobber one another; both are
+    // consulted in the backendAudioFrameReady relay. See wireBackendSeam().
+    bool m_rxMutedForResampling{false};
     void wirePanStreamTxSink();               // MainWindow_Session.cpp
     void wirePanStreamTciSinks();             // MainWindow_Session.cpp
     void wirePanStreamDaxIqSink();            // MainWindow_Session.cpp

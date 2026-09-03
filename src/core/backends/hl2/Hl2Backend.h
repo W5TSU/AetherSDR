@@ -11,6 +11,7 @@
 #include "core/backends/hl2/AdcOverloadLogGate.h"
 #include "core/backends/hl2/Hl2DbReference.h"
 #include "core/backends/hl2/Hl2Receivers.h"
+#include "core/backends/hl2/Hl2SpanRebuild.h"   // SpanRebuildOutcome
 #include "core/backends/hl2/MetisProtocol.h"   // Hl2Telemetry
 
 #include <deque>
@@ -84,7 +85,21 @@ private:
     // The actual span change, after the throttle above has settled. The DDC rate
     // is a RADIO-WIDE register (0x00[25:24]), so this is not per-receiver: every
     // panadapter shares one span.
+    //
+    // A rate-boundary crossing rebuilds EVERY receiver's WDSP channel at the new
+    // input rate. That rebuild runs on the I/O thread (the same three-phase
+    // hand-off connectRadio() uses), and finishSpanRebuild() resumes here on the
+    // GUI thread when it lands. See docs/HERMES.md §22.4 / issue #7.
     void applyPanBandwidth(double hz);
+
+    // GUI-thread continuation of the async span rebuild. `generation` is the
+    // m_connectGeneration value captured when the rebuild was launched — a
+    // disconnect or reconnect in between makes it stale and the continuation
+    // just clears the affordance. On Ok the span persists; on RolledBack /
+    // Inconsistent m_sampleRateHz returns to previousRateHz. A span request that
+    // landed mid-rebuild (m_queuedSpanHz) is re-driven from here.
+    void finishSpanRebuild(int newRateHz, int previousRateHz, quint64 generation,
+                           SpanRebuildOutcome outcome);
 
 public:
     void setPanFrameRate(const QString& panId, int fps) override;
@@ -590,6 +605,14 @@ private:
     static constexpr int kBandwidthThrottleMs = 150;
     QTimer* m_bandwidthThrottle = nullptr;
     double m_pendingBandwidthHz = 0.0;   // 0 = nothing coalesced
+
+    // True while an async span rebuild is on the I/O thread. A span request that
+    // arrives inside that window is not served inline (a second rebuild would
+    // race the first over the same WDSP channels); the latest is held in
+    // m_queuedSpanHz and re-driven by finishSpanRebuild(). Mirrors the connect
+    // path's m_queuedConnect. GUI thread only.
+    bool m_spanRebuildInFlight = false;
+    double m_queuedSpanHz = 0.0;         // 0 = nothing queued behind the rebuild
 
     // Has this connect already derived the passband from the mode? (#4484)
     //

@@ -6757,17 +6757,19 @@ void MainWindow::wireBackendSeam(IRadioBackend* backend)
     disconnect(backend, &IRadioBackend::audioFrameReady, m_audio, nullptr);
 
     // Transient "Resampling…" affordance for an in-place receive-chain rebuild
-    // that blocks the GUI thread (today: the HL2 span change across a DDC-rate
-    // boundary — 0.6–1.1 s with four panes, HERMES.md §22.4; the off-thread fix
-    // is a separate follow-up). Raised true on the GUI thread immediately
-    // before the block, so a forced repaint here gets the overlay on screen
-    // before the freeze rather than after it; false clears it — and a resumed
-    // frame would clear it anyway. Generic on IRadioBackend: any future backend
-    // that rebuilds in place gets the same affordance for free.
+    // (today: the HL2 span change across a DDC-rate boundary — HERMES.md §22.4).
+    // The rebuild runs on the I/O thread now, but the receive chains are torn
+    // down and reopened for ~1 s, so the contract of this signal is: while
+    // active, MUTE RX audio and let the last spectrum frame stand under the
+    // overlay. Muting matters because EP6 keeps arriving at the old rate during
+    // the window — feeding a half-reconfigured chain would be a burst of wrong
+    // audio, exactly the split-rate transient the I/O-thread ordering avoids on
+    // the wire. Generic on IRadioBackend: any future in-place rebuild gets it.
     disconnect(backend, &IRadioBackend::resamplingChanged, this, nullptr);
     connect(backend, &IRadioBackend::resamplingChanged, this,
             [this](bool active) {
         setPanadapterConnectionAnimation(active, tr("Resampling…"));
+        m_rxMutedForResampling = active;
         if (active && m_panStack) {
             m_panStack->repaint();
         }

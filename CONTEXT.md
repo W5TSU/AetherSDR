@@ -66,6 +66,21 @@ HL2 a slice sits at an offset *within* a DDC's passband; moving the slice does
 not move the DDC NCO (which is the **pan centre**) unless the target would
 leave the usable span.
 
+**Rate boundary**:
+On a raw-IQ backend the panadapter span *is* the DDC sample rate — the HL2
+offers four (48/96/192/384 kHz), and a zoom request snaps log-nearest to one.
+A zoom that stays within the current rate is free display scaling. A zoom that
+crosses to another rate re-spans the whole radio (the rate register is
+radio-wide) and every receiver's WDSP channel is torn down and reopened.
+_Avoid_: "sample rate" and "span" as separate knobs — on this radio they are
+one fact.
+
+**Chunky zoom**:
+The operator-visible name for the pause when a zoom crosses a **rate boundary**
+and every receiver is rebuilt. Was a 0.6–1.1 s GUI freeze (blocking rebuild on
+the GUI thread); now an I/O-thread rebuild behind the "Resampling…" affordance,
+with RX audio muted and the trace held for the window (issue #7).
+
 **Flat memory** (vs per-receiver state):
 A control whose live value is *per-receiver* but whose *remembered* value is a
 single pair, seeded onto every receiver at the next connect to a new radio. The

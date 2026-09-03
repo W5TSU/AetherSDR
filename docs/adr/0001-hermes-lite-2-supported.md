@@ -153,6 +153,14 @@ size" reasoning. **Signed off by the project lead, 2026-09-01.**
    this written note; moving the rebuild off the GUI thread is a scheduled
    fast-follow.
 
+   **Resolved (issue #7) — off-thread structure landed, hardware re-measurement
+   pending.** The rebuild moved to the I/O thread on the `beginDspSetup()`
+   three-phase model, with a pure serial reconfigure-and-rollback sequence
+   (`Hl2SpanRebuild.h`) and a latest-wins queue for a span request that lands
+   mid-rebuild. `resamplingChanged(true)` now mutes RX audio and holds the trace
+   for the window. Unit- and event-loop-tested; the end-to-end freeze number is
+   still to be measured on hardware and recorded in `docs/HERMES.md` §22.4.
+
 ## Consequences
 
 - FreeDV and RADE stay unavailable on HL2 until the bus-B RX-audio tap is

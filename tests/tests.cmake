@@ -3200,6 +3200,15 @@ add_executable(hl2_dbref_test tests/hl2_dbref_test.cpp)
 target_include_directories(hl2_dbref_test PRIVATE src)
 add_test(NAME hl2_dbref_test COMMAND hl2_dbref_test)
 
+add_executable(hl2_span_rebuild_test tests/hl2_span_rebuild_test.cpp)
+target_include_directories(hl2_span_rebuild_test PRIVATE src)
+add_test(NAME hl2_span_rebuild_test COMMAND hl2_span_rebuild_test)
+
+add_executable(hl2_span_rebuild_async_test tests/hl2_span_rebuild_async_test.cpp)
+target_include_directories(hl2_span_rebuild_async_test PRIVATE src tests)
+target_link_libraries(hl2_span_rebuild_async_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME hl2_span_rebuild_async_test COMMAND hl2_span_rebuild_async_test)
+
 add_executable(radiomodel_dax_null_test tests/radiomodel_dax_null_test.cpp)
 target_include_directories(radiomodel_dax_null_test PRIVATE src)
 target_link_libraries(radiomodel_dax_null_test PRIVATE aethercore Qt6::Core Qt6::Test)
