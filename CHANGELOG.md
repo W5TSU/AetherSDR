@@ -8,6 +8,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.4] — 2026-09-04
+
+### RTL-SDR and ANAN-G2 receive backends · LP-100A wattmeter · aetherd Stage 3 control protocol · HL2 span-change freeze fixed
+
+Two new receive-only radio families ride the vendor-neutral `IRadioBackend`
+seam: **RTL-SDR** (one panadapter, one host-demodulated slice, `librtlsdr` +
+`fftw3f`) and **ANAN-G2** (openHPSDR Protocol 2, RX-only in this phase). Both
+carry the same `experimental` notice HL2 did before its own promotion. The
+**TelePost LP-100A** wattmeter joins the peripheral set over serial or
+ser2net TCP. **aetherd** gains its Stage 3 control-protocol boundary — a
+local control server plus wire codec, a further step toward the
+headless-engine / thin-client split the RFC targets. The **IC-705** picks up
+GPS location and NTP controls over CI-V.
+
+### Fork
+
+- **The HL2 "chunky zoom" freeze is fixed.** Crossing a panadapter span
+  across a DDC-rate boundary used to block the GUI thread for 0.6–1.1 s while
+  every receiver's WDSP channel was torn down and reopened. The rebuild now
+  runs on the I/O thread — RX audio mutes and the trace holds under the
+  existing "Resampling…" affordance instead of freezing the whole
+  application. ADR 0001 accepted cost 2, resolved.
+
+### Build & packaging
+
+- **Hardened system SQLite** is now a supported build configuration, checked
+  by its own CI canary alongside the existing vendored-dependency path.
+- **CPack Deb and RPM** package generation.
+
+### Fixes
+
+- HL2: transmit power gauges scale for the radio's actual QRP output instead
+  of a 100 W default; CW mode controls now persist across a restart.
+- Icom: unavailable tuner controls dim instead of staying clickable; IC-705 /
+  IC-9700 AGC-T now routes correctly while AGC is off.
+- CTCSS tone dropdowns are more readable and scroll correctly.
+- Windows: the Store symbol package now ships complete, and the upload no
+  longer times out.
+- Settings: radio-specific surfaces are gated correctly; the connection
+  dialog stays visible at startup; PA current now shows for a
+  radio-initiated PTT; the APF wheel is guarded while APF is off; Ulanzi TCI
+  volume-dB handling is now overflow-safe.
+
 ## [v26.9.3] — 2026-09-02
 
 ### Fork-disclosure splash fix · release-signing docs
