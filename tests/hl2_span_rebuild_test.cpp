@@ -12,6 +12,7 @@
 #include "core/backends/hl2/Hl2SpanRebuild.h"
 
 #include <cstdio>
+#include <functional>
 #include <utility>
 #include <vector>
 
