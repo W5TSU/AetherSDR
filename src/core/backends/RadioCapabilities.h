@@ -682,11 +682,22 @@ struct RadioCapabilities {
     // rather than for the dashboard it happens to drive today.
     bool hasGpsLocation = false;
 
+    // Optional detail planes within the location dashboard. Keeping them
+    // separate prevents a radio that reports coordinates from being presented
+    // as a GPSDO or as a source of satellite-count telemetry.
+    bool hasGpsSatelliteTelemetry = false;
+    bool hasGpsFrequencyReference = false;
+
+    // The radio owns configurable GPS/NTP clock settings and reports their
+    // read-back state. This is an NTP CLIENT capability; hasNtpServer in the
+    // legacy Flex model table describes the distinct server role.
+    bool hasGpsTimeConfiguration = false;
     // The radio contains GPS/GNSS hardware and therefore has a meaningful GPS
     // setup surface. This is deliberately separate from hasGpsLocation: an
-    // IC-705 has an internal GPS receiver, but CI-V does not expose its live
-    // position/time data to this client. The hardware page is still truthful;
-    // a live station-location readout is not.
+    // IC-705 has an internal GPS receiver (this flag drives its Radio Setup
+    // page) and also reports live position/time through 23 00 (hasGpsLocation
+    // drives the dashboard). A future model may truthfully declare only the
+    // hardware half, so the two claims stay independent.
     bool hasGpsHardware = false;
     bool gpsHardwareRequiresPresence = false; // family declaration is conditional per unit
 

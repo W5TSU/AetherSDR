@@ -2333,13 +2333,27 @@ MainWindow::MainWindow(QWidget* parent)
         return value.trimmed().isEmpty() ? QStringLiteral("Unknown") : value.toUpper();
     };
     auto updateFrequencyReferenceLabel = [this, normalizeOscillatorValue, oscillatorName] {
+        const RadioCapabilities caps = m_radioModel.backendCapabilities();
         const QString state = normalizeOscillatorValue(m_radioModel.oscState());
         const QString setting = normalizeOscillatorValue(m_radioModel.oscSetting());
         const bool locked = m_radioModel.oscLocked();
 
         QString sourceLabel;
         QString statusLabel;
-        if (state.isEmpty()) {
+        if (caps.hasGpsLocation && !caps.hasGpsFrequencyReference) {
+            // A position receiver is not a frequency reference. Keep the
+            // compact status-bar identity and fix state privacy-safe while
+            // the live position details remain available in the GPS dashboard.
+            sourceLabel = QStringLiteral("Int. GPS");
+            // A hand-entered position (IC-705 GPS Select = Manual) is usable
+            // but it is not a fix; say so rather than printing "Locked".
+            const QString positionStatus = m_radioModel.gpsPositionValid()
+                ? (m_radioModel.gpsSource() == QLatin1String("Manual")
+                       ? QStringLiteral("Manual") : QStringLiteral("Locked"))
+                : (m_radioModel.gpsStatus().isEmpty()
+                       ? QStringLiteral("Waiting") : m_radioModel.gpsStatus());
+            statusLabel = QStringLiteral("[%1]").arg(positionStatus);
+        } else if (state.isEmpty()) {
             sourceLabel = QStringLiteral("Ref: --");
             statusLabel = QStringLiteral("[Waiting]");
         } else if (state == "gpsdo") {
@@ -2366,10 +2380,19 @@ MainWindow::MainWindow(QWidget* parent)
         m_gpsLabel->setText(sourceLabel);
         m_gpsStatusLabel->setText(statusLabel);
 
-        QString tooltip = QStringLiteral("10 MHz reference\nSetting: %1\nActual: %2\nLock: %3")
-            .arg(oscillatorName(setting, false),
-                 oscillatorName(state, false),
-                 locked ? QStringLiteral("Locked") : QStringLiteral("Unlocked"));
+        QString tooltip;
+        if (caps.hasGpsLocation && !caps.hasGpsFrequencyReference) {
+            tooltip = QStringLiteral("GPS position receiver\nSource: %1\nStatus: %2")
+                .arg(m_radioModel.gpsSource().isEmpty() ? QStringLiteral("Unknown")
+                                                        : m_radioModel.gpsSource(),
+                     m_radioModel.gpsStatus().isEmpty() ? QStringLiteral("Waiting")
+                                                        : m_radioModel.gpsStatus());
+        } else {
+            tooltip = QStringLiteral("10 MHz reference\nSetting: %1\nActual: %2\nLock: %3")
+                .arg(oscillatorName(setting, false),
+                     oscillatorName(state, false),
+                     locked ? QStringLiteral("Locked") : QStringLiteral("Unlocked"));
+        }
         if (state == "external") {
             tooltip += QStringLiteral("\nExternal 10 MHz: %1")
                 .arg(m_radioModel.extPresent() ? QStringLiteral("detected")
@@ -2413,9 +2436,14 @@ MainWindow::MainWindow(QWidget* parent)
 
         // Use GPS UTC time only when GPSDO is installed and locked.
         // GPS with no antenna/lock sends stale "00:00:00Z" — fall back to system clock.
+        const RadioCapabilities caps = m_radioModel.backendCapabilities();
+        const bool usablePositionTime = caps.hasGpsLocation
+            && !caps.hasGpsFrequencyReference
+            && m_radioModel.gpsPositionValid();
         if (!utcTime.isEmpty()
-            && normalizeOscillatorValue(m_radioModel.oscState()) == "gpsdo"
-            && m_radioModel.oscLocked()) {
+            && (usablePositionTime
+                || (normalizeOscillatorValue(m_radioModel.oscState()) == "gpsdo"
+                    && m_radioModel.oscLocked()))) {
             m_gpsTimeLabel->setText(utcTime);
             m_useSystemClock = false;
         } else {
@@ -2435,9 +2463,17 @@ MainWindow::MainWindow(QWidget* parent)
         QString dateFmt = loc.dateFormat(QLocale::ShortFormat);
         if (!dateFmt.contains(QLatin1String("yyyy")))
             dateFmt.replace(QLatin1String("yy"), QLatin1String("yyyy"));
-        m_gpsDateLabel->setText(loc.toString(utc.date(), dateFmt));
-        if (m_useSystemClock)
+        QDate displayDate = utc.date();
+        if (!m_useSystemClock) {
+            const QDate radioDate = QDate::fromString(m_radioModel.gpsDate(), Qt::ISODate);
+            if (radioDate.isValid()) {
+                displayDate = radioDate;
+            }
+        }
+        m_gpsDateLabel->setText(loc.toString(displayDate, dateFmt));
+        if (m_useSystemClock) {
             m_gpsTimeLabel->setText(utc.toString("HH:mm:ssZ"));
+        }
     });
     clockTimer->start(1000);
 

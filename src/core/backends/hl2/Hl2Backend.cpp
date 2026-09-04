@@ -1472,6 +1472,9 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.notchMinWidthHz = Hl2RxDsp::kMinNotchWidthHz;
     c.notchMaxWidthHz = 6000.0;
     c.hasGpsLocation = false;           // no GNSS receiver on the board
+    c.hasGpsSatelliteTelemetry = false;
+    c.hasGpsFrequencyReference = false;
+    c.hasGpsTimeConfiguration = false;
     c.hasGpsHardware = false;
     c.gpsHardwareRequiresPresence = false;
     // The HL2 declares PATEMP but no "+13.8A": PA temperature is a real reading

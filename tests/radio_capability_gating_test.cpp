@@ -309,6 +309,12 @@ int main(int argc, char** argv)
               "Flex declares hasMultiClientSessions (multiFLEX)");
         check(caps.hasGpsLocation,
               "Flex declares hasGpsLocation (GPSDO / on-board GNSS)");
+        check(caps.hasGpsSatelliteTelemetry,
+              "Flex declares hasGpsSatelliteTelemetry (tracked satellites and visibility)");
+        check(caps.hasGpsFrequencyReference,
+              "Flex declares hasGpsFrequencyReference (GPSDO 10 MHz discipline)");
+        check(!caps.hasGpsTimeConfiguration,
+              "Flex declares hasGpsTimeConfiguration=false (no CI-V-style NTP client controls)");
         check(caps.hasGpsHardware,
               "Flex declares GPS hardware for Radio Setup presentation");
         check(caps.canReboot && caps.hasRemoteOnControl && caps.canUpgradeFirmware,
@@ -473,6 +479,12 @@ int main(int argc, char** argv)
               "HL2 declares hasMultiClientSessions=false (one client owns it)");
         check(!caps.hasGpsLocation,
               "HL2 declares hasGpsLocation=false (no GNSS receiver on the board)");
+        check(!caps.hasGpsSatelliteTelemetry,
+              "HL2 declares hasGpsSatelliteTelemetry=false");
+        check(!caps.hasGpsFrequencyReference,
+              "HL2 declares hasGpsFrequencyReference=false");
+        check(!caps.hasGpsTimeConfiguration,
+              "HL2 declares hasGpsTimeConfiguration=false");
         check(!caps.hasGpsHardware,
               "HL2 declares hasGpsHardware=false");
         check(!caps.canReboot && !caps.hasRemoteOnControl
@@ -904,6 +916,12 @@ int main(int argc, char** argv)
         check(!caps.hasMultiClientSessions,
               "Sim declares hasMultiClientSessions=false");
         check(!caps.hasGpsLocation, "Sim declares hasGpsLocation=false");
+        check(!caps.hasGpsSatelliteTelemetry,
+              "Sim declares hasGpsSatelliteTelemetry=false");
+        check(!caps.hasGpsFrequencyReference,
+              "Sim declares hasGpsFrequencyReference=false");
+        check(!caps.hasGpsTimeConfiguration,
+              "Sim declares hasGpsTimeConfiguration=false");
         check(!caps.hasGpsHardware, "Sim declares hasGpsHardware=false");
         check(!caps.canReboot && !caps.hasRemoteOnControl
                   && !caps.canUpgradeFirmware,

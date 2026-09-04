@@ -337,6 +337,9 @@ RadioCapabilities SimBackend::capabilities() const
     caps.notchMinWidthHz = 0.0;
     caps.notchMaxWidthHz = 0.0;
     caps.hasGpsLocation = false;         // synthetic radio has no position source
+    caps.hasGpsSatelliteTelemetry = false;
+    caps.hasGpsFrequencyReference = false;
+    caps.hasGpsTimeConfiguration = false;
     caps.hasGpsHardware = false;
     caps.gpsHardwareRequiresPresence = false;
     caps.hasSupplyVoltageTelemetry = false;   // synthetic scene; no PA rail
