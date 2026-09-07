@@ -408,6 +408,15 @@ message). Works for Windows / macOS / Linux / WSL / Raspberry Pi
 contributors. Default to SSH signing; GPG is the fallback for
 contributors with existing GPG workflows.
 
+**Windows artifact signing** — `windows-installer.yml` Authenticode-signs
+`AetherSDR.exe`, the Inno `-setup.exe`, and a sideload `.msix` when the
+`WINDOWS_CODESIGN_PFX_BASE64` / `WINDOWS_CODESIGN_PFX_PASSWORD` secrets are set;
+absent them (forks, secret-less runs) the steps no-op and installers ship
+unsigned. This is distinct from `sign-release.yml`'s GPG `.asc` signatures and
+from the Partner Center-signed Store `.msixupload`. Setup, certificate
+requirements, and the SmartScreen reputation caveat:
+`docs/WINDOWS-CODE-SIGNING.md`.
+
 ### Gate integrity
 
 - The per-PR gate in `ci.yml` is frozen (see "Adding a test" above). A test
