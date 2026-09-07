@@ -229,6 +229,11 @@ public:
     Q_INVOKABLE void setAudioMuted(bool muted);
     [[nodiscard]] bool isConfigured() const noexcept { return m_channel != nullptr; }
 
+    [[nodiscard]] std::size_t channelOutputBlockSize() const noexcept
+    {
+        return m_channel ? m_channel->outputBlockSize() : 0;
+    }
+
     // The WDSP channel id this chain was actually given, or -1 before configure().
     //
     // Ids come from a PROCESS-WIDE pool of 32 shared with the transmit chain and

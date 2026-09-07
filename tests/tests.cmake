@@ -803,11 +803,12 @@ add_test(NAME hl2_noise_blanker_test COMMAND hl2_noise_blanker_test)
 # Hl2RxDsp read accessors behind the bridge's `dsp.get` extension:
 # channelConfig() / notchesEnabled() / shiftHz() / notchCount() must echo the
 # live WDSP configuration (HERMES.md §8.1 — the readback that catches model/DSP
-# divergence).
-add_executable(hl2_dsp_readback_test tests/hl2_dsp_readback_test.cpp)
-target_include_directories(hl2_dsp_readback_test PRIVATE src)
-target_link_libraries(hl2_dsp_readback_test PRIVATE aethercore Qt6::Core Qt6::Test)
-add_test(NAME hl2_dsp_readback_test COMMAND hl2_dsp_readback_test)
+# divergence). Fork-side coverage of the `dsp.get` verb; the upstream
+# gatherDspChains()/dspChains() path has its own hl2_dsp_readback_test below.
+add_executable(hl2_dsp_get_verb_test tests/hl2_dsp_get_verb_test.cpp)
+target_include_directories(hl2_dsp_get_verb_test PRIVATE src)
+target_link_libraries(hl2_dsp_get_verb_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_dsp_get_verb_test COMMAND hl2_dsp_get_verb_test)
 
 # AdcOverloadLogGate — rate limiter on the chattering HPSDR ADC-overload bit
 # (HERMES.md §15.7 / §13 T1-6a). Header-only policy; pure Core.
@@ -1230,6 +1231,87 @@ target_link_libraries(map_wrap_test PRIVATE
 add_test(NAME map_wrap_test COMMAND map_wrap_test)
 set_tests_properties(map_wrap_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Reply lifecycle accounting uses injected HTTP replies; no sockets are opened.
+add_executable(map_tile_reply_test tests/map_tile_reply_test.cpp)
+target_link_libraries(map_tile_reply_test PRIVATE
+    qgeoview Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Test)
+add_test(NAME map_tile_reply_test COMMAND map_tile_reply_test)
+set_tests_properties(map_tile_reply_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 10)
+
+# QGeoView image attachment must avoid HiDPI CPU-cache thrash on GL viewports.
+# No network, visible window, or GL context; tests real item cache selection.
+add_executable(map_image_cache_test tests/map_image_cache_test.cpp)
+target_link_libraries(map_image_cache_test PRIVATE
+    qgeoview Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::OpenGLWidgets)
+add_test(NAME map_image_cache_test COMMAND map_image_cache_test)
+set_tests_properties(map_image_cache_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Injected public HTTP replies; this test binds no sockets and contacts no provider.
+add_executable(city_lights_source_test tests/city_lights_source_test.cpp
+    src/gui/map/CityLightsSource.cpp)
+target_include_directories(city_lights_source_test PRIVATE src)
+target_link_libraries(city_lights_source_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Test)
+add_test(NAME city_lights_source_test COMMAND city_lights_source_test)
+set_tests_properties(city_lights_source_test PROPERTIES TIMEOUT 30)
+
+# NOAA radar URL generation is bounded, canonical across wrapped world copies,
+# and fixed to the public HTTPS host. This test is pure and never uses network.
+add_executable(weather_radar_source_test
+    tests/weather_radar_source_test.cpp
+    src/gui/map/WeatherRadarSource.cpp)
+target_include_directories(weather_radar_source_test PRIVATE src)
+target_link_libraries(weather_radar_source_test PRIVATE Qt6::Core)
+add_test(NAME weather_radar_source_test COMMAND weather_radar_source_test)
+
+# Radar native-GL placement must agree with Qt's basemap pixels at every DPR.
+# Socket-free QImage/QPainter oracle; exercises pan, zoom and viewport offsets.
+add_executable(weather_radar_placement_test tests/weather_radar_placement_test.cpp)
+target_include_directories(weather_radar_placement_test PRIVATE src)
+target_link_libraries(weather_radar_placement_test PRIVATE Qt6::Core Qt6::Gui)
+add_test(NAME weather_radar_placement_test COMMAND weather_radar_placement_test)
+
+# Real QGeoView/radar-item repeat and frame replacement. No provider or socket.
+# Runs on offscreen raster; native GL coverage is checked via the app bridge.
+add_executable(weather_radar_wrap_render_test
+    tests/weather_radar_wrap_render_test.cpp
+    src/gui/map/WeatherRadarPlaybackItem.cpp)
+target_include_directories(weather_radar_wrap_render_test PRIVATE src)
+target_link_libraries(weather_radar_wrap_render_test PRIVATE
+    qgeoview Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::OpenGL Qt6::OpenGLWidgets)
+add_test(NAME weather_radar_wrap_render_test COMMAND weather_radar_wrap_render_test)
+set_tests_properties(weather_radar_wrap_render_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Production playback controller + injected QNetworkReply delivery (NO sockets).
+# Proves delayed/out-of-order downloads, view cache reuse, and retained geometry.
+add_executable(weather_radar_loading_test
+    tests/weather_radar_loading_test.cpp
+    src/gui/map/CityLightsItem.cpp
+    src/gui/map/CityLightsSource.cpp
+    src/gui/map/MapDisplayWidget.cpp src/gui/map/MapView.cpp src/gui/map/GlobeMapView.cpp
+    src/gui/map/MapMarkerBatchItem.cpp src/gui/map/MapMarkerItem.cpp
+    src/gui/map/MapPathBatchItem.cpp src/gui/map/MapTerminatorItem.cpp
+    src/gui/map/WeatherRadarSource.cpp src/gui/map/WeatherRadarTileLayer.cpp
+    src/gui/map/WeatherRadarPlaybackItem.cpp)
+target_include_directories(weather_radar_loading_test PRIVATE src)
+target_link_libraries(weather_radar_loading_test PRIVATE aethercore qgeoview
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    Qt6::OpenGL Qt6::OpenGLWidgets)
+add_test(NAME weather_radar_loading_test COMMAND weather_radar_loading_test)
+set_tests_properties(weather_radar_loading_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
+# Production 2D/3D radar upload and shader alpha-filtering contract. No sockets.
+# Default skips before GUI discovery; explicit native GPU opt-in is required.
+add_executable(weather_radar_texture_gl_test tests/weather_radar_texture_gl_test.cpp)
+target_include_directories(weather_radar_texture_gl_test PRIVATE src)
+target_link_libraries(weather_radar_texture_gl_test PRIVATE Qt6::Core Qt6::Gui Qt6::OpenGL)
+add_test(NAME weather_radar_texture_gl_test COMMAND weather_radar_texture_gl_test)
+set_tests_properties(weather_radar_texture_gl_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
 # Globe drag and roll are independent interaction axes. This pure state test
 # guards the default level orientation, pole bounds and normalization without
@@ -3344,6 +3426,24 @@ if(AETHER_ENABLE_HL2_TX_LOOPBACK_TEST)
     add_test(NAME hl2_tx_loopback_test COMMAND hl2_tx_loopback_test)
     # A missing simulator is an honest skip, never a passing TX proof.
     set_tests_properties(hl2_tx_loopback_test PROPERTIES SKIP_RETURN_CODE 77)
+
+    # The DSP read-back against a real gateware implementation. Behind the same
+    # flag because it shares the fixture, though unlike the loopback test it
+    # never keys — every control it drives is receive-side.
+    #
+    # SOCKETS THIS TEST BINDS, per the socket-test canon: it binds an EPHEMERAL
+    # IPv4 UDP socket (port 0, kernel-assigned) and sends Metis discovery to
+    # UDP 1024 on the simulator host — 127.0.0.1 unless AETHER_HL2_SIM_HOST
+    # overrides it. It listens only for replies from the host it probed, and
+    # requires hpsdrsim's synthetic AA:BB:CC:DD:88:FF before connecting, so it
+    # cannot drive a real radio that happens to answer. No listening server, no
+    # fixed local port, no outbound connection beyond that host.
+    add_executable(hl2_dsp_readback_sim_test tests/hl2_dsp_readback_sim_test.cpp)
+    target_include_directories(hl2_dsp_readback_sim_test PRIVATE src)
+    target_link_libraries(hl2_dsp_readback_sim_test
+        PRIVATE aethercore Qt6::Core Qt6::Network)
+    add_test(NAME hl2_dsp_readback_sim_test COMMAND hl2_dsp_readback_sim_test)
+    set_tests_properties(hl2_dsp_readback_sim_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(hl2_tx_gate_test tests/hl2_tx_gate_test.cpp)
@@ -3856,6 +3956,7 @@ add_executable(system_info_dialog_test
     src/core/ThemeSeedGenerated.cpp
     src/core/SystemInfo.cpp
     src/core/SystemInfoCollector.cpp
+    src/core/MemoryTelemetry.cpp
     src/core/ThreadName.cpp
     src/core/LogManager.cpp
     src/core/AsyncLogWriter.cpp
@@ -4185,11 +4286,77 @@ add_executable(host_voice_chain_policy_test
 )
 target_include_directories(host_voice_chain_policy_test PRIVATE src)
 add_test(NAME host_voice_chain_policy_test COMMAND host_voice_chain_policy_test)
+add_executable(connect_state_policy_test
+    tests/connect_state_policy_test.cpp
+)
+target_include_directories(connect_state_policy_test PRIVATE src)
+add_test(NAME connect_state_policy_test COMMAND connect_state_policy_test)
+
+# The same field, through RadioModel and radioSnapshot rather than through the
+# policy header — a pure test cannot prove the model feeds the policy the right
+# lifecycle (#5416 review).
+#
+# Socket-free: inject attempt state through the model's existing test access,
+# exercise its real cancellation/error handlers, and call the bridge dispatcher
+# directly. No connectToRadio, transport, listener, discovery, or radio peer.
+add_executable(connect_state_model_test
+    tests/connect_state_model_test.cpp
+)
+target_include_directories(connect_state_model_test PRIVATE src tests)
+target_link_libraries(connect_state_model_test PRIVATE
+    aethercore Qt6::Core Qt6::Network
+)
+add_test(NAME connect_state_model_test COMMAND connect_state_model_test)
+add_executable(hl2_overload_policy_test
+    tests/hl2_overload_policy_test.cpp
+)
+target_include_directories(hl2_overload_policy_test PRIVATE src)
+add_test(NAME hl2_overload_policy_test COMMAND hl2_overload_policy_test)
+add_executable(hl2_dsp_setup_policy_test
+    tests/hl2_dsp_setup_policy_test.cpp
+)
+target_include_directories(hl2_dsp_setup_policy_test PRIVATE src)
+add_test(NAME hl2_dsp_setup_policy_test COMMAND hl2_dsp_setup_policy_test)
 add_executable(hl2_tx_level_policy_test
     tests/hl2_tx_level_policy_test.cpp
 )
 target_include_directories(hl2_tx_level_policy_test PRIVATE src)
 add_test(NAME hl2_tx_level_policy_test COMMAND hl2_tx_level_policy_test)
+
+add_executable(hl2_dsp_readback_test
+    tests/hl2_dsp_readback_test.cpp
+)
+target_include_directories(hl2_dsp_readback_test PRIVATE src)
+target_link_libraries(hl2_dsp_readback_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_dsp_readback_test COMMAND hl2_dsp_readback_test)
+
+# The bridge half of the same read-back: `get dsp` and `get dsp … backend` must
+# answer from one object, because assert_state and wait_for only ever issue the
+# property form (#5401 review). Socket-free — the line dispatcher is called
+# directly against a stand-in backend; no QLocalServer is created, no radio is
+# contacted, and the stub cannot key.
+add_executable(automation_dsp_backend_readback_test
+    tests/automation_dsp_backend_readback_test.cpp
+)
+target_include_directories(automation_dsp_backend_readback_test PRIVATE src tests)
+# aetherdesktop_support (where AutomationServer.cpp lives) is added by the
+# AETHER_AUTOMATION_SERVER_TESTS loop below.
+target_link_libraries(automation_dsp_backend_readback_test PRIVATE
+    aethercore Qt6::Core Qt6::Network
+)
+add_test(NAME automation_dsp_backend_readback_test
+         COMMAND automation_dsp_backend_readback_test)
+# Socket-free HL2 gain persistence: boardMaxRx bypasses discovery; the test
+# never pumps events and cancels DSP setup before it can start Metis UDP.
+add_executable(hl2_gain_restore_test tests/hl2_gain_restore_test.cpp)
+target_include_directories(hl2_gain_restore_test PRIVATE src tests)
+target_link_libraries(hl2_gain_restore_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_gain_restore_test COMMAND hl2_gain_restore_test)
+add_executable(hl2_band_memory_test
+    tests/hl2_band_memory_test.cpp
+)
+target_include_directories(hl2_band_memory_test PRIVATE src)
+add_test(NAME hl2_band_memory_test COMMAND hl2_band_memory_test)
 add_executable(slice_link_policy_test
     tests/slice_link_policy_test.cpp
 )
@@ -4521,6 +4688,8 @@ target_link_libraries(CAT_Flex_test PRIVATE Qt6::Core Qt6::Network)
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    weather_radar_loading_test
+    hl2_gain_restore_test
     icom_identity_test
     icom_control_profile_test
     control_resource_service_test
@@ -4608,6 +4777,8 @@ set(AETHER_AUTOMATION_SERVER_TESTS
     automation_drag_at_test
     automation_tx_watchdog_test
     automation_rn2_probe_test
+    connect_state_model_test
+    automation_dsp_backend_readback_test
     tci_automation_test
 )
 foreach(_automation_test IN LISTS AETHER_AUTOMATION_SERVER_TESTS)
@@ -4685,6 +4856,32 @@ target_include_directories(system_info_test PRIVATE src)
 target_link_libraries(system_info_test PRIVATE Qt6::Core)
 set_target_properties(system_info_test PROPERTIES AUTOMOC ON)
 add_test(NAME system_info_test COMMAND system_info_test)
+
+# #2554 (Memory tab): the collector publishes a process-memory sample on every
+# tick through a queued signal; this drives the real thread wiring (moveToThread,
+# init on started, the 1.5 s timer) and reads the live process. No socket, no
+# radio, no widget.
+add_executable(system_info_collector_test
+    tests/system_info_collector_test.cpp
+    src/core/SystemInfoCollector.cpp
+    src/core/SystemInfo.cpp
+    src/core/MemoryTelemetry.cpp
+    src/core/ThreadName.cpp
+)
+target_include_directories(system_info_collector_test PRIVATE src)
+target_link_libraries(system_info_collector_test PRIVATE Qt6::Core Qt6::Test)
+set_target_properties(system_info_collector_test PROPERTIES AUTOMOC ON)
+add_test(NAME system_info_collector_test COMMAND system_info_collector_test)
+
+# #2554 (Memory tab): the dialog's bounded memory history and the chart slicing it
+# shares with NetworkDiagnosticsDialog (1 s raw to 5 min, bucket averages beyond).
+# Header-only class; pure logic, constructed samples; no widget, no socket.
+add_executable(memory_history_ring_test
+    tests/memory_history_ring_test.cpp
+)
+target_include_directories(memory_history_ring_test PRIVATE src)
+target_link_libraries(memory_history_ring_test PRIVATE Qt6::Core)
+add_test(NAME memory_history_ring_test COMMAND memory_history_ring_test)
 
 # Startup hardware inventory (#4986): pins the baseline-comparison contracts
 # that arm the "CPU below the speech-engine baseline" warning, plus host
