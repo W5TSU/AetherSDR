@@ -69,7 +69,9 @@ try {
     Assert-True ($r.SignArgs[$r.SignArgs.IndexOf('/td') + 1] -eq 'SHA256') 'SHA-256 timestamp digest'
     Assert-True ($r.Files.Count -eq 2) 'Both target files resolved'
     Assert-True ($r.SignArgs[-1] -eq $r.Files[-1]) 'Target files are the trailing args'
-    Assert-True (($r.SignArgs -join ' ') -notmatch [regex]::Escape($pfxPassword)) 'Password is redacted from the echoed command'
+    Assert-True ($r.SignArgs[$r.SignArgs.IndexOf('/p') + 1] -eq $pfxPassword) 'SignArgs carries the real password for the caller'
+    Assert-True ($r.RedactedCommand -match ' /p \*\*\* ') 'Echoed command masks the password'
+    Assert-True ($r.RedactedCommand -notmatch [regex]::Escape($pfxPassword)) 'Echoed command never contains the real password'
 
     # 3. Timestamp URL override is honoured.
     $env:WINDOWS_CODESIGN_TIMESTAMP_URL = 'http://timestamp.acme.example/rfc3161'
