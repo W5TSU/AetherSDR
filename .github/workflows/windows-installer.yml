@@ -19,6 +19,16 @@ jobs:
     runs-on: windows-latest
     outputs:
       publish-flight: ${{ steps.store-plan.outputs.publishFlight }}
+    env:
+      # Authenticode code-signing certificate (base64 PFX + password) and an
+      # RFC-3161 timestamp URL. Mapped from repo secrets/vars so the signing
+      # steps below can gate on `env.WINDOWS_CODESIGN_PFX_BASE64 != ''` — `if:`
+      # cannot read `secrets` directly. Absent on forks / secret-less runs, so
+      # those steps no-op and the installers ship unsigned.
+      # Setup + caveats: docs/WINDOWS-CODE-SIGNING.md.
+      WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+      WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+      WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -53,6 +63,9 @@ jobs:
       # release build the first 5.1 execution of it.
       - name: Check Store packaging policy
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File tests\windows_store_policy_test.ps1
+
+      - name: Check code-signing helper
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tests\windows_codesign_test.ps1
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
@@ -357,6 +370,15 @@ jobs:
       - name: Verify deploy payload is self-contained
         run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\check-deploy-dependencies.ps1 -DeployDir deploy
 
+      # Authenticode-sign our own binaries in the deploy payload BEFORE the
+      # portable ZIP, the Inno installer, and the MSIX consume it, so all three
+      # carry a signed AetherSDR.exe. Qt and other third-party DLLs are already
+      # vendor-signed. Gated on the signing secret; a fork / secret-less run
+      # skips this and ships an unsigned payload.
+      - name: Sign application binaries (Authenticode)
+        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -Path deploy\AetherSDR.exe, deploy\aether-dv-waveform.exe
+
       - name: Create portable ZIP
         run: |
           # Sanitize github.ref_name — release-tag pushes give a slash-free
@@ -376,6 +398,13 @@ jobs:
           $version = "${{ github.ref_name }}" -replace '^v', '' -replace '[\\/:*?"<>|]', '_'
           $runtimeDir = (Resolve-Path "installer-runtime").Path
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAPP_VERSION=$version "/DVC_RUNTIME_DIR=$runtimeDir" packaging\windows\installer.iss
+
+      # Sign the installer itself — it's the artifact most users download and
+      # double-click, so its signature is what SmartScreen checks at install
+      # time. The AetherSDR.exe it carries was signed above.
+      - name: Sign installer (Authenticode)
+        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -Path AetherSDR-*-setup.exe
 
       # MSIX runs AFTER the portable ZIP + Inno installer steps and is
       # gated with continue-on-error so a future MSIX hiccup (missing SDK
@@ -397,6 +426,42 @@ jobs:
         run: |
           . .\packaging\windows\store-identity.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir . -PdbPath symbols\AetherSDR.pdb -SymbolDir symbols -CreateUpload -SkipSign -ExcludeDfnrModel -RequirePdb
+
+      # A second, SIGNED MSIX for direct sideloading, attached to the GitHub
+      # release (sideload-msix\ keeps it clear of the root-dir Store .msix /
+      # .msixupload globs). Distinct from the Store package above: NO Partner
+      # Center identity — Identity/@Publisher must equal the signing cert's
+      # subject, set here from the cert itself — and signed with our
+      # code-signing cert so an end user can install the .msix without a
+      # developer-mode / unsigned-package override. continue-on-error like the
+      # Store MSIX step: an MSIX hiccup must never gate the exe/-setup.exe path.
+      - name: Create signed sideload MSIX
+        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        continue-on-error: true
+        env:
+          AETHERSDR_MSIX_IDENTITY_NAME: ${{ vars.AETHERSDR_MSIX_IDENTITY_NAME || 'AetherSDR.AetherSDR' }}
+          AETHERSDR_MSIX_DISPLAY_NAME: ${{ vars.AETHERSDR_MSIX_DISPLAY_NAME }}
+          AETHERSDR_MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.AETHERSDR_MSIX_PUBLISHER_DISPLAY_NAME }}
+          AETHERSDR_MSIX_DESCRIPTION: ${{ vars.AETHERSDR_MSIX_DESCRIPTION }}
+          AETHERSDR_MSIX_BACKGROUND_COLOR: ${{ vars.AETHERSDR_MSIX_BACKGROUND_COLOR }}
+          AETHERSDR_MSIX_INSTALLER_ACCENT_COLOR: ${{ vars.AETHERSDR_MSIX_INSTALLER_ACCENT_COLOR }}
+          AETHERSDR_MSIX_INSTALLER_BACKGROUND_COLOR: ${{ vars.AETHERSDR_MSIX_INSTALLER_BACKGROUND_COLOR }}
+        run: |
+          $subject = pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -ShowPublisher
+          if ([string]::IsNullOrWhiteSpace($subject)) { throw "Could not read signing certificate subject." }
+          $env:AETHERSDR_MSIX_PUBLISHER = $subject.Trim()
+          Write-Host "Sideload MSIX Identity/@Publisher: $env:AETHERSDR_MSIX_PUBLISHER"
+          $pfx = (pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -ExportPfx $env:RUNNER_TEMP).Trim()
+          $env:AETHERSDR_MSIX_CERTIFICATE_FILE = $pfx
+          $env:AETHERSDR_MSIX_CERTIFICATE_PASSWORD = $env:WINDOWS_CODESIGN_PFX_PASSWORD
+          try {
+            New-Item -ItemType Directory -Force -Path sideload-msix | Out-Null
+            powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir sideload-msix -PackageRoot msix-root-sideload -ExcludeDfnrModel -TimestampUrl $env:WINDOWS_CODESIGN_TIMESTAMP_URL
+          }
+          finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+            $env:AETHERSDR_MSIX_CERTIFICATE_PASSWORD = $null
+          }
 
       # The staging step above is a hard gate: it verifies every deployed Qt
       # DLL/plugin has its same-named PDB before removing symbols from deploy/.
@@ -436,6 +501,7 @@ jobs:
             AetherSDR-*.msix
             AetherSDR-*.msixupload
             AetherSDR-*.appxsym
+            sideload-msix/AetherSDR-*.msix
 
       # Complete application + Qt PDB set, kept separately from .msixupload so
       # maintainers can symbolize local dumps without unpacking Store assets.
@@ -452,18 +518,20 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           # .msixupload is the Partner Center upload artifact (manual Store
-          # submission for now — see docs/WINDOWS-STORE-MSIX.md). It's a
-          # maintainer-only package; the raw .msix is intentionally left off
-          # the public release because CI builds it unsigned (-SkipSign) and
-          # an unsigned .msix can't be sideloaded by end users. The .msix is
-          # still kept in the upload-artifact step for maintainer inspection.
-          # The MSIX step is continue-on-error, so this glob may match nothing
-          # on a failed build; softprops skips unmatched globs rather than
+          # submission for now — see docs/WINDOWS-STORE-MSIX.md); it's
+          # maintainer-only and Partner Center signs it, so it stays built with
+          # -SkipSign and is not something an end user installs directly.
+          # sideload-msix/AetherSDR-*.msix is the signed, directly-installable
+          # package from the "Create signed sideload MSIX" step — present only
+          # when the code-signing secret is configured. Both MSIX steps are
+          # continue-on-error, so these globs may match nothing on a failed or
+          # secret-less build; softprops skips unmatched globs rather than
           # failing the release.
           files: |
             AetherSDR-*.zip
             AetherSDR-*-setup.exe
             AetherSDR-*.msixupload
+            sideload-msix/AetherSDR-*.msix
 
       # ----------------------------------------------------------------------
       # Automated Microsoft Store submission (weekly release cycle).

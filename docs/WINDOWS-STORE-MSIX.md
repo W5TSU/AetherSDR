@@ -458,6 +458,12 @@ Production Store packages should use Partner Center identity values. Packages
 distributed through the Microsoft Store are signed by the Store during
 submission, so this local self-signed certificate is only for sideload testing.
 
+For the **release** pipeline, `windows-installer.yml` builds a signed sideload
+`.msix` (plus a signed `AetherSDR.exe` and `-setup.exe`) with the project's
+real code-signing certificate — see [`WINDOWS-CODE-SIGNING.md`](WINDOWS-CODE-SIGNING.md).
+The Store `.msixupload` on that same run stays `-SkipSign`; Partner Center
+signs it.
+
 ## Notes From Microsoft Docs
 
 - [Manual MSIX packaging](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)
