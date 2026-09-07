@@ -1,0 +1,115 @@
+name: Sign Windows artifacts
+description: >
+  Authenticode-sign the given files with Azure Trusted Signing when it is
+  configured, else with a PFX code-signing certificate when that is configured,
+  else no-op (files left unsigned). One place for the method-select logic so the
+  three call sites in windows-installer.yml stay identical.
+
+inputs:
+  files:
+    description: Newline- or comma-separated file paths / globs to sign.
+    required: true
+
+  # --- Azure Trusted Signing (preferred) ---
+  azure-tenant-id:
+    description: Entra tenant (directory) ID of the signing service principal.
+    required: false
+    default: ''
+  azure-client-id:
+    description: Entra app (client) ID of the signing service principal.
+    required: false
+    default: ''
+  azure-client-secret:
+    description: Client secret for the signing service principal.
+    required: false
+    default: ''
+  ats-endpoint:
+    description: Trusted Signing account endpoint, e.g. https://wus2.codesigning.azure.net/
+    required: false
+    default: ''
+  ats-account:
+    description: Trusted Signing account name. Its presence selects the ATS method.
+    required: false
+    default: ''
+  ats-profile:
+    description: Trusted Signing certificate profile name.
+    required: false
+    default: ''
+
+  # --- PFX certificate (fallback) ---
+  pfx-base64:
+    description: base64 of a PFX / P12 code-signing certificate. Selects the PFX method when ats-account is empty.
+    required: false
+    default: ''
+  pfx-password:
+    description: PFX export password (may be empty).
+    required: false
+    default: ''
+  pfx-timestamp-url:
+    description: RFC-3161 timestamp URL for the PFX path. Defaults to DigiCert's inside the helper.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Select signing method
+      id: method
+      shell: pwsh
+      run: |
+        if     ('${{ inputs.ats-account }}'.Trim()) { $method = 'ats' }
+        elseif ('${{ inputs.pfx-base64 }}'.Trim())  { $method = 'pfx' }
+        else                                        { $method = 'skip' }
+        "method=$method" >> $env:GITHUB_OUTPUT
+        Write-Host "sign-windows: method = $method"
+
+    # The ATS action does not expand wildcards and wants absolute paths, so
+    # resolve the patterns here and hand both branches the same concrete list.
+    - name: Resolve files
+      if: steps.method.outputs.method != 'skip'
+      id: resolve
+      shell: pwsh
+      run: |
+        $patterns = '${{ inputs.files }}'.Split(@("`r", "`n", ','), [StringSplitOptions]::RemoveEmptyEntries) |
+          ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        $paths = @()
+        foreach ($pattern in $patterns) {
+          $hit = @(Resolve-Path -Path $pattern -ErrorAction SilentlyContinue | ForEach-Object { $_.Path })
+          if (-not $hit) { throw "sign-windows: no file matched '$pattern'." }
+          $paths += $hit
+        }
+        $paths = @($paths | Sort-Object -Unique)
+        Write-Host "sign-windows: $($paths.Count) file(s):`n$($paths -join "`n")"
+        "files<<SIGN_EOF`n$($paths -join "`n")`nSIGN_EOF" >> $env:GITHUB_OUTPUT
+
+    - name: Sign with Azure Trusted Signing
+      if: steps.method.outputs.method == 'ats'
+      uses: Azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2.0.0
+      with:
+        azure-tenant-id: ${{ inputs.azure-tenant-id }}
+        azure-client-id: ${{ inputs.azure-client-id }}
+        azure-client-secret: ${{ inputs.azure-client-secret }}
+        endpoint: ${{ inputs.ats-endpoint }}
+        trusted-signing-account-name: ${{ inputs.ats-account }}
+        certificate-profile-name: ${{ inputs.ats-profile }}
+        files: ${{ steps.resolve.outputs.files }}
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+
+    - name: Sign with PFX certificate
+      if: steps.method.outputs.method == 'pfx'
+      shell: pwsh
+      env:
+        WINDOWS_CODESIGN_PFX_BASE64: ${{ inputs.pfx-base64 }}
+        WINDOWS_CODESIGN_PFX_PASSWORD: ${{ inputs.pfx-password }}
+        WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ inputs.pfx-timestamp-url }}
+      run: |
+        $files = '${{ steps.resolve.outputs.files }}'.Split("`n", [StringSplitOptions]::RemoveEmptyEntries)
+        & "${{ github.workspace }}/packaging/windows/sign-windows-artifacts.ps1" -Path $files
+
+    - name: Report unsigned
+      if: steps.method.outputs.method == 'skip'
+      shell: pwsh
+      run: |
+        Write-Warning "sign-windows: no signing method configured; the files were left unsigned."
