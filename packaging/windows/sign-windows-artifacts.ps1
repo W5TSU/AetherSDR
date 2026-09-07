@@ -132,11 +132,12 @@ try {
 
     if ($DryRun) {
         return [pscustomobject]@{
-            Skipped      = $false
-            DryRun       = $true
-            SignArgs     = $signArgs
-            Files        = $files
-            TimestampUrl = $TimestampUrl
+            Skipped         = $false
+            DryRun          = $true
+            SignArgs        = $signArgs
+            RedactedCommand = "signtool $redacted"
+            Files           = $files
+            TimestampUrl    = $TimestampUrl
         }
     }
 
