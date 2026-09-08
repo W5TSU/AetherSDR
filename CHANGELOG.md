@@ -8,6 +8,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.6] — 2026-09-08
+
+### Synced with upstream v26.9.2 · Windows code signing
+
+Merges `aethersdr/AetherSDR` through its v26.9.2. From upstream: PSK Reporter
+**weather radar** and **city-lights** overlays on the 2D map and 3D globe;
+**process-memory history** in the Runtime Monitor; a reworked **SystemInfo**
+collector; and a batch of Hermes-Lite 2 fixes — per-band gain preserved across
+startup and overrides, same-value gain persistence, bounded-and-logged DSP
+setup, and a DSP-config read-back path. Experimental **ANAN-G2** and
+**RTL-SDR** receive, the **TelePost LP-100A** wattmeter, the **SPE** floating
+front panel, and an Icom native-controls cleanup with optional wake-on-connect
+ride in with the same merge.
+
+### Fork
+
+- **Windows installers are Authenticode-signed in CI.** `AetherSDR.exe`, the
+  Inno `-setup.exe`, and a sideloadable `.msix` are signed through a new
+  `sign-windows` composite action — Azure Trusted Signing when configured,
+  otherwise a PFX certificate, otherwise unsigned (forks / secret-less runs).
+  This is what stops Windows SmartScreen blocking the install with "unknown
+  publisher". Setup and the SmartScreen-reputation caveat are in
+  `docs/WINDOWS-CODE-SIGNING.md`.
+- **Help → What's New** loads the repository's latest published release rather
+  than the release tagged for the exact running build — which usually does not
+  exist and returned a 404.
+
 ## [v26.9.5] — 2026-09-06
 
 ### Fork
