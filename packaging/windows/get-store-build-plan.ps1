@@ -28,7 +28,11 @@ if ($RunNumber -lt 1 -or $RunNumber -gt 65535) {
 }
 
 $upstream = $Repository -eq 'aethersdr/AetherSDR'
-$release = $upstream -and $EventName -eq 'push' -and $Ref.StartsWith('refs/tags/v')
+# Any repo that pushes its own v* tag populates its own GitHub release with the
+# build artifacts — a fork cutting a tag wants its release to have binaries too.
+# Microsoft Store / Partner Center publication (productionDraft, publishFlight)
+# stays gated to the canonical repo below.
+$release = $EventName -eq 'push' -and $Ref.StartsWith('refs/tags/v')
 $flight = $upstream -and $EventName -eq 'workflow_dispatch' -and $RequestFlight
 if ($RequestFlight -and -not $flight) {
     throw "Store flights require workflow_dispatch in aethersdr/AetherSDR."
@@ -53,7 +57,7 @@ if ($sourceVersion.Major -lt 1 -or $sourceVersion.Major -gt 65535 -or $sourceVer
 
 [pscustomobject]@{
     releaseArtifacts = $release
-    productionDraft = $release -and -not [string]::IsNullOrWhiteSpace($ProductId)
+    productionDraft = $upstream -and $release -and -not [string]::IsNullOrWhiteSpace($ProductId)
     publishFlight = $flight
     msixVersion = "$($sourceVersion.Major).$($sourceVersion.Minor).$RunNumber.0"
 }
