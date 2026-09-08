@@ -72,6 +72,21 @@ jobs:
       - name: Check code-signing helper
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File tests\windows_codesign_test.ps1
 
+      # Whether any signing method is configured, resolved in a `run:` step
+      # because GitHub evaluates step `if:` conditions before secret-backed env
+      # values are populated — so `if: env.WINDOWS_CODESIGN_PFX_BASE64 != ''`
+      # reads empty even when the secret is set. The composite-action signing
+      # steps sidestep this (no `if:`, secret passed via `with:`); the sideload
+      # MSIX steps gate on this output instead.
+      - name: Resolve signing method
+        id: signing
+        run: |
+          $on = -not (
+            [string]::IsNullOrWhiteSpace($env:AZURE_TRUSTED_SIGNING_ACCOUNT) -and
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64))
+          "configured=$($on.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "signing configured: $on"
+
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
 
@@ -466,7 +481,7 @@ jobs:
       # are continue-on-error and gated so an MSIX hiccup — or the DN-match
       # footgun — never blocks the signed exe / -setup.exe path.
       - name: Build sideload MSIX (unsigned)
-        if: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT != '' || env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        if: ${{ steps.signing.outputs.configured == 'true' }}
         continue-on-error: true
         env:
           AETHERSDR_MSIX_IDENTITY_NAME: ${{ vars.AETHERSDR_MSIX_IDENTITY_NAME || 'AetherSDR.AetherSDR' }}
@@ -497,7 +512,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir sideload-msix -PackageRoot msix-root-sideload -ExcludeDfnrModel -SkipSign
 
       - name: Sign sideload MSIX (Authenticode)
-        if: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT != '' || env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        if: ${{ steps.signing.outputs.configured == 'true' }}
         continue-on-error: true
         uses: ./.github/actions/sign-windows
         with:
