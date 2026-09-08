@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Authenticode-sign Windows build artifacts with the project's code-signing
-    certificate — or read the certificate's publisher subject / export it to a
-    file for another tool to consume.
+    Authenticode-sign Windows build artifacts with a PFX code-signing
+    certificate, or read the certificate's publisher subject.
 
 .DESCRIPTION
-    windows-installer.yml calls this after the deploy payload is assembled and
-    again after the Inno installer is built, so the downloaded AetherSDR.exe
-    and the -setup.exe carry a trusted signature and Windows SmartScreen stops
-    blocking the install with "unknown publisher".
+    This is the PFX branch of the `./.github/actions/sign-windows` composite
+    action (the other branch is Azure Trusted Signing). It is used for a
+    self-signed certificate in local / pipeline testing, or a legacy file-based
+    certificate. Public releases should prefer Trusted Signing — see
+    docs/WINDOWS-CODE-SIGNING.md.
 
     The certificate is supplied as a base64-encoded PFX plus its password,
     through environment variables that map to GitHub Actions secrets:
@@ -19,26 +19,18 @@
                                          defaults to DigiCert's)
 
     When WINDOWS_CODESIGN_PFX_BASE64 is empty the -Path mode is a no-op that
-    warns and returns a marker object with exit 0 — a fork build or a
-    secret-less run still produces (unsigned) installers instead of failing.
-    The -ShowPublisher / -ExportPfx modes require the secret and throw without
-    it.
+    warns and returns a marker object with exit 0. -ShowPublisher requires the
+    secret and throws without it.
 
     The decoded PFX is written to a fresh temp directory and shredded in a
-    finally block; it never lands in the workspace. (-ExportPfx is the one
-    exception: it deliberately writes a copy the caller owns and must delete.)
+    finally block; it never lands in the workspace.
 
 .PARAMETER Path
     One or more files (globs allowed) to sign. Signing mode.
 
 .PARAMETER ShowPublisher
     Print the certificate Subject distinguished name to stdout and return.
-    The signed sideload MSIX build needs it for Identity/@Publisher.
-
-.PARAMETER ExportPfx
-    Directory to write the decoded PFX into (as aether-codesign.pfx). Prints
-    the full path. Used to hand the cert to create-msix.ps1's -CertificateFile.
-    The caller is responsible for deleting the file.
+    The sideload MSIX build needs it for Identity/@Publisher.
 
 .PARAMETER DryRun
     Resolve inputs and emit the signtool command that would run (password
@@ -51,9 +43,6 @@ param(
 
     [Parameter(ParameterSetName = 'ShowPublisher', Mandatory = $true)]
     [switch]$ShowPublisher,
-
-    [Parameter(ParameterSetName = 'ExportPfx', Mandatory = $true)]
-    [string]$ExportPfx,
 
     [Parameter(ParameterSetName = 'Sign')]
     [switch]$DryRun,
@@ -82,8 +71,8 @@ function Find-SignTool {
 }
 
 if ([string]::IsNullOrWhiteSpace($PfxBase64)) {
-    if ($ShowPublisher -or $ExportPfx) {
-        throw 'WINDOWS_CODESIGN_PFX_BASE64 is required for -ShowPublisher / -ExportPfx.'
+    if ($ShowPublisher) {
+        throw 'WINDOWS_CODESIGN_PFX_BASE64 is required for -ShowPublisher.'
     }
     Write-Warning 'WINDOWS_CODESIGN_PFX_BASE64 is not set - skipping Authenticode signing. Artifacts will be unsigned.'
     return [pscustomobject]@{ Skipped = $true; Reason = 'no-certificate'; Signed = @() }
@@ -95,14 +84,6 @@ $pfxPath = Join-Path $workDir 'codesign.pfx'
 
 try {
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($PfxBase64.Trim()))
-
-    if ($ExportPfx) {
-        New-Item -ItemType Directory -Force -Path $ExportPfx | Out-Null
-        $dest = Join-Path (Resolve-Path -LiteralPath $ExportPfx).Path 'aether-codesign.pfx'
-        Copy-Item -LiteralPath $pfxPath -Destination $dest -Force
-        Write-Output $dest
-        return
-    }
 
     if ($ShowPublisher) {
         $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(

@@ -20,15 +20,20 @@ jobs:
     outputs:
       publish-flight: ${{ steps.store-plan.outputs.publishFlight }}
     env:
-      # Authenticode code-signing certificate (base64 PFX + password) and an
-      # RFC-3161 timestamp URL. Mapped from repo secrets/vars so the signing
-      # steps below can gate on `env.WINDOWS_CODESIGN_PFX_BASE64 != ''` — `if:`
-      # cannot read `secrets` directly. Absent on forks / secret-less runs, so
-      # those steps no-op and the installers ship unsigned.
+      # Code-signing config, surfaced as env so the sideload-MSIX steps can gate
+      # on it (`if:` cannot read `secrets`/`vars` contexts of its own). The
+      # `./.github/actions/sign-windows` composite picks Azure Trusted Signing
+      # when AZURE_TRUSTED_SIGNING_ACCOUNT is set, else the PFX certificate when
+      # WINDOWS_CODESIGN_PFX_BASE64 is set, else no-ops (unsigned). The Entra
+      # service-principal secrets are passed per-step, never job-wide, to keep
+      # them out of unrelated steps' environments.
       # Setup + caveats: docs/WINDOWS-CODE-SIGNING.md.
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
       WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      AZURE_TRUSTED_SIGNING_PROFILE: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -373,11 +378,23 @@ jobs:
       # Authenticode-sign our own binaries in the deploy payload BEFORE the
       # portable ZIP, the Inno installer, and the MSIX consume it, so all three
       # carry a signed AetherSDR.exe. Qt and other third-party DLLs are already
-      # vendor-signed. Gated on the signing secret; a fork / secret-less run
-      # skips this and ships an unsigned payload.
+      # vendor-signed. The composite no-ops when neither signing method is
+      # configured (forks / secret-less runs), leaving the payload unsigned.
       - name: Sign application binaries (Authenticode)
-        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -Path deploy\AetherSDR.exe, deploy\aether-dv-waveform.exe
+        uses: ./.github/actions/sign-windows
+        with:
+          files: |
+            deploy/AetherSDR.exe
+            deploy/aether-dv-waveform.exe
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ats-endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          ats-account: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          ats-profile: ${{ env.AZURE_TRUSTED_SIGNING_PROFILE }}
+          pfx-base64: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 }}
+          pfx-password: ${{ env.WINDOWS_CODESIGN_PFX_PASSWORD }}
+          pfx-timestamp-url: ${{ env.WINDOWS_CODESIGN_TIMESTAMP_URL }}
 
       - name: Create portable ZIP
         run: |
@@ -403,8 +420,18 @@ jobs:
       # double-click, so its signature is what SmartScreen checks at install
       # time. The AetherSDR.exe it carries was signed above.
       - name: Sign installer (Authenticode)
-        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -Path AetherSDR-*-setup.exe
+        uses: ./.github/actions/sign-windows
+        with:
+          files: AetherSDR-*-setup.exe
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ats-endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          ats-account: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          ats-profile: ${{ env.AZURE_TRUSTED_SIGNING_PROFILE }}
+          pfx-base64: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 }}
+          pfx-password: ${{ env.WINDOWS_CODESIGN_PFX_PASSWORD }}
+          pfx-timestamp-url: ${{ env.WINDOWS_CODESIGN_TIMESTAMP_URL }}
 
       # MSIX runs AFTER the portable ZIP + Inno installer steps and is
       # gated with continue-on-error so a future MSIX hiccup (missing SDK
@@ -427,16 +454,19 @@ jobs:
           . .\packaging\windows\store-identity.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir . -PdbPath symbols\AetherSDR.pdb -SymbolDir symbols -CreateUpload -SkipSign -ExcludeDfnrModel -RequirePdb
 
-      # A second, SIGNED MSIX for direct sideloading, attached to the GitHub
-      # release (sideload-msix\ keeps it clear of the root-dir Store .msix /
-      # .msixupload globs). Distinct from the Store package above: NO Partner
-      # Center identity — Identity/@Publisher must equal the signing cert's
-      # subject, set here from the cert itself — and signed with our
-      # code-signing cert so an end user can install the .msix without a
-      # developer-mode / unsigned-package override. continue-on-error like the
-      # Store MSIX step: an MSIX hiccup must never gate the exe/-setup.exe path.
-      - name: Create signed sideload MSIX
-        if: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+      # A second MSIX for direct sideloading, attached to the GitHub release
+      # (sideload-msix\ keeps it clear of the root-dir Store .msix / .msixupload
+      # globs). Distinct from the Store package above: NO Partner Center
+      # identity. Its Identity/@Publisher must equal the signing certificate's
+      # subject —
+      #   * Trusted Signing: the AETHERSDR_SIDELOAD_MSIX_PUBLISHER repo variable
+      #     (read it off the certificate profile in the Azure portal);
+      #   * PFX: read straight off the cert.
+      # Built unsigned here, then signed by the composite step below. Both steps
+      # are continue-on-error and gated so an MSIX hiccup — or the DN-match
+      # footgun — never blocks the signed exe / -setup.exe path.
+      - name: Build sideload MSIX (unsigned)
+        if: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT != '' || env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
         continue-on-error: true
         env:
           AETHERSDR_MSIX_IDENTITY_NAME: ${{ vars.AETHERSDR_MSIX_IDENTITY_NAME || 'AetherSDR.AetherSDR' }}
@@ -446,22 +476,41 @@ jobs:
           AETHERSDR_MSIX_BACKGROUND_COLOR: ${{ vars.AETHERSDR_MSIX_BACKGROUND_COLOR }}
           AETHERSDR_MSIX_INSTALLER_ACCENT_COLOR: ${{ vars.AETHERSDR_MSIX_INSTALLER_ACCENT_COLOR }}
           AETHERSDR_MSIX_INSTALLER_BACKGROUND_COLOR: ${{ vars.AETHERSDR_MSIX_INSTALLER_BACKGROUND_COLOR }}
+          # Distinct from AETHERSDR_MSIX_PUBLISHER (the Partner Center identity
+          # the Store step uses) — this is the sideload package's publisher,
+          # which must equal the Trusted Signing certificate subject.
+          AETHERSDR_SIDELOAD_MSIX_PUBLISHER: ${{ vars.AETHERSDR_SIDELOAD_MSIX_PUBLISHER }}
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ env.WINDOWS_CODESIGN_PFX_PASSWORD }}
         run: |
-          $subject = pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -ShowPublisher
-          if ([string]::IsNullOrWhiteSpace($subject)) { throw "Could not read signing certificate subject." }
-          $env:AETHERSDR_MSIX_PUBLISHER = $subject.Trim()
-          Write-Host "Sideload MSIX Identity/@Publisher: $env:AETHERSDR_MSIX_PUBLISHER"
-          $pfx = (pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -ExportPfx $env:RUNNER_TEMP).Trim()
-          $env:AETHERSDR_MSIX_CERTIFICATE_FILE = $pfx
-          $env:AETHERSDR_MSIX_CERTIFICATE_PASSWORD = $env:WINDOWS_CODESIGN_PFX_PASSWORD
-          try {
-            New-Item -ItemType Directory -Force -Path sideload-msix | Out-Null
-            powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir sideload-msix -PackageRoot msix-root-sideload -ExcludeDfnrModel -TimestampUrl $env:WINDOWS_CODESIGN_TIMESTAMP_URL
+          if ($env:AZURE_TRUSTED_SIGNING_ACCOUNT) {
+            $publisher = $env:AETHERSDR_SIDELOAD_MSIX_PUBLISHER
+            if ([string]::IsNullOrWhiteSpace($publisher)) {
+              throw "Set the AETHERSDR_SIDELOAD_MSIX_PUBLISHER repo variable to the Trusted Signing certificate subject (Azure portal -> certificate profile)."
+            }
+          } else {
+            $publisher = (pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\sign-windows-artifacts.ps1 -ShowPublisher).Trim()
           }
-          finally {
-            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
-            $env:AETHERSDR_MSIX_CERTIFICATE_PASSWORD = $null
-          }
+          $env:AETHERSDR_MSIX_PUBLISHER = $publisher
+          Write-Host "Sideload MSIX Identity/@Publisher: $publisher"
+          New-Item -ItemType Directory -Force -Path sideload-msix | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\create-msix.ps1 -DeployDir deploy -OutputDir sideload-msix -PackageRoot msix-root-sideload -ExcludeDfnrModel -SkipSign
+
+      - name: Sign sideload MSIX (Authenticode)
+        if: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT != '' || env.WINDOWS_CODESIGN_PFX_BASE64 != '' }}
+        continue-on-error: true
+        uses: ./.github/actions/sign-windows
+        with:
+          files: sideload-msix/AetherSDR-*.msix
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ats-endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          ats-account: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          ats-profile: ${{ env.AZURE_TRUSTED_SIGNING_PROFILE }}
+          pfx-base64: ${{ env.WINDOWS_CODESIGN_PFX_BASE64 }}
+          pfx-password: ${{ env.WINDOWS_CODESIGN_PFX_PASSWORD }}
+          pfx-timestamp-url: ${{ env.WINDOWS_CODESIGN_TIMESTAMP_URL }}
 
       # The staging step above is a hard gate: it verifies every deployed Qt
       # DLL/plugin has its same-named PDB before removing symbols from deploy/.

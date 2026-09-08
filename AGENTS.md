@@ -409,12 +409,13 @@ contributors. Default to SSH signing; GPG is the fallback for
 contributors with existing GPG workflows.
 
 **Windows artifact signing** — `windows-installer.yml` Authenticode-signs
-`AetherSDR.exe`, the Inno `-setup.exe`, and a sideload `.msix` when the
-`WINDOWS_CODESIGN_PFX_BASE64` / `WINDOWS_CODESIGN_PFX_PASSWORD` secrets are set;
-absent them (forks, secret-less runs) the steps no-op and installers ship
-unsigned. This is distinct from `sign-release.yml`'s GPG `.asc` signatures and
-from the Partner Center-signed Store `.msixupload`. Setup, certificate
-requirements, and the SmartScreen reputation caveat:
+`AetherSDR.exe`, the Inno `-setup.exe`, and a sideload `.msix` via the
+`./.github/actions/sign-windows` composite: Azure Trusted Signing when
+`AZURE_TRUSTED_SIGNING_ACCOUNT` is set, else a PFX certificate when
+`WINDOWS_CODESIGN_PFX_BASE64` is set, else no-op (forks / secret-less runs ship
+unsigned). Distinct from `sign-release.yml`'s GPG `.asc` signatures and from the
+Partner Center-signed Store `.msixupload`. Setup for both methods, the sideload
+MSIX publisher-DN match, and the SmartScreen reputation caveat:
 `docs/WINDOWS-CODE-SIGNING.md`.
 
 ### Gate integrity

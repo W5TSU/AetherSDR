@@ -52,9 +52,8 @@ try {
     $r = & $signScript -Path $fileA -DryRun -WarningAction SilentlyContinue
     Assert-True ($r.Skipped -and $r.Reason -eq 'no-certificate') 'Empty secret is a no-op in -Path mode'
 
-    # ...but -ShowPublisher / -ExportPfx demand the cert.
+    # ...but -ShowPublisher demands the cert.
     Assert-Throws { & $signScript -ShowPublisher } 'required for -ShowPublisher'
-    Assert-Throws { & $signScript -ExportPfx $scratch } 'required for -ShowPublisher'
 
     # 2. Dry run builds the expected signtool command.
     $env:WINDOWS_CODESIGN_PFX_BASE64 = $pfxBase64
@@ -84,11 +83,7 @@ try {
     # 5. -ShowPublisher returns the certificate subject for the MSIX manifest.
     Assert-True ((& $signScript -ShowPublisher).Trim() -eq 'CN=AetherSDR Test Signer') '-ShowPublisher emits the cert subject'
 
-    # 6. -ExportPfx writes a .pfx the caller can hand to create-msix.ps1.
-    $exported = (& $signScript -ExportPfx (Join-Path $scratch 'export')).Trim()
-    Assert-True ((Test-Path -LiteralPath $exported) -and ([IO.Path]::GetExtension($exported) -eq '.pfx')) '-ExportPfx writes a .pfx file'
-
-    # 7. No decoded PFX temp dir is left behind by any mode.
+    # 6. No decoded PFX temp dir is left behind by any mode.
     $leaked = @(Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'aether-codesign-*' -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notlike 'aether-codesign-test-*' })
     Assert-True ($leaked.Count -eq 0) 'Decoded-PFX temp directory is shredded'
