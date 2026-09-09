@@ -1,3 +1,4 @@
+#include "core/DroopCalibration.h"
 #include "AutomationServer.h"
 #include "core/CtcssTones.h"
 #include "core/RadioCertification.h"
@@ -3262,6 +3263,13 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
             parseActionValue,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 return s.doFreqCal(a.action, a.value);
+            });
+
+        add("droopcal", {},
+            "droopcal [status|start|stop|apply|discard] — ANAN-G2 DDC0 droop calibration sweep (radios with a measured DDC edge droop)",
+            parseActionValue,
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doDroopCal(a.action, a.value);
             });
 
         add("targettune", {},
@@ -7944,6 +7952,20 @@ QJsonObject AutomationServer::doFreqCal(const QString& action, const QString& va
 
     return err(QStringLiteral("freqcal: unknown action '%1' (get|set|from_vfo|reset)")
                    .arg(action));
+}
+
+QJsonObject AutomationServer::doDroopCal(const QString& action, const QString& value)
+{
+    Q_UNUSED(value);
+    const QString verb = action.isEmpty() ? QStringLiteral("status") : action.toLower();
+    if (verb != QLatin1String("status") && verb != QLatin1String("start")
+        && verb != QLatin1String("stop") && verb != QLatin1String("apply")
+        && verb != QLatin1String("discard")) {
+        return err(QStringLiteral("droopcal: unknown action '%1' (status|start|stop|apply|discard)")
+                       .arg(action));
+    }
+    return QJsonObject::fromVariantMap(requestDroopCalibration(
+        m_radioModel ? m_radioModel->backend() : nullptr, verb));
 }
 
 // ── VFO tuning (#3646) ──────────────────────────────────────────────────────

@@ -1997,6 +1997,33 @@ target_compile_definitions(rf_gain_presentation_test PRIVATE
     AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME rf_gain_presentation_test COMMAND rf_gain_presentation_test)
 
+# ANAN droop-correction apply math -- pure C++, no Qt dependency at all.
+# Table SELECTION/storage now lives in AnanRxDsp (a runtime map, populated
+# live by AnanDroopCalibrator or a per-radio settings load), not a compiled
+# lookup, so this only covers applyDroopCorrectionDb()/kDroopCorrectionZero.
+add_executable(anan_droop_correction_test
+    tests/anan_droop_correction_test.cpp
+    src/core/backends/anan/AnanDroopCorrection.cpp
+)
+target_include_directories(anan_droop_correction_test PRIVATE src)
+add_test(NAME anan_droop_correction_test COMMAND anan_droop_correction_test)
+
+# AnanDroopCalibrator's pure math (median-in-power averaging, central-window
+# reference, clamp) -- no live radio needed. Ported from this feature's
+# original offline prototype (formerly tools/test_anan_droop_calibration.py,
+# since superseded by this in-app engine). Links aethercore (matches
+# anan_rxdsp_handedness_test's own pattern) rather than compiling
+# AnanDroopCalibrator.cpp/AnanDroopCorrection.cpp a second time -- both
+# already live in libaethercore.a, and re-compiling AnanDroopCalibrator.cpp
+# here too duplicates its moc-generated QObject symbols (multiple
+# definition at link time).
+add_executable(anan_droop_calibrator_test
+    tests/anan_droop_calibrator_test.cpp
+)
+target_include_directories(anan_droop_calibrator_test PRIVATE src)
+target_link_libraries(anan_droop_calibrator_test PRIVATE aethercore Qt6::Core)
+add_test(NAME anan_droop_calibrator_test COMMAND anan_droop_calibrator_test)
+
 # Floating-panadapter crash-loop guard (#4617) — pins that a session which died
 # inside floatPanadapter() comes up docked instead of replaying the crash.
 add_executable(floating_restore_policy_test
@@ -4970,3 +4997,10 @@ foreach(_aether_test IN LISTS _aether_registered_tests)
         set_tests_properties(${_aether_test} PROPERTIES TIMEOUT 300)
     endif()
 endforeach()
+
+# Socket-free capability/extension tests: injected transport, no QLocalServer
+# and no radio connect. Exercises the same dispatcher used by the bridge.
+add_executable(droop_calibration_seam_test tests/droop_calibration_seam_test.cpp)
+target_include_directories(droop_calibration_seam_test PRIVATE src tests)
+target_link_libraries(droop_calibration_seam_test PRIVATE aetherdesktop_support Qt6::Core)
+add_test(NAME droop_calibration_seam_test COMMAND droop_calibration_seam_test)
