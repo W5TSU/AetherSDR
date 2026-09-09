@@ -710,6 +710,34 @@ PskReporterMapDialog::PskReporterMapDialog(AudioEngine* audioEngine,
     mapForm->addRow(m_globeCheck);
     mapForm->addRow(m_pathsCheck);
     mapForm->addRow(m_terminatorCheck);
+    auto* basemapDarkTint = new QCheckBox(tr("Dark map"), mapBox);
+    basemapDarkTint->setObjectName(QStringLiteral("pskReporterBasemapDarkTint"));
+    basemapDarkTint->setAccessibleName(tr("Dark basemap"));
+    basemapDarkTint->setAccessibleDescription(tr(
+        "Remap the map to dark backgrounds and light printed labels. "
+        "City lights, radar, and reports keep their colours."));
+    basemapDarkTint->setToolTip(basemapDarkTint->accessibleDescription());
+    basemapDarkTint->setChecked(
+        pskSettings().value("basemapDarkTintEnabled").toBool(false));
+    mapForm->addRow(basemapDarkTint);
+    auto* basemapBrightness = new GuardedSlider(Qt::Horizontal, mapBox);
+    basemapBrightness->setObjectName(QStringLiteral("pskReporterBasemapBrightness"));
+    basemapBrightness->setAccessibleName(tr("Map brightness"));
+    basemapBrightness->setAccessibleDescription(tr(
+        "Dim the basemap without dimming city lights, radar, or reports. "
+        "This does not change the actual day/night boundary."));
+    basemapBrightness->setToolTip(basemapBrightness->accessibleDescription());
+    basemapBrightness->setRange(20, 100);
+    basemapBrightness->setFocusPolicy(Qt::StrongFocus);
+    basemapBrightness->setValue(std::clamp(
+        pskSettings().value("basemapBrightness").toInt(100), 20, 100));
+    auto* basemapValue = new QLabel(tr("%1%").arg(basemapBrightness->value()), mapBox);
+    auto* basemapRow = new QHBoxLayout();
+    basemapRow->addWidget(basemapBrightness, 1);
+    basemapRow->addWidget(basemapValue);
+    auto* basemapLabel = new QLabel(tr("Map brightness:"), mapBox);
+    basemapLabel->setBuddy(basemapBrightness);
+    mapForm->addRow(basemapLabel, basemapRow);
     sections->addWidget(mapBox);
 
     const auto sliderRow = [](QSlider* slider, QLabel* value) {
@@ -744,7 +772,7 @@ PskReporterMapDialog::PskReporterMapDialog(AudioEngine* audioEngine,
     sidebar->setWidget(controls);
 
     auto* wheelGuard = new SidebarValueWheelGuard(sidebar);
-    for (QWidget* control : QList<QWidget*>{m_beaconTone, m_beaconLevel,
+    for (QWidget* control : QList<QWidget*>{m_beaconTone, m_beaconLevel, basemapBrightness,
              m_cityLightsBrightness, m_cityLightsFaintLights, m_cityLightsWarmth,
              m_weatherRadarSpeedSlider}) {
         wheelGuard->guard(control);
@@ -760,7 +788,7 @@ PskReporterMapDialog::PskReporterMapDialog(AudioEngine* audioEngine,
         m_beaconCallsign, m_beaconGrid, m_beaconBand, m_beaconPower,
         m_beaconTone, m_beaconLevel, m_beaconButton, m_queryCallsign,
         m_bandCombo, m_modeCombo, m_lookbackCombo, m_allCallsignsCheck,
-        m_activeMonitorsCheck, m_globeCheck, m_pathsCheck, m_terminatorCheck,
+        m_activeMonitorsCheck, m_globeCheck, m_pathsCheck, m_terminatorCheck, basemapDarkTint, basemapBrightness,
         m_cityLightsCheck, m_cityLightsBrightness, m_cityLightsFaintLights,
         m_cityLightsWarmth, m_weatherRadarCheck, m_weatherRadarPlayButton,
         m_weatherRadarHistoryCombo, m_weatherRadarSpeedSlider};
@@ -781,6 +809,18 @@ PskReporterMapDialog::PskReporterMapDialog(AudioEngine* audioEngine,
     root->addWidget(splitter, 1);
 
     m_mapView = new MapDisplayWidget(bodyWidget());
+    m_mapView->setBasemapDarkEnabled(basemapDarkTint->isChecked());
+    connect(basemapDarkTint, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_mapView->setBasemapDarkEnabled(enabled);
+        writePskSetting("basemapDarkTintEnabled", enabled);
+    });
+    m_mapView->setBasemapBrightness(basemapBrightness->value());
+    connect(basemapBrightness, &QSlider::valueChanged, this,
+            [this, basemapValue](int value) {
+                basemapValue->setText(tr("%1%").arg(value));
+                m_mapView->setBasemapBrightness(value);
+                writePskSetting("basemapBrightness", value);
+            });
     m_mapView->setObjectName(QStringLiteral("pskReporterMap"));
     m_mapView->setAccessibleName(tr("PSK Reporter map"));
     connect(m_mapView, &MapDisplayWidget::globeAvailabilityChanged,
@@ -1534,7 +1574,7 @@ void PskReporterMapDialog::restoreBorrowedTxState()
 void PskReporterMapDialog::scheduleBeacon()
 {
     if (m_beaconArmed || m_beaconTransmitting) {
-        stopBeacon(tr("Cancelled"));
+        stopBeacon(tr("Cancelled"), BeaconStopOutcome::Cancelled);
         return;
     }
     if (m_audioEngine == nullptr || m_radioModel == nullptr) {
@@ -1620,7 +1660,7 @@ void PskReporterMapDialog::setBeaconStatus(const QString& text, const char* colo
     }
 }
 
-void PskReporterMapDialog::stopBeacon(const QString& status)
+void PskReporterMapDialog::stopBeacon(const QString& status, BeaconStopOutcome outcome)
 {
     const bool ownedTransmit = m_beaconTransmitting;
     m_beaconTimer->stop();
@@ -1648,9 +1688,17 @@ void PskReporterMapDialog::stopBeacon(const QString& status)
     }
     m_beaconButton->setText(tr("Transmit once"));
     setBeaconControlsEnabled(true);
-    setBeaconStatus(status, status == tr("Complete") ? "color.accent.success"
-                           : status == tr("Cancelled") || status == tr("Stopped")
-                               ? "color.text.secondary" : "color.accent.warning");
+    switch (outcome) {
+    case BeaconStopOutcome::Completed:
+        setBeaconStatus(status, "color.accent.success");
+        break;
+    case BeaconStopOutcome::Cancelled:
+        setBeaconStatus(status, "color.text.secondary");
+        break;
+    case BeaconStopOutcome::Interrupted:
+        setBeaconStatus(status, "color.accent.warning");
+        break;
+    }
 }
 
 void PskReporterMapDialog::deferBeaconToNextSlot(const QString& reason)
@@ -1690,7 +1738,7 @@ void PskReporterMapDialog::updateBeaconState()
             return;
         }
         if (beacon->isComplete()) {
-            stopBeacon(tr("Complete"));
+            stopBeacon(tr("Complete"), BeaconStopOutcome::Completed);
             return;
         }
         const int symbol = std::max(0, beacon->currentSymbol());
@@ -2356,7 +2404,7 @@ void PskReporterMapDialog::showEvent(QShowEvent* event)
 void PskReporterMapDialog::closeEvent(QCloseEvent* event)
 {
     if (m_beaconArmed || m_beaconTransmitting) {
-        stopBeacon(tr("Stopped"));
+        stopBeacon(tr("Stopped"), BeaconStopOutcome::Cancelled);
     }
     // Stop hitting the network while the window is closed.
     m_client->stop();
