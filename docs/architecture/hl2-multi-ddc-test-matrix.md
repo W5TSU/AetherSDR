@@ -158,7 +158,7 @@ survived (`docs/HERMES.md` §14, §16). Confirm with a receiver or the wspr.live
 
 ## 6. TCI (WSJT-X)
 
-Enable *Settings → Autostart TCI*.
+Tick **Enable TCI server** on Radio Setup ▸ EXTERNAL CONTROL ▸ TCI.
 
 | # | Test | Expected | Status |
 |---|---|---|---|

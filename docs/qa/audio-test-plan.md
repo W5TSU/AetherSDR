@@ -145,7 +145,7 @@
 3. Reopen WSJT-X — TCI should reconnect and audio should flow again
 
 ### D5. TCI with DAX already running
-1. Enable DAX in the DAX Audio tile (Autostart DAX)
+1. Enable DAX on Radio Setup ▸ EXTERNAL CONTROL ▸ DAX
 2. Then connect WSJT-X via TCI
 3. Both should work simultaneously
 4. Disconnect WSJT-X — user's DAX should remain active
@@ -203,12 +203,12 @@
 
 ### DAX RX Audio
 
-#### G1. DAX RX via DAX Audio tile (Autostart DAX)
-1. Open the DAX Audio tile (click `DAX` in the applet tray), check "Autostart DAX"
+#### G1. DAX RX via EXTERNAL CONTROL ▸ DAX
+1. On Radio Setup ▸ EXTERNAL CONTROL ▸ DAX, tick **Enable DAX**
 2. Check log for `stream create type=dax_rx dax_channel=1`
 3. Open WSJT-X configured to use DAX audio device (not TCI)
 4. WSJT-X should show waterfall activity and produce FT8 decodes
-5. Disable Autostart DAX — streams should be removed, WSJT-X loses audio
+5. Untick **Enable DAX** — streams should be removed, WSJT-X loses audio
 
 #### G2. DAX RX channel assignment
 1. With two slices active, assign DAX channel 1 to slice A, channel 2 to slice B
@@ -292,7 +292,7 @@
 ### TCI Audio — Lifecycle
 
 #### G16. TCI audio_start creates DAX RX streams
-1. DAX Autostart OFF in the DAX Audio tile
+1. Enable DAX OFF on EXTERNAL CONTROL ▸ DAX
 2. Connect TCI client, send `audio_start;`
 3. Check log for:
    - `slice set <id> dax=<ch>` (channel assignment)
@@ -329,10 +329,10 @@
 ### Cross-Path Interactions
 
 #### G21. DAX bridge + TCI simultaneous
-1. Enable DAX Autostart in the DAX Audio tile (creates DAX bridge streams)
+1. Tick Enable DAX on EXTERNAL CONTROL ▸ DAX (creates DAX bridge streams)
 2. Connect WSJT-X via TCI (creates TCI's own DAX streams or piggybacks)
 3. Both should receive audio simultaneously
-4. Disable DAX Autostart — TCI should continue working (owns its own streams)
+4. Untick Enable DAX — TCI should continue working (owns its own streams)
 5. Disconnect TCI — DAX bridge should be unaffected
 
 #### G22. TCI TX + DAX TX mutual exclusion

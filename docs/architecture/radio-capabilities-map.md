@@ -69,7 +69,7 @@ traps and why the DAX crash guard is deliberately *not* the DAX capability.
 | `forwardPowerRequiresSmoothing` | ✅ | ✅ | ❌ | `TxApplet::updateMeters` | Applies the established client-side PEP response only when the backend's forward-power samples require it. Icom: ✅ for native-watt profiles; ❌ for the IC-9700's already-indicated relative Po samples. The default is ❌ and every backend declares the choice explicitly |
 | `hasExtendedDsp` | from table | ❌ | ❌ | `RadioModel::hasExtendedDspFilters()` | NRS / RNN / NRF buttons |
 | `hasProfiles` | ✅ | ❌ | ❌ | `MainWindow::applyCapabilitiesToUi` | PROF applet, Profiles menu, Profile Manager, Import/Export |
-| `hasDaxStreams` | ✅ | ❌ | ❌ | `MainWindow::applyCapabilitiesToUi` | DAX + DAX-IQ applets, Autostart DAX |
+| `hasDaxStreams` | ✅ | ❌ | ❌ | `MainWindow::applyCapabilitiesToUi` | DAX + DAX-IQ pages/tiles, EXTERNAL CONTROL ▸ DAX |
 | `hasRadioSideDsp` | ✅ | ❌ | ❌ | `RadioModel::hasRadioSideDsp()` | NR/NB/ANF/NRL/ANFL/ANFT, the APD row, the WNB row |
 | `hasLmsNoiseFilters` | ✅ | ❌ | ❌ | `RadioModel::hasLmsNoiseFilters()` → `VfoWidget::setHasLmsNoiseFilters` | NRL / ANFL / ANFT alone — the WDSP LMS/FFT family, a THIRD tier under `hasRadioSideDsp`. Icom: ❌ (it has NR, NB and both notches, and no register these three could reach). Keeps `hasRadioSideDsp`'s permissive-on-disconnect rule |
 | `hasAudioPeakingFilter` | ✅ | ❌ | ❌ | `RadioModel::hasAudioPeakingFilter()` → `PhoneCwApplet::setHasAudioPeakingFilter` | CW audio peaking filter on the P/CW CW face (`slice set <n> apf=`). A FOURTH tier under `hasRadioSideDsp`: Icom declares that flag for NR/NB/notch and has no APF register. Permissive on disconnect so a Flex unplug does not blink the row |
