@@ -1,7 +1,7 @@
 #include "DaxIqApplet.h"
 #include "ComboStyle.h"
 #include "GuardedSlider.h"
-#include "core/AppSettings.h"
+#include "core/DaxSettings.h"
 #include "models/RadioModel.h"
 #include "models/DaxIqModel.h"
 
@@ -74,8 +74,7 @@ void DaxIqApplet::buildUI()
         m_iqRateCombo[i]->addItem("96k",  96000);
         m_iqRateCombo[i]->addItem("192k", 192000);
         {
-            int savedRate = AppSettings::instance()
-                .value(QStringLiteral("DaxIqRate%1").arg(i + 1), "48000").toInt();
+            const int savedRate = DaxSettings::iqChannelRatesHz().value(i, 48000);
             QSignalBlocker sb(m_iqRateCombo[i]);
             for (int j = 0; j < m_iqRateCombo[i]->count(); ++j) {
                 if (m_iqRateCombo[i]->itemData(j).toInt() == savedRate) {
@@ -86,10 +85,12 @@ void DaxIqApplet::buildUI()
         }
         m_iqRateCombo[i]->setFixedWidth(60);
         connect(m_iqRateCombo[i], &QComboBox::currentIndexChanged, this, [this, i]() {
-            int rate = m_iqRateCombo[i]->currentData().toInt();
-            auto& ss = AppSettings::instance();
-            ss.setValue(QStringLiteral("DaxIqRate%1").arg(i + 1), QString::number(rate));
-            ss.save();
+            const int rate = m_iqRateCombo[i]->currentData().toInt();
+            QVector<int> rates = DaxSettings::iqChannelRatesHz();
+            if (i < rates.size()) {
+                rates[i] = rate;
+                DaxSettings::setIqChannelRatesHz(rates);
+            }
             emit iqRateChanged(i + 1, rate);
         });
         row->addWidget(m_iqRateCombo[i]);
@@ -107,14 +108,12 @@ void DaxIqApplet::buildUI()
         m_iqEnable[i]->setFixedWidth(36);
         m_iqEnable[i]->setStyleSheet(kIqBtnOff);
         connect(m_iqEnable[i], &QPushButton::clicked, this, [this, i]() {
-            bool wasOn = m_iqEnable[i]->text() == "On";
-            auto& ss = AppSettings::instance();
+            const bool wasOn = m_iqEnable[i]->text() == "On";
             if (wasOn) {
                 emit iqDisableRequested(i + 1);
                 m_iqEnable[i]->setText("Off");
                 m_iqEnable[i]->setStyleSheet(kIqBtnOff);
                 m_iqMeter[i]->setValue(0);
-                ss.setValue(QStringLiteral("DaxIqEnabled%1").arg(i + 1), "False");
             } else {
                 // Sync the model's desired rate to the combo before enabling, so a
                 // rate chosen while off (or restored from settings) is applied to the
@@ -123,9 +122,12 @@ void DaxIqApplet::buildUI()
                 emit iqEnableRequested(i + 1);
                 m_iqEnable[i]->setText("On");
                 m_iqEnable[i]->setStyleSheet(kIqBtnOn);
-                ss.setValue(QStringLiteral("DaxIqEnabled%1").arg(i + 1), "True");
             }
-            ss.save();
+            QVector<bool> en = DaxSettings::iqChannelEnabled();
+            if (i < en.size()) {
+                en[i] = !wasOn;
+                DaxSettings::setIqChannelEnabled(en);
+            }
         });
         row->addWidget(m_iqEnable[i]);
 
@@ -241,12 +243,12 @@ void DaxIqApplet::restoreEnabledChannels()
         if (!m_model || !m_model->isConnected()) {
             return;
         }
-        auto& ss = AppSettings::instance();
+        const QVector<bool> iqEnabled = DaxSettings::iqChannelEnabled();
         for (int i = 0; i < kChannels; ++i) {
             if (!m_iqEnable[i]) {
                 continue;
             }
-            if (ss.value(QStringLiteral("DaxIqEnabled%1").arg(i + 1), "False").toString() != "True") {
+            if (!iqEnabled.value(i, false)) {
                 continue;
             }
             if (m_model->daxIqModel().stream(i + 1).exists) {

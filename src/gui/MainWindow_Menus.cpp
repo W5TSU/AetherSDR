@@ -46,6 +46,9 @@
 #include "WhatsNewDialog.h"
 #include "core/UpdateChecker.h"
 #include "core/AppSettings.h"
+#include "core/CatSettings.h"
+#include "core/DaxSettings.h"
+#include "core/TciSettings.h"
 #include "core/SpotModeResolver.h"
 #include "core/ThemeManager.h"
 #include "models/BandPlanManager.h"
@@ -690,31 +693,28 @@ void MainWindow::buildMenuBar()
 
     settingsMenu->addSeparator();
 
-    // CAT: unified port manager (rigctld / TS-2000 / FlexCAT per port)
+    // CAT / TCI / DAX enable — the single persistent "Enable <service>" per
+    // Principle V. Config lives in the nested CatSettings/TciSettings/
+    // DaxSettings objects; these menu items are a thin front onto them and
+    // will move into Radio Setup ▸ EXTERNAL CONTROL (issue #17).
     auto* autoCatAction = settingsMenu->addAction("Autostart CAT with AetherSDR");
     autoCatAction->setCheckable(true);
-    autoCatAction->setChecked(
-        AppSettings::instance().value("CatEnabled", "False").toString() == "True");
+    autoCatAction->setChecked(CatSettings::enabled());
     connect(autoCatAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("CatEnabled", on ? "True" : "False");
-        s.save();
+        CatSettings::setEnabled(on);
         applyCatPortCount();
     });
 
     auto* autoTciAction = settingsMenu->addAction("Autostart TCI with AetherSDR");
     autoTciAction->setCheckable(true);
-    autoTciAction->setChecked(
-        AppSettings::instance().value("AutoStartTCI", "False").toString() == "True");
+    autoTciAction->setChecked(TciSettings::enabled());
     connect(autoTciAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("AutoStartTCI", on ? "True" : "False");
-        s.save();
+        TciSettings::setEnabled(on);
 #ifdef HAVE_WEBSOCKETS
         if (tciServer()) {
+            const quint16 port = TciSettings::port();
             if (on && !tciServer()->isRunning()) {
-                int port = s.value("TciPort", "50001").toInt();
-                tciServer()->start(static_cast<quint16>(port));
+                tciServer()->start(port);
             } else if (!on && tciServer()->isRunning()) {
                 tciServer()->stop();
             }
@@ -727,24 +727,17 @@ void MainWindow::buildMenuBar()
 #if !defined(Q_OS_MAC) && !defined(HAVE_PIPEWIRE)
     // DAX audio bridge requires macOS CoreAudio or Linux with PipeWire.
     // Force off and omit the menu entry on platforms without a bridge (#1556).
-    {
-        auto& s = AppSettings::instance();
-        if (s.value("AutoStartDAX", "False").toString() != "False") {
-            s.setValue("AutoStartDAX", "False");
-            s.save();
-        }
+    if (DaxSettings::audioEnabled()) {
+        DaxSettings::setAudioEnabled(false);
     }
 #else
     auto* autoDaxAction = settingsMenu->addAction("Autostart DAX with AetherSDR");
     m_autoDaxAction = autoDaxAction;   // hidden by applyCapabilitiesToUi() on a
                                        // radio that reports no DAX streams
     autoDaxAction->setCheckable(true);
-    autoDaxAction->setChecked(
-        AppSettings::instance().value("AutoStartDAX", "False").toString() == "True");
+    autoDaxAction->setChecked(DaxSettings::audioEnabled());
     connect(autoDaxAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("AutoStartDAX", on ? "True" : "False");
-        s.save();
+        DaxSettings::setAudioEnabled(on);
         if (m_radioModel.isConnected()) {
             if (on) {
                 if (startDax() && m_appletPanel && m_appletPanel->daxApplet())

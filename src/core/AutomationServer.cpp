@@ -3,6 +3,7 @@
 #include "core/RadioCertification.h"
 #include "LogManager.h"
 #include "AppSettings.h"          // StationName (restore the user's real station name)
+#include "TciSettings.h"          // TCI sim fallback port
 #include "DigitalVoiceWaveformProcess.h"
 #include "DigitalVoiceWaveformSettings.h"
 #include "TxKeyingMarker.h"       // kTxKeyingProperty — authoritative TX-guard marker
@@ -11558,7 +11559,7 @@ QJsonObject AutomationServer::doTci(const QString& action, const QString& value)
         bool okPort = false;
         int port = portText.toInt(&okPort);
         if (!okPort || port <= 0)
-            port = AppSettings::instance().value("TciPort", "50001").toInt();
+            port = TciSettings::port();
 
         auto* sim = new TciSimClient;
         sim->id = id;

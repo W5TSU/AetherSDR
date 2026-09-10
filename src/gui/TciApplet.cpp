@@ -6,6 +6,7 @@
 #include "MeterSlider.h"
 #include "core/AppSettings.h"
 #include "core/TciServer.h"
+#include "core/TciSettings.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -206,7 +207,7 @@ void TciApplet::buildUI()
     portLabel->setStyleSheet(kDimLabel);
     enableRow->addWidget(portLabel);
 
-    m_tciPort = new QLineEdit(settings.value("TciPort", "50001").toString());
+    m_tciPort = new QLineEdit(QString::number(TciSettings::port()));
     m_tciPort->setStyleSheet(kInsetStyle);
     m_tciPort->setFixedWidth(46);
     m_tciPort->setAlignment(Qt::AlignCenter);
@@ -219,7 +220,7 @@ void TciApplet::buildUI()
     AetherSDR::ThemeManager::instance().applyStyleSheet(m_tciStatus, "QLabel { color: {{color.background.3}}; font-size: 10px; }");
     enableRow->addWidget(m_tciStatus, 1);
 
-    const bool tciAutoStart = settings.value("AutoStartTCI", "False").toString() == "True";
+    const bool tciAutoStart = TciSettings::enabled();
     m_tciEnable = new QPushButton(tciAutoStart ? "Enabled" : "Disabled");
     m_tciEnable->setCheckable(true);
     m_tciEnable->setObjectName(QStringLiteral("tciEnable"));
@@ -238,12 +239,10 @@ void TciApplet::buildUI()
     connect(m_tciPort, &QLineEdit::editingFinished, this, [this]() {
         int port = m_tciPort->text().toInt();
         if (port < 1024 || port > 65535) {
-            port = 50001;
-            m_tciPort->setText("50001");
+            port = TciSettings::kDefaultPort;
+            m_tciPort->setText(QString::number(port));
         }
-        auto& ss = AppSettings::instance();
-        ss.setValue("TciPort", QString::number(port));
-        ss.save();
+        TciSettings::setPort(static_cast<quint16>(port));
         // If running, restart with new port
         if (m_tciEnable->isChecked() && m_tciServer) {
             m_tciServer->stop();
@@ -256,12 +255,10 @@ void TciApplet::buildUI()
         m_tciEnable->setText(on ? "Enabled" : "Disabled");
         int port = m_tciPort->text().toInt();
         if (port < 1024 || port > 65535) {
-            port = 50001;
+            port = TciSettings::kDefaultPort;
         }
-        auto& ss = AppSettings::instance();
-        ss.setValue("TciPort", QString::number(port));
-        ss.setValue("AutoStartTCI", on ? "True" : "False");
-        ss.save();
+        TciSettings::setPort(static_cast<quint16>(port));
+        TciSettings::setEnabled(on);
         if (m_tciServer) {
             if (on) {
                 m_tciServer->start(static_cast<quint16>(port));
@@ -274,8 +271,7 @@ void TciApplet::buildUI()
                     m_tciStatus->setText("(port in use)");
                     m_tciStatus->setStyleSheet(
                         "QLabel { color: #cc3333; font-size: 10px; }");
-                    ss.setValue("AutoStartTCI", "False");
-                    ss.save();
+                    TciSettings::setEnabled(false);
                     emit tciToggled(false);
                     return;
                 }

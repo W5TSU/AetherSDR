@@ -2,6 +2,7 @@
 #include "MeterSlider.h"
 #include "SliceLabel.h"
 #include "core/AppSettings.h"
+#include "core/DaxSettings.h"
 #include "core/ThemeManager.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -83,7 +84,7 @@ void DaxApplet::buildUI()
     daxLabel->setStyleSheet(kDimLabel);
     daxEnRow->addWidget(daxLabel);
     daxEnRow->addStretch();
-    const bool daxAutoStart = settings.value("AutoStartDAX", "False").toString() == "True";
+    const bool daxAutoStart = DaxSettings::audioEnabled();
     m_daxEnable = new QPushButton(daxAutoStart ? "Enabled" : "Disabled");
     m_daxEnable->setCheckable(true);
     m_daxEnable->setObjectName(QStringLiteral("daxEnable"));
@@ -100,9 +101,7 @@ void DaxApplet::buildUI()
     }
     connect(m_daxEnable, &QPushButton::toggled, this, [this](bool on) {
         m_daxEnable->setText(on ? "Enabled" : "Disabled");
-        auto& ss = AppSettings::instance();
-        ss.setValue("AutoStartDAX", on ? "True" : "False");
-        ss.save();
+        DaxSettings::setAudioEnabled(on);
         emit daxToggled(on);
     });
 

@@ -234,6 +234,10 @@
 #include <QMediaDevices>
 #include "core/AppSettings.h"
 #include "core/AutomationServer.h"
+#include "core/CatSettings.h"
+#include "core/DaxSettings.h"
+#include "core/ExternalControlMigration.h"
+#include "core/TciSettings.h"
 #include "core/SpotCommandPolicy.h"
 #include "core/SpotModeResolver.h"
 #ifdef HAVE_RADE
@@ -5919,32 +5923,30 @@ int MainWindow::catPortTargetCount() const
 
 void MainWindow::applyCatPortCount()
 {
-    auto& s = AppSettings::instance();
-    const bool masterOn = s.value("CatEnabled", "False").toString() == "True";
+    const bool masterOn = CatSettings::enabled();
     const int  target   = catPortTargetCount();  // bounds applet VFO letters, not port count
+    const QVector<CatPortSpec> specs = CatSettings::ports();
 
     for (int i = 0; i < kCatPorts; ++i) {
         if (!catPort(i)) continue;
 
-        const QString prefix = QString("CatPort_%1_").arg(i);
-        const bool portEnabled = s.value(prefix + "Enabled", "False").toString() == "True";
-        const int  portNum     = s.value(prefix + "Port", "").toInt();
+        const bool haveSpec = i < specs.size();
+        const CatPortSpec spec = haveSpec ? specs.at(i) : CatPortSpec{};
         // A CAT port is a control channel, not a 1:1 mapping to a slice — don't
         // cap how many configured ports start by the radio's receiver count
         // (#3693). Receiver capacity bounds the VFO-letter choices per port
         // (catPortTargetCount() feeds the applet), not whether a port runs.
-        const bool shouldRun   = masterOn && portEnabled && (portNum >= 1024);
+        const bool shouldRun = masterOn && haveSpec && spec.enabled && (spec.port >= 1024);
 
         if (shouldRun && !catPort(i)->isRunning()) {
             // Re-apply config in case dialect/VFO was changed while stopped
-            QString d = s.value(prefix + "Dialect", "Rigctld").toString();
-            CatDialect dial = (d == "FlexCAT") ? CatDialect::FlexCAT
-                            : (d == "TS2000")  ? CatDialect::TS2000
-                            : CatDialect::Rigctld;
+            const CatDialect dial = (spec.dialect == "FlexCAT") ? CatDialect::FlexCAT
+                                  : (spec.dialect == "TS2000")  ? CatDialect::TS2000
+                                  : CatDialect::Rigctld;
             catPort(i)->setDialect(dial);
-            catPort(i)->setVfoA(s.value(prefix + "VfoA", "0").toInt());
-            catPort(i)->setVfoB(s.value(prefix + "VfoB", "-1").toInt());
-            catPort(i)->start(static_cast<quint16>(portNum));
+            catPort(i)->setVfoA(spec.vfoA);
+            catPort(i)->setVfoB(spec.vfoB);
+            catPort(i)->start(spec.port);
         } else if (!shouldRun && catPort(i)->isRunning()) {
             catPort(i)->stop();
         }
@@ -6189,10 +6191,10 @@ void MainWindow::onConnectionStateChanged(bool connected)
         applyCatPortCount();
 #ifdef HAVE_WEBSOCKETS
         // Auto-start TCI WebSocket server if enabled
-        if (AppSettings::instance().value("AutoStartTCI", "False").toString() == "True") {
+        if (TciSettings::enabled()) {
             if (tciServer() && !tciServer()->isRunning()) {
-                int tciPort = AppSettings::instance().value("TciPort", "50001").toInt();
-                tciServer()->start(static_cast<quint16>(tciPort));
+                const quint16 tciPort = TciSettings::port();
+                tciServer()->start(tciPort);
                 qDebug() << "AutoStart: TCI on port" << tciPort
                          << " running=" << tciServer()->isRunning();
             }
@@ -6243,7 +6245,7 @@ void MainWindow::onConnectionStateChanged(bool connected)
         // Starting too early causes our mic_selection=PC and dax=1 to be
         // overridden by RadioModel's own setup, and DAX stream IDs won't
         // be registered in PanadapterStream yet.
-        if (AppSettings::instance().value("AutoStartDAX", "False").toString() == "True") {
+        if (DaxSettings::audioEnabled()) {
             QTimer::singleShot(3000, this, [this]() {
                 if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
                     m_appletPanel->daxApplet()->setDaxEnabled(true);

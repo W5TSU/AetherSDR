@@ -1,5 +1,5 @@
 #include "CatControlApplet.h"
-#include "core/AppSettings.h"
+#include "core/CatSettings.h"
 #include "core/ThemeManager.h"
 #include "gui/Theme.h"
 
@@ -84,19 +84,19 @@ QString sliceLetter(int idx)
     return QString(QChar('A' + idx));
 }
 
-// Persist a VFO selection without losing a saved slice the combo can't currently
-// display. The VFO combos are bounded by the radio's slice-receiver count, so a
-// reconnect to a smaller radio can leave a previously-chosen slice unrepresentable;
-// the combo then falls back to its first entry (slice A / "—"). In that case keep
-// the stored value rather than clobbering it — it reappears when the slices return.
-// A genuine, representable selection (including a deliberate "—") is persisted.
-void persistVfo(AppSettings& s, const QString& key, QComboBox* combo, int fallbackData)
+// Resolve the VFO value to persist without losing a saved slice the combo can't
+// currently display. The VFO combos are bounded by the radio's slice-receiver
+// count, so a reconnect to a smaller radio can leave a previously-chosen slice
+// unrepresentable; the combo then falls back to its first entry (slice A / "—").
+// In that case keep the stored value rather than clobbering it — it reappears
+// when the slices return. A genuine, representable selection (including a
+// deliberate "—") is returned as-is.
+int resolveVfoValue(QComboBox* combo, int savedValue, int fallbackData)
 {
-    const int cur   = combo->currentData().toInt();
-    const int saved = s.value(key, QString::number(fallbackData)).toInt();
-    if (cur == fallbackData && saved != fallbackData && combo->findData(saved) < 0)
-        return;   // combo fell back only because `saved` isn't available — preserve it
-    s.setValue(key, QString::number(cur));
+    const int cur = combo->currentData().toInt();
+    if (cur == fallbackData && savedValue != fallbackData && combo->findData(savedValue) < 0)
+        return savedValue;   // combo fell back only because `savedValue` isn't available
+    return cur;
 }
 
 } // namespace
@@ -135,7 +135,7 @@ void CatControlApplet::buildDockedView(QWidget* page)
     auto* row = new QHBoxLayout;
     row->setSpacing(6);
 
-    const bool catEnabled = AppSettings::instance().value("CatEnabled", "False").toString() == "True";
+    const bool catEnabled = CatSettings::enabled();
     m_enableBtn = new QPushButton(catEnabled ? "Enabled" : "Disabled");
     m_enableBtn->setCheckable(true);
     applyToggleButtonStyle(m_enableBtn, ToggleTribe::Success);
@@ -163,9 +163,7 @@ void CatControlApplet::buildDockedView(QWidget* page)
         if (m_floatingEnableBtn) {
             m_floatingEnableBtn->setText(on ? "Enabled" : "Disabled");
         }
-        auto& s = AppSettings::instance();
-        s.setValue("CatEnabled", on ? "True" : "False");
-        s.save();
+        CatSettings::setEnabled(on);
         emit enableChanged(on);
     });
 }
@@ -202,8 +200,7 @@ void CatControlApplet::setFloating(bool on)
             // Enable button + note (must enable before ports can be configured)
             auto* enableRow = new QHBoxLayout;
             enableRow->setSpacing(8);
-            const bool floatingCatEnabled =
-                AppSettings::instance().value("CatEnabled", "False").toString() == "True";
+            const bool floatingCatEnabled = CatSettings::enabled();
             m_floatingEnableBtn = new QPushButton(floatingCatEnabled ? "Enabled" : "Disabled");
             m_floatingEnableBtn->setCheckable(true);
             applyToggleButtonStyle(m_floatingEnableBtn, ToggleTribe::Success);
@@ -222,9 +219,7 @@ void CatControlApplet::setFloating(bool on)
 
             connect(m_floatingEnableBtn, &QPushButton::toggled, this, [this](bool on) {
                 m_floatingEnableBtn->setText(on ? "Enabled" : "Disabled");
-                auto& s = AppSettings::instance();
-                s.setValue("CatEnabled", on ? "True" : "False");
-                s.save();
+                CatSettings::setEnabled(on);
                 if (m_enableBtn) {
                     QSignalBlocker b(m_enableBtn);
                     m_enableBtn->setChecked(on);
@@ -345,20 +340,22 @@ void CatControlApplet::buildTableRows()
 #endif
     addHdr("Clients",  48, hcol++);
 
-    auto& settings = AppSettings::instance();
+    const QVector<CatPortSpec> specs = CatSettings::ports();
+    auto specAt = [&specs](int i) -> CatPortSpec {
+        return i < specs.size() ? specs.at(i) : CatPortSpec{};
+    };
 
     for (int i = 0; i < m_portCount; ++i) {
         PortRow row;
-        const QString prefix = QString("CatPort_%1_").arg(i);
+        const CatPortSpec spec = specAt(i);
 
         // Enable checkbox
         row.enableCheck = new QCheckBox;
         ThemeManager::instance().applyStyleSheet(row.enableCheck, kEnableCheck);
         row.enableCheck->setToolTip("Enable this CAT port");
         {
-            bool en = settings.value(prefix + "Enabled", "False").toString() == "True";
             QSignalBlocker b(row.enableCheck);
-            row.enableCheck->setChecked(en);
+            row.enableCheck->setChecked(spec.enabled);
         }
 
         // Port edit
@@ -369,7 +366,7 @@ void CatControlApplet::buildTableRows()
         row.portEdit->setValidator(new QIntValidator(kMinPort, kMaxPort, row.portEdit));
         row.portEdit->setPlaceholderText("port");
         {
-            QString portStr = settings.value(prefix + "Port", "").toString();
+            const QString portStr = spec.port ? QString::number(spec.port) : QString();
             QSignalBlocker b(row.portEdit);
             row.portEdit->setText(portStr);
         }
@@ -382,8 +379,7 @@ void CatControlApplet::buildTableRows()
         row.dialectCombo->addItem("TS-2000",  static_cast<int>(CatDialect::TS2000));
         row.dialectCombo->addItem("Flex",     static_cast<int>(CatDialect::FlexCAT));
         {
-            QString d = settings.value(prefix + "Dialect", "Rigctld").toString();
-            int idx = (d == "TS2000") ? 1 : (d == "FlexCAT") ? 2 : 0;
+            const int idx = (spec.dialect == "TS2000") ? 1 : (spec.dialect == "FlexCAT") ? 2 : 0;
             QSignalBlocker b(row.dialectCombo);
             row.dialectCombo->setCurrentIndex(idx);
         }
@@ -394,8 +390,7 @@ void CatControlApplet::buildTableRows()
         row.vfoACombo->setFixedWidth(42);
         populateVfoCombo(row.vfoACombo, false);
         {
-            int vfoA = settings.value(prefix + "VfoA", "0").toInt();
-            int idx = row.vfoACombo->findData(vfoA);
+            const int idx = row.vfoACombo->findData(spec.vfoA);
             QSignalBlocker b(row.vfoACombo);
             row.vfoACombo->setCurrentIndex(qMax(0, idx));
         }
@@ -410,9 +405,7 @@ void CatControlApplet::buildTableRows()
         row.vfoBCombo->setFixedWidth(42);
         populateVfoCombo(row.vfoBCombo, true);
         {
-            int vfoB = settings.value(prefix + "VfoB",
-                                      QString::number(CatPort::kVfoNone)).toInt();
-            int idx = row.vfoBCombo->findData(vfoB);
+            const int idx = row.vfoBCombo->findData(spec.vfoB);
             QSignalBlocker b(row.vfoBCombo);
             row.vfoBCombo->setCurrentIndex(qMax(0, idx));
         }
@@ -535,7 +528,7 @@ void CatControlApplet::updateRowLocked(int row)
     PortRow& r = m_rows[row];
 
     bool hasPort  = !r.portEdit->text().isEmpty();
-    bool masterOn = AppSettings::instance().value("CatEnabled", "False").toString() == "True";
+    bool masterOn = CatSettings::enabled();
     // Lock on UI state only — isRunning() lags behind the checkbox by one applyCatPortCount cycle.
     bool locked   = masterOn && r.enableCheck->isChecked() && hasPort;
 
@@ -572,9 +565,8 @@ void CatControlApplet::restoreVfoBForDialect(int row)
     PortRow& r = m_rows[row];
     const auto dialect = static_cast<CatDialect>(r.dialectCombo->currentData().toInt());
     if (!dialectSupportsVfoB(dialect)) return;
-    const QString prefix = QString("CatPort_%1_").arg(row);
-    const int savedB = AppSettings::instance()
-                           .value(prefix + "VfoB", QString::number(CatPort::kVfoNone)).toInt();
+    const QVector<CatPortSpec> specs = CatSettings::ports();
+    const int savedB = row < specs.size() ? specs.at(row).vfoB : CatPort::kVfoNone;
     const int idx = r.vfoBCombo->findData(savedB);
     if (idx >= 0 && r.vfoBCombo->currentIndex() != idx) {
         QSignalBlocker b(r.vfoBCombo);
@@ -586,30 +578,43 @@ void CatControlApplet::restoreVfoBForDialect(int row)
 
 void CatControlApplet::applyRowToSettings(int row)
 {
-    if (row >= m_rows.size()) return;
-    const PortRow& r = m_rows[row];
-    auto& s = AppSettings::instance();
-    const QString prefix = QString("CatPort_%1_").arg(row);
+    Q_UNUSED(row)
+    // Guard against a stray editingFinished/focus-out emitted while the table is
+    // being torn down and rebuilt — writing then would persist an empty list.
+    if (!m_rowsBuilt || m_rows.isEmpty()) {
+        return;
+    }
+    // Persist the whole listener list — CatSettings owns it as one object
+    // (Principle V), so every edit rewrites the array from the row widgets.
+    const QVector<CatPortSpec> prev = CatSettings::ports();
+    QVector<CatPortSpec> specs;
+    specs.reserve(m_rows.size());
+    for (int i = 0; i < m_rows.size(); ++i) {
+        const PortRow& r = m_rows[i];
+        CatPortSpec spec;
+        spec.port = static_cast<quint16>(r.portEdit->text().toInt());
+        spec.enabled = r.enableCheck->isChecked();
 
-    s.setValue(prefix + "Enabled", r.enableCheck->isChecked() ? "True" : "False");
-    s.setValue(prefix + "Port",    r.portEdit->text());
+        const auto dialect = static_cast<CatDialect>(r.dialectCombo->currentData().toInt());
+        spec.dialect = (dialect == CatDialect::TS2000)  ? QStringLiteral("TS2000")
+                     : (dialect == CatDialect::FlexCAT) ? QStringLiteral("FlexCAT")
+                     :                                    QStringLiteral("Rigctld");
 
-    const auto dialect = static_cast<CatDialect>(r.dialectCombo->currentData().toInt());
-    const QString dialectKey = (dialect == CatDialect::TS2000)  ? "TS2000"
-                             : (dialect == CatDialect::FlexCAT) ? "FlexCAT"
-                             :                                    "Rigctld";
-    s.setValue(prefix + "Dialect", dialectKey);
-    // VFO A always applies; persistVfo preserves a saved slice the combo can't
-    // currently display (smaller radio) instead of clobbering it.
-    persistVfo(s, prefix + "VfoA", r.vfoACombo, 0);
-    // VFO B only for dual-VFO dialects. For a single-VFO dialect (rigctld) the
-    // selector is forced to "—"; persisting that would clobber the operator's
-    // saved VFO B. Skipping it leaves the stored value intact for a lossless
-    // dialect round-trip (restoreVfoBForDialect restores the selector on the way
-    // back).
-    if (dialectSupportsVfoB(dialect))
-        persistVfo(s, prefix + "VfoB", r.vfoBCombo, CatPort::kVfoNone);
-    s.save();
+        const int prevA = (i < prev.size()) ? prev.at(i).vfoA : 0;
+        const int prevB = (i < prev.size()) ? prev.at(i).vfoB : CatPort::kVfoNone;
+        // VFO A always applies; resolveVfoValue preserves a saved slice the combo
+        // can't currently display (smaller radio) instead of clobbering it.
+        spec.vfoA = resolveVfoValue(r.vfoACombo, prevA, 0);
+        // VFO B only for dual-VFO dialects. For a single-VFO dialect (rigctld)
+        // the selector is forced to "—"; keep the operator's saved VFO B so a
+        // dialect round-trip is lossless (restoreVfoBForDialect restores the
+        // selector on the way back).
+        spec.vfoB = dialectSupportsVfoB(dialect)
+                        ? resolveVfoValue(r.vfoBCombo, prevB, CatPort::kVfoNone)
+                        : prevB;
+        specs.append(spec);
+    }
+    CatSettings::setPorts(specs);
 }
 
 } // namespace AetherSDR
