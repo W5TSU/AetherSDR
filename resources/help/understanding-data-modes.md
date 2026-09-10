@@ -46,131 +46,87 @@ AetherSDR supports four DAX IQ channels with selectable sample rates
 
 ---
 
-## Finding and Using the Data Mode Tiles
+## Where the External-Control Settings Live
 
-The data mode controls are split across four independent tiles in the applet
-panel. Each tile can be shown, hidden, floated, docked, and drag-reordered
-independently.
+You **configure** CAT, TCI, DAX and DAX-IQ in one place:
 
-### Opening the tiles
+> **Radio Setup ▸ EXTERNAL CONTROL**
 
-1. Connect to your radio.
-2. Look at the **right-hand applet panel** (the vertical strip of tiles on the
-   right side of the main window).
-3. In the **applet tray** (the button rows at the top of the panel), click the
-   toggle button for the tile you need:
+Open it from the menu bar with **Settings ▸ Radio Setup…** and pick the
+**EXTERNAL CONTROL** category, or use the shortcut **Settings ▸ CAT & TCI…**
+which jumps straight there. It has four pages:
 
-| Button | Tile | Purpose |
-|--------|------|---------|
-| **CAT** | CAT Control | rigctld TCP + virtual serial ports |
-| **DAX** | DAX Audio | virtual audio channels (RX + TX) |
-| **TCI** | TCI Server | TCI WebSocket server |
-| **IQ** | DAX IQ | raw IQ streaming channels |
+| Page | What you set |
+|---|---|
+| **CAT** | *Enable CAT server*, plus a list of listeners — each with its own **Port**, protocol **Dialect** (Rigctld / TS-2000 / Flex) and **VFO A / VFO B** slice. "Add CAT port" / "Remove selected" manage the list (up to 8). |
+| **TCI** | *Enable TCI server* and the WebSocket **Port** (default `50001`). |
+| **DAX** | *Enable DAX* (the virtual-audio bridge). |
+| **DAX-IQ** | per-channel sample rate (24k/48k/96k/192k) and enable. |
 
-Each button toggles its tile on or off. You can have any combination of tiles
-visible at the same time.
+Each *Enable …* control both starts the service now and brings it back on the
+next radio connection — there is no separate "autostart".
 
-> **Tip:** Keep the relevant tiles visible during setup. They answer the
-> question "What endpoints is AetherSDR offering to the rest of the station?"
+> **Older builds:** earlier versions put these in the applet drawer ("Enable
+> TCP" / "Enable TTY" buttons) and in three **Settings ▸ Autostart …** menu
+> items. Those are gone; everything is on the EXTERNAL CONTROL pages now.
 
-> **Tile controls:** Each tile's title bar has a **float/dock** button that
-> pops the tile out into its own window or docks it back into the panel.
-> You can also **drag tiles** to reorder them within the applet stack.
+### The drawer status tiles
 
-### What each tile contains
+The **CAT**, **TCI**, **DAX** and **IQ** buttons in the applet-panel drawer
+still open small tiles, but these are now **status readouts**, not
+configuration:
 
-#### CAT Control tile
+| Tile | Shows | Keeps |
+|---|---|---|
+| **CAT Control** | enabled indicator; one line per running listener (`port · dialect · client count`) | a **CAT settings…** link to the page |
+| **TCI Server** | `(stopped)` or `:port (n clients)` | the RX1-4 / TX **gain meters + sliders**, a **TCI settings…** link |
+| **DAX Audio** | slice ↔ channel labels | the RX/TX **gain sliders**, a **DAX settings…** link |
+| **DAX IQ** | per-channel level meters + rate | — |
 
-- **Enable TCP** — starts four rigctld-compatible TCP servers (channels A-D)
-- **Enable TTY** — creates four virtual serial ports (channels A-D)
-- **Base port** — the starting TCP port number (default `4532`)
-- **Channel rows (A-D)** — each row shows the TCP port number, connection count,
-  and the virtual serial port path
-
-#### TCI Server tile
-
-- **Enable** — starts the TCI WebSocket server
-- **Port** — the WebSocket port (default `50001`)
-- **Status** — shows "(stopped)" or the port and connected client count
-
-#### DAX Audio tile
-
-- **DAX 1-4** — four receive channels, each with a combined gain slider and
-  level meter (MeterSlider). When a slice is assigned to a DAX channel, the
-  label shows which slice (e.g. "Slice A").
-- **TX** — transmit channel with gain slider and level meter. Shows which slice
-  owns transmit.
-- **Enable** — starts the DAX virtual audio bridge
-
-#### DAX IQ tile
-
-- **IQ 1-4** — four IQ channels, each with a sample rate selector
-  (24k/48k/96k/192k), level meter, and On/Off toggle
+Keep the CAT/TCI tiles visible during setup — they answer "what is AetherSDR
+actually serving right now?" Adjust gain from the TCI/DAX tiles; everything
+else is on the settings pages.
 
 ---
 
 ## How CAT Works — TCP and Serial Port Emulation
 
-### CAT over TCP
+### Adding a CAT listener
 
-When you click **Enable TCP** in the CAT Control tile, AetherSDR starts four
-independent TCP servers that speak the **Hamlib rigctld protocol**. Any
-application that can talk to rigctld can connect directly.
+Each row on the **EXTERNAL CONTROL ▸ CAT** page is one **listener** — a TCP
+socket (and, on Linux/macOS, a matching virtual serial device) speaking one
+protocol dialect, bound to a VFO-A / VFO-B slice.
 
-The four servers use consecutive ports starting from the base port:
+1. Open **Settings ▸ CAT & TCI…**.
+2. Tick **Enable CAT server**.
+3. On the default row (or click **Add CAT port**), set:
+   - **Port** — default `4532`; any free port ≥ 1024.
+   - **Dialect** — **Rigctld** for WSJT-X / JS8Call / fldigi / HamClock / most
+     loggers; **TS-2000** for software that expects a Kenwood; **Flex** for
+     SmartSDR-CAT clients.
+   - **VFO A** — the slice this listener reports and tunes (slice index `0` =
+     slice A). **VFO B** — `none`, unless the client does real split.
+4. Close the dialog. The listener starts, and the **CAT Control** drawer tile
+   lists it as `<port>  <dialect>  <n> clients`.
 
-| Channel | Default port | Controls |
-|---|---|---|
-| A | 4532 | Slice A |
-| B | 4533 | Slice B |
-| C | 4534 | Slice C |
-| D | 4535 | Slice D |
+CAT over TCP works identically on **Linux, macOS, and Windows**. Point your
+digital program's rig-control setting at `localhost:<port>` as
+**Hamlib NET rigctl** / **rigctld**.
 
-**How to use it:**
+### The virtual serial device (Linux / macOS)
 
-1. In the CAT Control tile, click **Enable TCP**.
-2. Note the base port (default `4532`). Change it if another application
-   already uses that port.
-3. In your digital program, set the rig control type to **rigctld** or
-   **Hamlib NET rigctl** and point it at `localhost` on the port for the
-   channel that matches your slice.
+On Linux and macOS every enabled listener also exposes a PTY (pseudo-terminal)
+for software that wants a serial port instead of a socket. The path is a
+per-user symlink:
 
-CAT over TCP works identically on **Linux, macOS, and Windows**.
+- **Linux (systemd):** `$XDG_RUNTIME_DIR/aethersdr/cat-<n>` (typically
+  `/run/user/<uid>/aethersdr/cat-0`)
+- **Linux (fallback):** `~/.cache/aethersdr/cat-<n>`
+- **macOS:** `~/Library/Caches/AetherSDR/cat-<n>`
 
-### CAT over TTY/PTY (virtual serial ports)
-
-When you click **Enable TTY**, AetherSDR creates four virtual serial ports
-using Unix pseudo-terminals (PTYs). These look like real serial ports to
-other applications.
-
-| Channel | Symlink path |
-|---|---|
-| A | `<runtime>/aethersdr/cat-A` |
-| B | `<runtime>/aethersdr/cat-B` |
-| C | `<runtime>/aethersdr/cat-C` |
-| D | `<runtime>/aethersdr/cat-D` |
-
-`<runtime>` resolves to a per-user directory so two users on the same
-machine don't collide:
-
-- **Linux (systemd):** `$XDG_RUNTIME_DIR` (typically `/run/user/<uid>`)
-- **Linux (fallback):** `~/.cache/aethersdr/`
-- **macOS:** `~/Library/Caches/AetherSDR/`
-
-The CAT Control tile shows the actual fully-resolved path for each
-channel — copy from there if you're not sure which case applies on your
-system.
-
-**How to use it:**
-
-1. In the CAT Control tile, click **Enable TTY**.
-2. The channel rows will show the actual PTY device paths (and the
-   resolved symlink path for the current user).
-3. In your digital program, select that symlink path as the serial port.
-
-> **Platform note:** Virtual serial ports via PTY are available on **Linux and
-> macOS** only. On Windows, use CAT over TCP instead — most modern digital
-> applications support TCP/rigctld natively.
+`<n>` is the listener's index in the list (0 for the first). The **CAT
+Control** tile shows the resolved path — copy it from there. On Windows there
+is no PTY; use TCP.
 
 ### What commands does CAT support?
 
@@ -251,9 +207,9 @@ Audio format: **24 kHz, stereo, 32-bit float** (shared memory ring buffer).
 #### Windows
 
 AetherSDR does **not** ship its own DAX audio driver on Windows — the built-in
-DAX bridge (the **Enable** button and meters in the DAX Audio tile) runs on
-**macOS or Linux with PipeWire** only, and those controls are disabled on
-Windows. You still have two working paths for digital-mode audio:
+DAX bridge (**Enable DAX** on the EXTERNAL CONTROL ▸ DAX page) runs on
+**macOS or Linux with PipeWire** only, and that page is hidden on Windows.
+You still have two working paths for digital-mode audio:
 
 - **TCI** (recommended) — carries both control and audio over a single WebSocket
   connection, with no virtual audio devices to install. See the TCI setup below.
@@ -264,7 +220,7 @@ Windows. You still have two working paths for digital-mode audio:
 
 ### DAX gain staging
 
-The DAX Audio tile provides gain sliders for each DAX channel:
+The DAX Audio drawer tile keeps gain sliders for each DAX channel:
 
 - **RX gain (DAX 1-4):** Controls the level of audio sent from the radio to
   your digital program. Start at 50% and adjust if decodes are poor or the
@@ -278,43 +234,30 @@ The DAX Audio tile provides gain sliders for each DAX channel:
 
 ---
 
-## Enabling Auto-Start
+## Enabling the Services
 
-By default, CAT, TCI, and DAX services must be started manually each session.
-You can configure them to start automatically whenever AetherSDR connects to
-the radio.
+Each service has a single **Enable …** control on its **Radio Setup ▸
+EXTERNAL CONTROL** page:
 
-### Where to find auto-start settings
+- **Enable CAT server** — starts every configured listener.
+- **Enable TCI server** — starts the WebSocket server on the configured port.
+- **Enable DAX** — starts the virtual-audio bridge *(Linux with PipeWire, or
+  macOS only)*.
+- Per-channel **Enable** on the DAX-IQ page.
 
-1. Open the **Settings** menu in the menu bar.
-2. You will see three checkable options:
-   - **Autostart CAT with AetherSDR** — auto-starts the four virtual serial
-     ports (TTY/PTY) on connection. *(Linux and macOS only.)*
-   - **Autostart TCI with AetherSDR** — auto-starts the TCI WebSocket server
-     on connection.
-   - **Autostart DAX with AetherSDR** — auto-starts the DAX virtual audio
-     bridge on connection. *(Linux with PipeWire, or macOS only.)*
+Ticking the box starts the service immediately, and the setting persists: on
+the next launch, once you connect to a radio, AetherSDR re-applies it
+automatically. There is nothing else to arm — the old three "Autostart …"
+menu items are gone.
 
-3. Check the options you want. The setting is saved immediately and persists
-   across restarts.
+**On connect, with a service enabled:**
 
-> **Note:** The **Enable TCP** button in the CAT Control tile is separate from
-> auto-start. TCP CAT servers are toggled directly from the CAT Control tile or
-> will start if you had them enabled when you last used the application.
-> The "Autostart CAT" menu item specifically controls the TTY/PTY virtual
-> serial ports.
-
-### What happens on auto-start
-
-When you connect to the radio with auto-start enabled:
-
-- **CAT:** The four PTY symlinks at `<runtime>/aethersdr/cat-A` through
-  `<runtime>/aethersdr/cat-D` are created and begin accepting connections
-  (the CAT Control tile shows the resolved per-user path).
-- **TCI:** The WebSocket server starts on the configured port (default `50001`).
-- **DAX:** The virtual audio devices are created after a short delay (about
-  3 seconds, to allow the radio to finish session setup). The DAX Enable
-  button in the DAX Audio tile will light up automatically.
+- **CAT:** each listener's TCP port (and, on Linux/macOS, its PTY symlink at
+  `<runtime>/aethersdr/cat-<n>`) begins accepting connections. The CAT Control
+  tile lists the running listeners.
+- **TCI:** the WebSocket server starts on the configured port (default `50001`).
+- **DAX:** the virtual audio devices are created after a short delay (about
+  3 seconds, so the radio can finish session setup).
 
 ---
 
@@ -331,42 +274,42 @@ This method works on **Linux and macOS**.
 
 **Step 1 — Prepare AetherSDR**
 
-1. Connect to the radio.
+1. Connect to the radio. **Do this before you open WSJT-X** — a CAT listener
+   with no slice to report returns an error (see *Common Mistakes*).
 2. Select or create a slice and set the mode to **DIGU** (for FT8/FT4) or the
    appropriate digital mode.
 3. Confirm the slice owns transmit (TX indicator visible on the slice).
-4. Assign the slice to **DAX channel 1** (click the DAX channel selector in
-   the slice bar or panadapter DAX overlay).
-5. Open the **CAT Control** tile (click **CAT** in the applet tray).
-6. Click **Enable TCP**. Note the base port (default `4532`).
-7. Open the **DAX Audio** tile (click **DAX** in the applet tray).
-8. Click **Enable**. Verify the DAX 1 row shows your slice (e.g. "Slice A").
+4. Assign the slice to **DAX channel 1** (DAX channel selector in the slice
+   bar or the panadapter DAX overlay).
+5. Open **Settings ▸ CAT & TCI…**. On the **CAT** page, tick **Enable CAT
+   server**; on the default listener set **Port** `4532`, **Dialect**
+   `Rigctld`, **VFO A** = your slice.
+6. On the **DAX** page, tick **Enable DAX**. Close the dialog.
 
 **Step 2 — Configure WSJT-X**
 
 1. Open WSJT-X and go to **File > Settings** (or **Preferences** on macOS).
 2. Go to the **Radio** tab:
    - **Rig:** select `Hamlib NET rigctl`
-   - **Network Server:** `localhost:4532`
-     (use `4533` for channel B, `4534` for C, `4535` for D)
+   - **Network Server:** `localhost:4532` (or whatever port you set)
    - **PTT Method:** `CAT`
    - **Mode:** `None` or `Data/Pkt`
+   - **Split Operation:** `Fake It` (simplest; use `Rig` only if you also set
+     VFO B to a second slice)
    - Click **Test CAT** — the button should turn green.
    - Click **Test PTT** — the radio should briefly key up.
 3. Go to the **Audio** tab:
    - **Input (Soundcard):** select `AetherSDR DAX 1`
-     - On Linux: may appear as `AetherSDR DAX 1` or the PulseAudio source name
-     - On macOS: appears as `AetherSDR DAX 1` in the dropdown
    - **Output (Soundcard):** select `AetherSDR TX`
 4. Click **OK** to save settings.
 
 **Step 3 — Verify**
 
 1. You should see the WSJT-X waterfall filling with signals.
-2. The CAT Control tile should show `1 client` on channel A's TCP row.
-3. The DAX 1 level meter in the DAX Audio tile should show activity.
+2. The **CAT Control** drawer tile should show `4532  Rigctld  1 client`.
+3. The DAX 1 level meter (DAX Audio tile) should show activity.
 4. To test transmit: click **Tune** in WSJT-X. The radio should key up and
-   the TX meter in the DAX Audio tile should show level. Keep the TX gain moderate.
+   the TX meter should show level. Keep the DAX TX gain moderate.
 
 #### Option 2: TCI (control + audio over one connection)
 
@@ -378,9 +321,9 @@ needed.
 1. Connect to the radio.
 2. Select or create a slice and set the mode to **DIGU**.
 3. Confirm the slice owns transmit.
-4. Open the **TCI Server** tile (click **TCI** in the applet tray).
-5. Click **Enable**. Note the port (default `50001`).
-6. You do **not** need to enable DAX — TCI carries audio internally.
+4. Open **Settings ▸ CAT & TCI…**, go to the **TCI** page, tick **Enable TCI
+   server**, note the **Port** (default `50001`).
+5. You do **not** need to enable DAX — TCI carries audio internally.
 
 **Step 2 — Configure WSJT-X 3.0**
 
@@ -397,7 +340,7 @@ needed.
 
 **Step 3 — Verify**
 
-1. The TCI Server tile should show `1 client`.
+1. The TCI Server tile should show `:50001 (1 client)`.
 2. The WSJT-X waterfall should fill with signals.
 3. Test transmit with **Tune** as above.
 
@@ -406,6 +349,49 @@ needed.
 > audio through a single connection with nothing to install. If you need
 > soundcard-style DAX (for example JTDX, which has no TCI support), install
 > FlexRadio's SmartSDR DAX drivers and select those devices instead.
+
+---
+
+### JS8Call
+
+JS8Call uses the same CAT + audio model as WSJT-X. It has **no TCI support**,
+so the path is CAT over rigctld plus DAX audio (Linux/macOS), or the SmartSDR
+DAX drivers on Windows.
+
+**Step 1 — Prepare AetherSDR**
+
+1. Connect to the radio **first**.
+2. Select or create a slice, set it to **DIGU**, confirm it owns transmit,
+   and assign it to **DAX channel 1**.
+3. **Settings ▸ CAT & TCI…** → **CAT** page: **Enable CAT server**; default
+   listener at **Port** `4532`, **Dialect** `Rigctld`, **VFO A** = your slice.
+4. **DAX** page: **Enable DAX**.
+5. Put the slice on a JS8 dial frequency (e.g. 7.078, 10.130, 14.078 MHz)
+   with a ~2.7–3 kHz filter.
+
+**Step 2 — Configure JS8Call**
+
+1. **File ▸ Settings ▸ Radio**:
+   - **Rig:** `Hamlib NET rigctl`
+   - **Network Server:** `localhost:4532`
+   - **PTT Method:** `CAT`
+   - **Mode:** `Data/Pkt` (or `None` and set DIGU manually)
+   - **Split Operation:** `Fake It`
+   - Click **Test CAT** and **Test PTT** — both should go green.
+2. **File ▸ Settings ▸ Audio**:
+   - **Input:** `AetherSDR DAX 1`
+   - **Output:** `AetherSDR TX`
+
+**Step 3 — Verify**
+
+1. JS8Call's waterfall fills; its RX level meter sits mid-scale (green) —
+   trim with the **DAX RX gain** slider on the DAX tile, not in JS8Call.
+2. The **CAT Control** tile shows `4532  Rigctld  1 client`.
+3. Tuning in JS8Call moves the AetherSDR slice.
+
+> JS8Call also has its own TCP JSON API (default port 2442) for messages and
+> spot automation. That is unrelated to the radio connection above and is not
+> needed to operate.
 
 ---
 
@@ -420,15 +406,14 @@ and audio routing. This walkthrough covers the CAT+DAX method.
 
 **Step 1 — Prepare AetherSDR**
 
-1. Connect to the radio.
+1. Connect to the radio first.
 2. Select or create a slice and set the mode to **DIGU** (for VARA HF) or
    **USB** depending on your VARA configuration.
 3. Confirm the slice owns transmit.
 4. Assign the slice to **DAX channel 1**.
-5. Open the **CAT Control** tile (click **CAT** in the applet tray).
-6. Click **Enable TCP**. Note the base port (default `4532`).
-7. Open the **DAX Audio** tile (click **DAX** in the applet tray).
-8. Click **Enable**.
+5. **Settings ▸ CAT & TCI…** → **CAT** page: **Enable CAT server**; default
+   listener at **Port** `4532`, **Dialect** `Rigctld`, **VFO A** = your slice.
+6. **DAX** page: **Enable DAX**.
 
 **Step 2 — Configure VARA**
 
@@ -449,17 +434,18 @@ and audio routing. This walkthrough covers the CAT+DAX method.
 2. Select **VARA HF Winlink** as the session type.
 3. Go to **Settings** (gear icon):
    - Under **Radio Setup / Rig Control**:
-     - **Rig type:** `Hamlib NET rigctl` or `Kenwood TS-2000` (rigctld is
-       compatible with this selection in many Winlink builds)
+     - **Rig type:** `Hamlib NET rigctl`. (If Winlink offers only
+       `Kenwood TS-2000`, set that listener's **Dialect** to **TS-2000** on
+       the CAT page.)
      - If using TCP: **Host:** `localhost`, **Port:** `4532`
-     - If using serial: **Port:** copy the channel-A path shown in the
-       CAT Control tile (e.g. `/run/user/1000/aethersdr/cat-A` on Linux)
+     - If using serial: **Port:** copy the listener's path shown in the
+       CAT Control tile (e.g. `/run/user/1000/aethersdr/cat-0` on Linux)
    - Verify that Winlink can read the frequency from the radio.
 4. Click **Start** to begin a Winlink session.
 
 **Step 4 — Verify**
 
-1. The CAT Control tile should show a connected client on channel A.
+1. The CAT Control tile should show `1 client` on your listener.
 2. When VARA transmits, the TX level meter in the DAX Audio tile should show
    activity.
 3. When receiving, the DAX 1 meter should show activity and VARA's waterfall
@@ -474,15 +460,14 @@ and integrates with Hamlib for rig control.
 
 **Step 1 — Prepare AetherSDR**
 
-1. Connect to the radio.
+1. Connect to the radio first.
 2. Select or create a slice and set the mode to **DIGU** (for most digital
    modes) or **DIGL** / **RTTY** as appropriate.
 3. Confirm the slice owns transmit.
 4. Assign the slice to **DAX channel 1**.
-5. Open the **CAT Control** tile (click **CAT** in the applet tray).
-6. Click **Enable TCP**. Note the base port (default `4532`).
-7. Open the **DAX Audio** tile (click **DAX** in the applet tray).
-8. Click **Enable**.
+5. **Settings ▸ CAT & TCI…** → **CAT** page: **Enable CAT server**; default
+   listener at **Port** `4532`, **Dialect** `Rigctld`, **VFO A** = your slice.
+6. **DAX** page: **Enable DAX**.
 
 **Step 2 — Configure fldigi**
 
@@ -502,9 +487,9 @@ and integrates with Hamlib for rig control.
    - Under **Rig Control > Hamlib**:
      - **Rig:** select `NET rigctl`
      - Or under **Rig Control > RigCAT** or **Rig Control > Hardware PTT**:
-       - **Device:** copy the channel-A path from the CAT Control tile
-         (e.g. `/run/user/1000/aethersdr/cat-A` on Linux,
-         `~/Library/Caches/AetherSDR/cat-A` on macOS)
+       - **Device:** copy the listener's path from the CAT Control tile
+         (e.g. `/run/user/1000/aethersdr/cat-0` on Linux,
+         `~/Library/Caches/AetherSDR/cat-0` on macOS)
        - **Baud rate:** does not matter for virtual serial ports, but
          set it to `9600` if the field is required.
 
@@ -525,6 +510,58 @@ and integrates with Hamlib for rig control.
 5. To test transmit: type some text in the transmit pane and press the TX
    button (or Ctrl+T). The radio should key up and the DAX Audio tile TX meter
    should show level.
+
+---
+
+### HamClock / OpenHamClock
+
+HamClock only needs to **read** the current frequency, to show band and
+propagation context. It polls a Hamlib `rigctld`, so a plain CAT listener is
+all AetherSDR has to provide — no audio, no DAX.
+
+**AetherSDR:**
+
+1. Connect to the radio.
+2. **Settings ▸ CAT & TCI…** → **CAT** page: **Enable CAT server**; a listener
+   at **Port** `4532`, **Dialect** `Rigctld`, **VFO A** = the slice you want
+   HamClock to follow.
+
+**HamClock:**
+
+- Start it with the rigctld option pointed at AetherSDR:
+  `hamclock -r localhost:4532` (or set the rig host/port in HamClock's setup
+  pages). HamClock then reads AetherSDR's frequency and updates as you tune.
+
+No transmit path is involved, so nothing else is required.
+
+---
+
+### Using AetherSDR as a Hamlib radio in a logger
+
+N1MM+, DXLab Commander, Ham Radio Deluxe, MacLoggerDX, Log4OM, CQRLOG and
+similar all treat AetherSDR as a **Hamlib "NET rigctl" radio** (some also
+accept a **Kenwood TS-2000**). Frequency/mode tracking and click-to-tune from
+the logger's bandmap work over one CAT listener; you only add DAX audio if the
+logger also runs a digital-mode engine.
+
+**AetherSDR:**
+
+1. Connect to the radio.
+2. **Settings ▸ CAT & TCI…** → **CAT** page: **Enable CAT server**; a listener
+   at **Port** `4532`, **VFO A** = your operating slice. Set **Dialect** to
+   **Rigctld** for a Hamlib logger, or **TS-2000** for one that only speaks
+   Kenwood.
+
+**Logger:**
+
+- Rig / radio type: **Hamlib NET rigctl** (or **Kenwood TS-2000**), host
+  `localhost`, port `4532`. On Linux/macOS a logger that wants a serial port
+  can use the listener's PTY path from the CAT Control tile instead.
+- Log4OM v2 can alternatively connect as a **TCI client** — enable the TCI
+  server instead and point Log4OM at `localhost:50001`.
+
+Spot ingestion (DX Cluster, RBN, WSJT-X, N1MM bandmap) is a separate feature —
+see **Settings ▸ SpotHub…**.
 
 ---
 
@@ -569,21 +606,22 @@ demodulated audio (e.g. SDR receivers, digital mode research tools).
 
 ## How AetherSDR Maps Channels
 
-The data mode tiles are organized around four channels (A, B, C, D) that align with
-the four-slice workflow:
+CAT listeners are **not** fixed to a slice letter — each one carries its own
+**Port**, **Dialect** and **VFO A / VFO B** assignment, so you decide the
+routing. DAX audio channels 1-4 still line up with the slice workflow:
 
-| Channel | CAT TCP port (default) | TTY path | DAX audio |
-|---|---|---|---|
-| A | 4532 | `<runtime>/aethersdr/cat-A` | DAX 1 |
-| B | 4533 | `<runtime>/aethersdr/cat-B` | DAX 2 |
-| C | 4534 | `<runtime>/aethersdr/cat-C` | DAX 3 |
-| D | 4535 | `<runtime>/aethersdr/cat-D` | DAX 4 |
+| Slice | CAT listener | DAX audio |
+|---|---|---|
+| A | your first listener (default `4532`, `Rigctld`), **VFO A** = slice A | DAX 1 |
+| B | add a listener on `4533`, **VFO A** = slice B | DAX 2 |
+| C | add a listener on `4534`, **VFO A** = slice C | DAX 3 |
+| D | add a listener on `4535`, **VFO A** = slice D | DAX 4 |
 
-(`<runtime>` is the per-user runtime/cache dir — see *CAT over TTY/PTY*
-above for how it resolves on each platform.)
-
-Keep your channel numbering consistent with your slice usage so you do not have
-to rediscover the routing every session.
+The virtual serial device for listener *n* is
+`<runtime>/aethersdr/cat-<n>` (index `0` for the first) — see *The virtual
+serial device* above for how `<runtime>` resolves per platform. Keep your
+port numbering consistent with your slice usage so you don't rediscover the
+routing every session.
 
 ---
 
@@ -591,14 +629,15 @@ to rediscover the routing every session.
 
 Use this sequence the first time you integrate a new digital application:
 
-1. Connect to the radio.
+1. Connect to the radio. **(Do this before you start the other app.)**
 2. Create or select the slice you want for digital work.
 3. Set the slice to the correct digital mode (usually **DIGU** or **DIGL**).
 4. Confirm that the correct slice owns transmit.
 5. Assign the slice to a DAX channel (1-4).
-6. Open the relevant data mode tiles and keep them visible.
-7. Enable **TCP**, **TTY**, or **TCI** depending on what your application expects.
-8. Enable **DAX** if your workflow needs virtual audio devices.
+6. Open **Settings ▸ CAT & TCI…** (or Radio Setup ▸ EXTERNAL CONTROL).
+7. **Enable CAT server** (with a listener on your slice) *or* **Enable TCI
+   server**, depending on what your application expects.
+8. **Enable DAX** if your workflow needs virtual audio devices.
 9. Configure your digital application to point at the correct CAT endpoint
    and audio devices.
 10. **Test receive first** — verify decodes or waterfall before touching transmit.
@@ -637,13 +676,25 @@ you need to diagnose a routing problem.
 
 ## Common Mistakes
 
+### "Rig failure" / the program can't read the frequency
+
+**Cause:** AetherSDR is **not connected to a radio**. A CAT listener with no
+receiver slice has nothing to report, so `get_freq` returns Hamlib
+`RPRT -8` — which JS8Call / WSJT-X render as a scary "Rig failure" dump.
+
+**Fix:** Connect AetherSDR to the radio first, confirm a slice with a real
+frequency, then start (or re-run "Test CAT" in) the external program. Also
+check the listener's **VFO A** points at an existing slice (index `0` =
+slice A).
+
 ### The software connects, but the wrong slice moves
 
-**Cause:** The external program is attached to a different CAT channel than the
-slice you are watching.
+**Cause:** The listener's **VFO A** is set to a different slice than the one
+you are watching.
 
-**Fix:** Match the CAT channel letter to your slice letter. Channel A (port
-4532) controls slice A, channel B (port 4533) controls slice B, and so on.
+**Fix:** On **Settings ▸ CAT & TCI… ▸ CAT**, set that listener's **VFO A** to
+the slice you want it to control, or connect the program to the listener whose
+VFO A already matches.
 
 ### Receive works, but transmit goes nowhere
 
@@ -658,9 +709,9 @@ then confirm the application's transmit audio is routed to `AetherSDR TX`.
 **Cause:** The radio-control path is correct but the DAX receive audio path
 is not.
 
-**Fix:** Leave CAT alone. Check that DAX is enabled in the DAX Audio tile and
-that the application's audio input is set to the correct `AetherSDR DAX`
-channel.
+**Fix:** Leave CAT alone. Check that **Enable DAX** is ticked on the
+EXTERNAL CONTROL ▸ DAX page and that the application's audio input is set to
+the correct `AetherSDR DAX` channel.
 
 ### Audio is present, but the application does not tune the radio
 
@@ -676,7 +727,7 @@ PulseAudio/PipeWire service is not running.
 
 **Fix:**
 - Verify the radio is connected.
-- Click **Enable** in the DAX Audio tile.
+- Tick **Enable DAX** on the EXTERNAL CONTROL ▸ DAX page.
 - On Linux: run `pactl list sources short` to check if the devices exist.
 - On macOS: check **System Settings > Sound > Input** for AetherSDR devices.
 - On Windows: AetherSDR ships no DAX driver — use TCI, or FlexRadio's SmartSDR

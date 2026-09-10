@@ -8,7 +8,7 @@ The plugin is a sibling to [`elgato-aethersdr`](../elgato-aethersdr) (Stream Dec
 
 ## Installation
 
-1. Enable TCI in AetherSDR: **Settings → Autostart TCI with AetherSDR**.
+1. Enable TCI in AetherSDR: **Radio Setup ▸ EXTERNAL CONTROL ▸ TCI ▸ Enable TCI server**.
 2. Download the packaged plugin from the [latest AetherSDR release](https://github.com/aethersdr/AetherSDR/releases/latest) (when available).
 3. Copy / link into Ulanzi Studio's plugin directory:
    - **Windows:** `%APPDATA%\Ulanzi\UlanziDeck\Plugins\com.g0jkn.aethersdr.ulanziPlugin`

@@ -536,7 +536,7 @@ That is important because the current setup is **not** a built-in “Stream Deck
 
 Start with this step inside AetherSDR:
 
-`Settings > Autostart TCI with AetherSDR`
+**Radio Setup ▸ EXTERNAL CONTROL ▸ TCI ▸ Enable TCI server** (or **Settings ▸ CAT & TCI…**)
 
 That gives the Stream Deck plugin a control connection to the radio. If you prefer not to autostart it, make sure the TCI server is running before you try to use the plugin.
 
@@ -554,7 +554,7 @@ To use the official plugin path, the repository currently documents these requir
 
 #### How to install it
 
-1. In AetherSDR, enable `Settings > Autostart TCI with AetherSDR`.
+1. In AetherSDR, tick **Enable TCI server** on Radio Setup ▸ EXTERNAL CONTROL ▸ TCI.
 2. Download `com.aethersdr.radio.streamDeckPlugin` from the latest AetherSDR release.
 3. Double-click the plugin file.
 4. The Elgato app installs it automatically.
