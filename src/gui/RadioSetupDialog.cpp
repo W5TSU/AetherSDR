@@ -4816,6 +4816,30 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
             edit->setMinimumHeight(24);
         };
 
+        auto styleKiwiCombo = [](QComboBox* combo) {
+            applyComboStyle(combo);
+            combo->setMinimumHeight(24);
+        };
+
+        // Receiver-family selector shared by the configured and new rows:
+        // index 0 = KiwiSDR, index 1 = Web-888 (docs/web888-cleanroom-design.md).
+        auto fillReceiverTypeCombo = [](QComboBox* combo) {
+            combo->addItem(QStringLiteral("KiwiSDR"));
+            combo->addItem(QStringLiteral("Web-888"));
+        };
+        auto receiverTypeComboIndex =
+            [](KiwiSdrProtocol::KiwiSdrReceiverFamily family) {
+                return family == KiwiSdrProtocol::KiwiSdrReceiverFamily::Web888
+                    ? 1
+                    : 0;
+            };
+        auto receiverTypeComboFamily =
+            [](int index) {
+                return index == 1
+                    ? KiwiSdrProtocol::KiwiSdrReceiverFamily::Web888
+                    : KiwiSdrProtocol::KiwiSdrReceiverFamily::Kiwi;
+            };
+
         auto styleKiwiButton = [](QPushButton* button) {
             button->setStyleSheet(kKiwiActionButtonStyle);
             button->setMinimumWidth(96);
@@ -4829,7 +4853,9 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
         };
 
         *refreshKiwi = [this, kiwiRowsLayout, stateText, styleKiwiEdit,
-                        styleKiwiButton, styleKiwiIconButton,
+                        styleKiwiButton, styleKiwiIconButton, styleKiwiCombo,
+                        fillReceiverTypeCombo, receiverTypeComboIndex,
+                        receiverTypeComboFamily,
                         kiwiPasswordDescription] {
             while (QLayoutItem* item = kiwiRowsLayout->takeAt(0)) {
                 if (QWidget* widget = item->widget()) {
@@ -4940,6 +4966,7 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                 addFieldLabel(rowLayout, "NAME", 0);
                 addFieldLabel(rowLayout, "SERVER", 1);
                 addFieldLabel(rowLayout, "PASSWORD", 2);
+                addFieldLabel(rowLayout, "TYPE", 3);
 
                 auto* nameEdit = new QLineEdit(profile.name);
                 nameEdit->setMaxLength(16);
@@ -4970,7 +4997,18 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                     passwordEdit->setEnabled(false);
                 }
                 styleKiwiEdit(passwordEdit);
-                rowLayout->addWidget(passwordEdit, 2, 2, 1, 2);
+                rowLayout->addWidget(passwordEdit, 2, 2);
+
+                auto* typeCombo = new GuardedComboBox;
+                fillReceiverTypeCombo(typeCombo);
+                typeCombo->setCurrentIndex(receiverTypeComboIndex(profile.family));
+                typeCombo->setAccessibleName("KiwiSDR receiver type");
+                typeCombo->setAccessibleDescription(
+                    "Receiver family for this endpoint: a KiwiSDR or a "
+                    "Web-888, which speaks the same protocol with small "
+                    "differences.");
+                styleKiwiCombo(typeCombo);
+                rowLayout->addWidget(typeCombo, 2, 3);
 
                 const KiwiSdrPasswordPersistenceState persistenceState =
                     m_kiwiSdrManager->profilePasswordPersistenceState(
@@ -5099,6 +5137,7 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                 kiwiRowsLayout->addWidget(rowFrame);
 
                 auto updateProfile = [this, profile, nameEdit, endpointEdit,
+                                      typeCombo, receiverTypeComboFamily,
                                       autoCheck, keepTxAudioCheck,
                                       resumeDelayCheck] {
                     const QString name = nameEdit->text().trimmed();
@@ -5121,6 +5160,8 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                     KiwiSdrAntennaProfile updated = profile;
                     updated.name = name;
                     updated.endpoint = endpoint;
+                    updated.family = receiverTypeComboFamily(
+                        typeCombo->currentIndex());
                     updated.autoConnect = autoCheck->isChecked();
                     updated.keepAudioDuringTx = keepTxAudioCheck->isChecked();
                     updated.resumeAudioAfterTxDelay =
@@ -5149,6 +5190,8 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                 });
                 connect(resumeDelayCheck, &QCheckBox::toggled,
                         this, [updateProfile](bool) { updateProfile(); });
+                connect(typeCombo, &QComboBox::currentIndexChanged,
+                        this, [updateProfile](int) { updateProfile(); });
                 connect(connectButton, &QPushButton::clicked,
                         this, [this, profile, activeSession] {
                     if (activeSession) {
@@ -5178,6 +5221,7 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
             addFieldLabel(rowLayout, "NAME", 0);
             addFieldLabel(rowLayout, "SERVER", 1);
             addFieldLabel(rowLayout, "PASSWORD", 2);
+            addFieldLabel(rowLayout, "TYPE", 3);
 
             auto* nameEdit = new QLineEdit;
             nameEdit->setMaxLength(16);
@@ -5206,6 +5250,16 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
             styleKiwiEdit(passwordEdit);
             rowLayout->addWidget(passwordEdit, 2, 2);
 
+            auto* typeCombo = new GuardedComboBox;
+            fillReceiverTypeCombo(typeCombo);
+            typeCombo->setAccessibleName("New KiwiSDR receiver type");
+            typeCombo->setAccessibleDescription(
+                "Receiver family for the new endpoint: a KiwiSDR or a "
+                "Web-888, which speaks the same protocol with small "
+                "differences.");
+            styleKiwiCombo(typeCombo);
+            rowLayout->addWidget(typeCombo, 2, 3);
+
             auto* autoCheck = new QCheckBox;
             autoCheck->setText("Auto-connect");
             autoCheck->setAccessibleName("Auto connect new KiwiSDR antenna");
@@ -5216,6 +5270,7 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
 
             auto committed = std::make_shared<bool>(false);
             auto commitNewRow = [this, nameEdit, endpointEdit, passwordEdit,
+                                 typeCombo, receiverTypeComboFamily,
                                  autoCheck, committed] {
                 if (*committed) {
                     return;
@@ -5227,7 +5282,9 @@ QWidget* RadioSetupDialog::buildAntennaNamesTab()
                     return;
                 }
                 *committed = true;
-                const QString id = m_kiwiSdrManager->addProfile(name, endpoint);
+                const QString id = m_kiwiSdrManager->addProfile(
+                    name, endpoint, receiverTypeComboFamily(
+                                        typeCombo->currentIndex()));
                 if (id.isEmpty()) {
                     *committed = false;
                     return;
