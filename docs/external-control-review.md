@@ -123,3 +123,12 @@ Front-runners #1 and #2 should be treated as co-equal; pick when that PR is plan
 - "Feeding HamClock / OpenHamClock from AetherSDR" (rigctld dialect CatPort).
 - "Using AetherSDR with WSJT-X / JS8Call" — CAT (rigctld) + DAX audio walkthrough, per-OS audio-routing notes.
 - "Using AetherSDR as a Hamlib radio in a logger (N1MM+, DXLab, HRD, MacLoggerDX)".
+
+**Gotcha to document in every CAT how-to:** connect AetherSDR to the radio
+*before* starting (or re-testing the rig in) JS8Call / WSJT-X / a logger. Until
+a receiver slice exists, `get_freq` has nothing to report and the rigctld
+emulation returns Hamlib `RPRT -8` (`RIG_ENAVAIL`) — which JS8Call surfaces as
+a full-screen "Rig failure" dump. Also point the CAT listener's **VFO A** at an
+existing slice (index `0` = slice A). Consider a friendlier
+"radio not connected" reply from the rigctld layer, or a hint on the CAT page,
+as a small follow-up.
