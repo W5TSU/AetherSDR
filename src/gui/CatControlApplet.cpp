@@ -94,8 +94,9 @@ QString sliceLetter(int idx)
 int resolveVfoValue(QComboBox* combo, int savedValue, int fallbackData)
 {
     const int cur = combo->currentData().toInt();
-    if (cur == fallbackData && savedValue != fallbackData && combo->findData(savedValue) < 0)
+    if (cur == fallbackData && savedValue != fallbackData && combo->findData(savedValue) < 0) {
         return savedValue;   // combo fell back only because `savedValue` isn't available
+    }
     return cur;
 }
 
@@ -340,14 +341,9 @@ void CatControlApplet::buildTableRows()
 #endif
     addHdr("Clients",  48, hcol++);
 
-    const QVector<CatPortSpec> specs = CatSettings::ports();
-    auto specAt = [&specs](int i) -> CatPortSpec {
-        return i < specs.size() ? specs.at(i) : CatPortSpec{};
-    };
-
     for (int i = 0; i < m_portCount; ++i) {
         PortRow row;
-        const CatPortSpec spec = specAt(i);
+        const CatPortSpec spec = CatSettings::portAt(i);
 
         // Enable checkbox
         row.enableCheck = new QCheckBox;
@@ -379,9 +375,10 @@ void CatControlApplet::buildTableRows()
         row.dialectCombo->addItem("TS-2000",  static_cast<int>(CatDialect::TS2000));
         row.dialectCombo->addItem("Flex",     static_cast<int>(CatDialect::FlexCAT));
         {
-            const int idx = (spec.dialect == "TS2000") ? 1 : (spec.dialect == "FlexCAT") ? 2 : 0;
+            const int idx = row.dialectCombo->findData(
+                static_cast<int>(catDialectFromToken(spec.dialect)));
             QSignalBlocker b(row.dialectCombo);
-            row.dialectCombo->setCurrentIndex(idx);
+            row.dialectCombo->setCurrentIndex(qMax(0, idx));
         }
 
         // VFO A combo — editable+read-only so we can center the selected-item text
@@ -477,14 +474,14 @@ void CatControlApplet::buildTableRows()
 
         connect(row.enableCheck, &QCheckBox::toggled, this,
                 [this, capturedI](bool) {
-                    applyRowToSettings(capturedI);
+                    persistListenerRows();
                     updateRowLocked(capturedI);
                     emit configChanged();
                 });
 
         connect(row.portEdit, &QLineEdit::editingFinished, this,
                 [this, capturedI]() {
-                    applyRowToSettings(capturedI);
+                    persistListenerRows();
                     updateRowLocked(capturedI);
                     emit configChanged();
                 });
@@ -493,19 +490,19 @@ void CatControlApplet::buildTableRows()
                 this, [this, capturedI](int) {
                     restoreVfoBForDialect(capturedI);  // switch to dual-VFO → restore saved VFO B
                     updateRowLocked(capturedI);        // single-VFO → force "—" + disable selectors
-                    applyRowToSettings(capturedI);
+                    persistListenerRows();
                     emit configChanged();
                 });
 
         connect(row.vfoACombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this, capturedI](int) {
-                    applyRowToSettings(capturedI);
+                    persistListenerRows();
                     emit configChanged();
                 });
 
         connect(row.vfoBCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this, capturedI](int) {
-                    applyRowToSettings(capturedI);
+                    persistListenerRows();
                     emit configChanged();
                 });
 
@@ -533,7 +530,7 @@ void CatControlApplet::updateRowLocked(int row)
     bool locked   = masterOn && r.enableCheck->isChecked() && hasPort;
 
     // A single-VFO dialect (rigctld) has no VFO B — force the selector to "—" and
-    // disable it. DISPLAY override only: the saved VfoB is preserved (applyRowToSettings
+    // disable it. DISPLAY override only: the saved VfoB is preserved (persistListenerRows
     // skips persisting it for single-VFO dialects) and restored by restoreVfoBForDialect()
     // when switching back to a dual-VFO dialect. This runs on every lock refresh, so it
     // is kept idempotent (display state only) — the restore lives in the dialect handler.
@@ -565,8 +562,7 @@ void CatControlApplet::restoreVfoBForDialect(int row)
     PortRow& r = m_rows[row];
     const auto dialect = static_cast<CatDialect>(r.dialectCombo->currentData().toInt());
     if (!dialectSupportsVfoB(dialect)) return;
-    const QVector<CatPortSpec> specs = CatSettings::ports();
-    const int savedB = row < specs.size() ? specs.at(row).vfoB : CatPort::kVfoNone;
+    const int savedB = CatSettings::portAt(row).vfoB;
     const int idx = r.vfoBCombo->findData(savedB);
     if (idx >= 0 && r.vfoBCombo->currentIndex() != idx) {
         QSignalBlocker b(r.vfoBCombo);
@@ -576,9 +572,8 @@ void CatControlApplet::restoreVfoBForDialect(int row)
 
 // ── Persist row settings ─────────────────────────────────────────────────────
 
-void CatControlApplet::applyRowToSettings(int row)
+void CatControlApplet::persistListenerRows()
 {
-    Q_UNUSED(row)
     // Guard against a stray editingFinished/focus-out emitted while the table is
     // being torn down and rebuilt — writing then would persist an empty list.
     if (!m_rowsBuilt || m_rows.isEmpty()) {
@@ -596,9 +591,7 @@ void CatControlApplet::applyRowToSettings(int row)
         spec.enabled = r.enableCheck->isChecked();
 
         const auto dialect = static_cast<CatDialect>(r.dialectCombo->currentData().toInt());
-        spec.dialect = (dialect == CatDialect::TS2000)  ? QStringLiteral("TS2000")
-                     : (dialect == CatDialect::FlexCAT) ? QStringLiteral("FlexCAT")
-                     :                                    QStringLiteral("Rigctld");
+        spec.dialect = catDialectToken(dialect);
 
         const int prevA = (i < prev.size()) ? prev.at(i).vfoA : 0;
         const int prevB = (i < prev.size()) ? prev.at(i).vfoB : CatPort::kVfoNone;

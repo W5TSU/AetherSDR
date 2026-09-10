@@ -2107,7 +2107,6 @@ void MainWindow::wireCatPorts()
     // DaxSettings objects (one-way, legacy keys retained — Principle V/XIV).
     migrateCatSettings();
     ExternalControlMigration::run();
-    const QVector<CatPortSpec> catSpecs = CatSettings::ports();
     for (int i = 0; i < kCatPorts; ++i) {
         // Owned by the session — no QObject parent (parent-based deletion
         // would run after member destruction and recreate #2385).
@@ -2116,15 +2115,10 @@ void MainWindow::wireCatPorts()
         catPort(i)->setSymlinkPath(CatPort::defaultSymlinkPath(i));
         // Load persisted dialect and VFO config; port and enabled are read
         // in applyCatPortCount() just before starting.
-        if (i < catSpecs.size()) {
-            const CatPortSpec& spec = catSpecs.at(i);
-            const CatDialect dial = (spec.dialect == "FlexCAT") ? CatDialect::FlexCAT
-                                  : (spec.dialect == "TS2000")  ? CatDialect::TS2000
-                                  : CatDialect::Rigctld;
-            catPort(i)->setDialect(dial);
-            catPort(i)->setVfoA(spec.vfoA);
-            catPort(i)->setVfoB(spec.vfoB);
-        }
+        const CatPortSpec spec = CatSettings::portAt(i);
+        catPort(i)->setDialect(catDialectFromToken(spec.dialect));
+        catPort(i)->setVfoA(spec.vfoA);
+        catPort(i)->setVfoB(spec.vfoB);
     }
 
     // Wire the applet to the port objects

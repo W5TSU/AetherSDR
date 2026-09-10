@@ -23,15 +23,20 @@ public:
     static quint16 port();
     static void setPort(quint16 port);
 
+    // Clamp an arbitrary integer to a valid listen port, or kDefaultPort when
+    // it is out of range. Shared with the UI so the range rule lives in one
+    // place.
+    static quint16 sanitizePort(int raw);
+
     // One-way migration from AutoStartTCI / TciPort. Returns true iff it wrote
-    // the nested object. Legacy keys are not removed. Idempotent.
+    // the nested object. Legacy keys are not removed. Idempotent; a corrupt
+    // stored value is treated as absent and replaced.
     static bool migrate();
 
 private:
     static QJsonObject readObj();
     static void write(const QJsonObject& o);
     static QJsonObject buildFromLegacy();
-    static quint16 sanitizePort(int raw);
 };
 
 } // namespace AetherSDR

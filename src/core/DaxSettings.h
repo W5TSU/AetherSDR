@@ -32,7 +32,8 @@ public:
 
     // One-way migration from AutoStartDAX / DaxIqRate<n> / DaxIqEnabled<n>.
     // Returns true iff it wrote the nested object. Legacy keys are not
-    // removed. Idempotent.
+    // removed. Idempotent; a corrupt stored value is treated as absent and
+    // replaced.
     static bool migrate();
 
 private:

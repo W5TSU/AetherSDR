@@ -1,6 +1,7 @@
 #include "core/DaxSettings.h"
 
 #include "core/AppSettings.h"
+#include "core/SettingsJsonUtil.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -17,15 +18,15 @@ const QString kRootKey = QStringLiteral("DaxServer");
 constexpr int kDefaultRateHz = 48000;
 constexpr std::array<int, 4> kLegalRatesHz = {24000, 48000, 96000, 192000};
 
-bool asBool(const QJsonValue& v, bool fallback)
+// The stored value of DaxServer as a parsed object, or an empty object when the
+// key is absent or unparseable.
+QJsonObject storedObject()
 {
-    if (v.isBool()) {
-        return v.toBool();
+    const QString raw = AppSettings::instance().value(kRootKey, QString{}).toString();
+    if (raw.isEmpty()) {
+        return {};
     }
-    if (v.isString()) {
-        return v.toString() == QLatin1String("True");
-    }
-    return fallback;
+    return QJsonDocument::fromJson(raw.toUtf8()).object();
 }
 
 } // namespace
@@ -46,13 +47,9 @@ int DaxSettings::snapRate(int rawHz)
 
 QJsonObject DaxSettings::readObj()
 {
-    const QString json =
-        AppSettings::instance().value(kRootKey, QString{}).toString();
-    if (!json.isEmpty()) {
-        const QJsonObject o = QJsonDocument::fromJson(json.toUtf8()).object();
-        if (!o.isEmpty()) {
-            return o;
-        }
+    const QJsonObject stored = storedObject();
+    if (!stored.isEmpty()) {
+        return stored;
     }
     return buildFromLegacy();
 }
@@ -96,7 +93,7 @@ QJsonObject DaxSettings::buildFromLegacy()
 
 bool DaxSettings::audioEnabled()
 {
-    return asBool(readObj().value(QStringLiteral("audioEnabled")), false);
+    return jsonBool(readObj().value(QStringLiteral("audioEnabled")), false);
 }
 
 void DaxSettings::setAudioEnabled(bool on)
@@ -139,7 +136,7 @@ QVector<bool> DaxSettings::iqChannelEnabled()
     QVector<bool> result;
     result.reserve(kIqChannels);
     for (int i = 0; i < kIqChannels; ++i) {
-        result.append(i < arr.size() ? asBool(arr.at(i), false) : false);
+        result.append(i < arr.size() ? jsonBool(arr.at(i), false) : false);
     }
     return result;
 }
@@ -157,8 +154,7 @@ void DaxSettings::setIqChannelEnabled(const QVector<bool>& enabled)
 
 bool DaxSettings::migrate()
 {
-    auto& s = AppSettings::instance();
-    if (!s.value(kRootKey, QString{}).toString().isEmpty()) {
+    if (!storedObject().isEmpty()) {
         return false;
     }
     const QJsonObject legacy = buildFromLegacy();

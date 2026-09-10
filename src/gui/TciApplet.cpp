@@ -237,31 +237,27 @@ void TciApplet::buildUI()
     outer->addLayout(enableRow);
 
     connect(m_tciPort, &QLineEdit::editingFinished, this, [this]() {
-        int port = m_tciPort->text().toInt();
-        if (port < 1024 || port > 65535) {
-            port = TciSettings::kDefaultPort;
+        const quint16 port = TciSettings::sanitizePort(m_tciPort->text().toInt());
+        if (QString::number(port) != m_tciPort->text()) {
             m_tciPort->setText(QString::number(port));
         }
-        TciSettings::setPort(static_cast<quint16>(port));
+        TciSettings::setPort(port);
         // If running, restart with new port
         if (m_tciEnable->isChecked() && m_tciServer) {
             m_tciServer->stop();
-            m_tciServer->start(static_cast<quint16>(port));
+            m_tciServer->start(port);
             updateTciStatus();
         }
     });
 
     connect(m_tciEnable, &QPushButton::toggled, this, [this](bool on) {
         m_tciEnable->setText(on ? "Enabled" : "Disabled");
-        int port = m_tciPort->text().toInt();
-        if (port < 1024 || port > 65535) {
-            port = TciSettings::kDefaultPort;
-        }
-        TciSettings::setPort(static_cast<quint16>(port));
+        const quint16 port = TciSettings::sanitizePort(m_tciPort->text().toInt());
+        TciSettings::setPort(port);
         TciSettings::setEnabled(on);
         if (m_tciServer) {
             if (on) {
-                m_tciServer->start(static_cast<quint16>(port));
+                m_tciServer->start(port);
                 // If bind failed, snap the button back off so the UI doesn't
                 // claim the server is enabled while isRunning() is false.
                 if (!m_tciServer->isRunning() && m_tciEnable) {

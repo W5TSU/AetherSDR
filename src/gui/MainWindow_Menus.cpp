@@ -697,7 +697,7 @@ void MainWindow::buildMenuBar()
     // Principle V. Config lives in the nested CatSettings/TciSettings/
     // DaxSettings objects; these menu items are a thin front onto them and
     // will move into Radio Setup ▸ EXTERNAL CONTROL (issue #17).
-    auto* autoCatAction = settingsMenu->addAction("Autostart CAT with AetherSDR");
+    auto* autoCatAction = settingsMenu->addAction("Enable CAT server");
     autoCatAction->setCheckable(true);
     autoCatAction->setChecked(CatSettings::enabled());
     connect(autoCatAction, &QAction::toggled, this, [this](bool on) {
@@ -705,7 +705,7 @@ void MainWindow::buildMenuBar()
         applyCatPortCount();
     });
 
-    auto* autoTciAction = settingsMenu->addAction("Autostart TCI with AetherSDR");
+    auto* autoTciAction = settingsMenu->addAction("Enable TCI server");
     autoTciAction->setCheckable(true);
     autoTciAction->setChecked(TciSettings::enabled());
     connect(autoTciAction, &QAction::toggled, this, [this](bool on) {
@@ -731,7 +731,7 @@ void MainWindow::buildMenuBar()
         DaxSettings::setAudioEnabled(false);
     }
 #else
-    auto* autoDaxAction = settingsMenu->addAction("Autostart DAX with AetherSDR");
+    auto* autoDaxAction = settingsMenu->addAction("Enable DAX");
     m_autoDaxAction = autoDaxAction;   // hidden by applyCapabilitiesToUi() on a
                                        // radio that reports no DAX streams
     autoDaxAction->setCheckable(true);

@@ -51,7 +51,7 @@ private:
     void buildDockedView(QWidget* page);
     void buildTableRows();
     void populateVfoCombo(QComboBox* combo, bool includeNone);
-    void applyRowToSettings(int row);
+    void persistListenerRows();
     void updateRowLocked(int row);
     // On a switch to a dual-VFO dialect, restore the row's VFO B selector to the
     // operator's saved value (preserved while a single-VFO dialect was active).

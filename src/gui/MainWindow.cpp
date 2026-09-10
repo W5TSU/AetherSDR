@@ -5930,20 +5930,16 @@ void MainWindow::applyCatPortCount()
     for (int i = 0; i < kCatPorts; ++i) {
         if (!catPort(i)) continue;
 
-        const bool haveSpec = i < specs.size();
-        const CatPortSpec spec = haveSpec ? specs.at(i) : CatPortSpec{};
+        const CatPortSpec spec = (i < specs.size()) ? specs.at(i) : CatPortSpec{};
         // A CAT port is a control channel, not a 1:1 mapping to a slice — don't
         // cap how many configured ports start by the radio's receiver count
         // (#3693). Receiver capacity bounds the VFO-letter choices per port
         // (catPortTargetCount() feeds the applet), not whether a port runs.
-        const bool shouldRun = masterOn && haveSpec && spec.enabled && (spec.port >= 1024);
+        const bool shouldRun = CatSettings::listenerRuns(spec, masterOn);
 
         if (shouldRun && !catPort(i)->isRunning()) {
             // Re-apply config in case dialect/VFO was changed while stopped
-            const CatDialect dial = (spec.dialect == "FlexCAT") ? CatDialect::FlexCAT
-                                  : (spec.dialect == "TS2000")  ? CatDialect::TS2000
-                                  : CatDialect::Rigctld;
-            catPort(i)->setDialect(dial);
+            catPort(i)->setDialect(catDialectFromToken(spec.dialect));
             catPort(i)->setVfoA(spec.vfoA);
             catPort(i)->setVfoB(spec.vfoB);
             catPort(i)->start(spec.port);

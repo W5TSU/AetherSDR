@@ -1,6 +1,7 @@
 #include "core/CatSettings.h"
 
 #include "core/AppSettings.h"
+#include "core/SettingsJsonUtil.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -17,25 +18,14 @@ const QString kRootKey = QStringLiteral("CatServer");
 // Historical rigctld default (matches the old CatPort_0 seed).
 constexpr quint16 kDefaultRigctldPort = 4532;
 
-bool asBool(const QJsonValue& v, bool fallback)
-{
-    if (v.isBool()) {
-        return v.toBool();
-    }
-    if (v.isString()) {
-        return v.toString() == QLatin1String("True");
-    }
-    return fallback;
-}
-
 CatPortSpec specFromJson(const QJsonObject& o)
 {
     CatPortSpec spec;
     spec.port = static_cast<quint16>(o.value(QStringLiteral("port")).toInt(0));
     spec.dialect = o.value(QStringLiteral("dialect")).toString(QStringLiteral("Rigctld"));
-    spec.enabled = asBool(o.value(QStringLiteral("enabled")), false);
-    spec.vfoA = o.value(QStringLiteral("vfoA")).toInt(-1);
-    spec.vfoB = o.value(QStringLiteral("vfoB")).toInt(-1);
+    spec.enabled = jsonBool(o.value(QStringLiteral("enabled")), false);
+    spec.vfoA = o.value(QStringLiteral("vfoA")).toInt(0);
+    spec.vfoB = o.value(QStringLiteral("vfoB")).toInt(CatPort::kVfoNone);
     return spec;
 }
 
@@ -50,7 +40,42 @@ QJsonObject specToJson(const CatPortSpec& spec)
     return o;
 }
 
+// The stored value of CatServer as a parsed object, or an empty object when the
+// key is absent or unparseable.
+QJsonObject storedObject()
+{
+    const QString raw = AppSettings::instance().value(kRootKey, QString{}).toString();
+    if (raw.isEmpty()) {
+        return {};
+    }
+    return QJsonDocument::fromJson(raw.toUtf8()).object();
+}
+
 } // namespace
+
+CatDialect catDialectFromToken(const QString& token)
+{
+    if (token == QLatin1String("FlexCAT")) {
+        return CatDialect::FlexCAT;
+    }
+    if (token == QLatin1String("TS2000")) {
+        return CatDialect::TS2000;
+    }
+    return CatDialect::Rigctld;
+}
+
+QString catDialectToken(CatDialect dialect)
+{
+    switch (dialect) {
+    case CatDialect::TS2000:
+        return QStringLiteral("TS2000");
+    case CatDialect::FlexCAT:
+        return QStringLiteral("FlexCAT");
+    case CatDialect::Rigctld:
+        break;
+    }
+    return QStringLiteral("Rigctld");
+}
 
 QVector<CatPortSpec> CatSettings::defaultPorts()
 {
@@ -59,19 +84,15 @@ QVector<CatPortSpec> CatSettings::defaultPorts()
     spec.dialect = QStringLiteral("Rigctld");
     spec.enabled = false;
     spec.vfoA = 0;
-    spec.vfoB = -1;
+    spec.vfoB = CatPort::kVfoNone;
     return {spec};
 }
 
 QJsonObject CatSettings::readObj()
 {
-    const QString json =
-        AppSettings::instance().value(kRootKey, QString{}).toString();
-    if (!json.isEmpty()) {
-        const QJsonObject o = QJsonDocument::fromJson(json.toUtf8()).object();
-        if (!o.isEmpty()) {
-            return o;
-        }
+    const QJsonObject stored = storedObject();
+    if (!stored.isEmpty()) {
+        return stored;
     }
     // No stored object (or unparseable): fall back to a view built from the
     // legacy flat keys, so a first read before migrate() still sees them.
@@ -108,7 +129,8 @@ QJsonObject CatSettings::buildFromLegacy()
             s.value(pfx + QStringLiteral("Enabled"), QStringLiteral("False")).toString()
             == QLatin1String("True");
         spec.vfoA = s.value(pfx + QStringLiteral("VfoA"), QStringLiteral("0")).toInt();
-        spec.vfoB = s.value(pfx + QStringLiteral("VfoB"), QStringLiteral("-1")).toInt();
+        spec.vfoB = s.value(pfx + QStringLiteral("VfoB"),
+                            QString::number(CatPort::kVfoNone)).toInt();
         ports.append(spec);
     }
 
@@ -135,20 +157,13 @@ QJsonObject CatSettings::buildFromLegacy()
 
 bool CatSettings::enabled()
 {
-    return asBool(readObj().value(QStringLiteral("enabled")), false);
+    return jsonBool(readObj().value(QStringLiteral("enabled")), false);
 }
 
 void CatSettings::setEnabled(bool on)
 {
     QJsonObject o = readObj();
     o[QStringLiteral("enabled")] = on;
-    if (!o.contains(QStringLiteral("ports"))) {
-        QJsonArray arr;
-        for (const CatPortSpec& spec : defaultPorts()) {
-            arr.append(specToJson(spec));
-        }
-        o[QStringLiteral("ports")] = arr;
-    }
     write(o);
 }
 
@@ -184,14 +199,23 @@ void CatSettings::setPorts(const QVector<CatPortSpec>& ports)
     write(o);
 }
 
+CatPortSpec CatSettings::portAt(int index)
+{
+    const QVector<CatPortSpec> p = ports();
+    return (index >= 0 && index < p.size()) ? p.at(index) : CatPortSpec{};
+}
+
+bool CatSettings::listenerRuns(const CatPortSpec& spec, bool masterEnabled)
+{
+    return masterEnabled && spec.enabled && spec.port >= 1024;
+}
+
 int CatSettings::activePortCount()
 {
-    if (!enabled()) {
-        return 0;
-    }
+    const bool master = enabled();
     int count = 0;
     for (const CatPortSpec& spec : ports()) {
-        if (spec.enabled && spec.port >= 1024) {
+        if (listenerRuns(spec, master)) {
             ++count;
         }
     }
@@ -200,8 +224,10 @@ int CatSettings::activePortCount()
 
 bool CatSettings::migrate()
 {
-    auto& s = AppSettings::instance();
-    if (!s.value(kRootKey, QString{}).toString().isEmpty()) {
+    // A valid, non-empty stored object means this service is already migrated.
+    // A corrupt value is treated as absent (readObj() falls back to legacy) and
+    // is replaced below.
+    if (!storedObject().isEmpty()) {
         return false;
     }
     const QJsonObject legacy = buildFromLegacy();

@@ -1,6 +1,7 @@
 #include "core/TciSettings.h"
 
 #include "core/AppSettings.h"
+#include "core/SettingsJsonUtil.h"
 
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -11,15 +12,15 @@ namespace {
 
 const QString kRootKey = QStringLiteral("TciServer");
 
-bool asBool(const QJsonValue& v, bool fallback)
+// The stored value of TciServer as a parsed object, or an empty object when the
+// key is absent or unparseable.
+QJsonObject storedObject()
 {
-    if (v.isBool()) {
-        return v.toBool();
+    const QString raw = AppSettings::instance().value(kRootKey, QString{}).toString();
+    if (raw.isEmpty()) {
+        return {};
     }
-    if (v.isString()) {
-        return v.toString() == QLatin1String("True");
-    }
-    return fallback;
+    return QJsonDocument::fromJson(raw.toUtf8()).object();
 }
 
 } // namespace
@@ -34,13 +35,9 @@ quint16 TciSettings::sanitizePort(int raw)
 
 QJsonObject TciSettings::readObj()
 {
-    const QString json =
-        AppSettings::instance().value(kRootKey, QString{}).toString();
-    if (!json.isEmpty()) {
-        const QJsonObject o = QJsonDocument::fromJson(json.toUtf8()).object();
-        if (!o.isEmpty()) {
-            return o;
-        }
+    const QJsonObject stored = storedObject();
+    if (!stored.isEmpty()) {
+        return stored;
     }
     return buildFromLegacy();
 }
@@ -72,7 +69,7 @@ QJsonObject TciSettings::buildFromLegacy()
 
 bool TciSettings::enabled()
 {
-    return asBool(readObj().value(QStringLiteral("enabled")), false);
+    return jsonBool(readObj().value(QStringLiteral("enabled")), false);
 }
 
 void TciSettings::setEnabled(bool on)
@@ -106,8 +103,7 @@ void TciSettings::setPort(quint16 port)
 
 bool TciSettings::migrate()
 {
-    auto& s = AppSettings::instance();
-    if (!s.value(kRootKey, QString{}).toString().isEmpty()) {
+    if (!storedObject().isEmpty()) {
         return false;
     }
     const QJsonObject legacy = buildFromLegacy();

@@ -14,6 +14,8 @@
 #include "core/CatSettings.h"
 
 #include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <cstdio>
 
@@ -44,6 +46,18 @@ int main(int argc, char** argv)
         check(!d.first().enabled, "default: listener disabled");
     }
     check(CatSettings::activePortCount() == 0, "default: nothing active");
+
+    // ---- setEnabled() does not persist a synthetic listener list ---------
+    CatSettings::setEnabled(true);
+    {
+        const QJsonObject stored = QJsonDocument::fromJson(
+            AppSettings::instance().value(QStringLiteral("CatServer")).toString().toUtf8())
+            .object();
+        check(stored.value(QStringLiteral("enabled")).toBool() && !stored.contains(QStringLiteral("ports")),
+              "setEnabled: writes only 'enabled', no phantom 'ports' array");
+    }
+    CatSettings::setEnabled(false);
+    AppSettings::instance().remove(QStringLiteral("CatServer"));
 
     // ---- round trip ----------------------------------------------------------
     {
@@ -92,9 +106,10 @@ int main(int argc, char** argv)
           "corrupt store: falls back to defaults, no crash");
 
     // ---- one-way migration from legacy flat keys -------------------------
+    // Leave the corrupt "CatServer" value from the previous step in place: a
+    // corrupt value must be treated as absent and replaced, not block migration.
     {
         auto& s = AppSettings::instance();
-        s.remove(QStringLiteral("CatServer"));       // pretend a fresh upgrade
         s.setValue(QStringLiteral("CatEnabled"), QStringLiteral("True"));
         s.setValue(QStringLiteral("CatPort_0_Port"), QStringLiteral("4532"));
         s.setValue(QStringLiteral("CatPort_0_Dialect"), QStringLiteral("Rigctld"));
@@ -111,7 +126,8 @@ int main(int argc, char** argv)
         }
         s.save();
     }
-    check(CatSettings::migrate(), "migration: writes when legacy keys present, nested absent");
+    check(CatSettings::migrate(),
+          "migration: writes past a corrupt stored value when legacy keys present");
     check(CatSettings::enabled(), "migration: master enable carried over");
     {
         const QVector<CatPortSpec> p = CatSettings::ports();
