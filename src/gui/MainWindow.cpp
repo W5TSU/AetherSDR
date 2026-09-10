@@ -3365,6 +3365,41 @@ void MainWindow::wireRadioSetupDialogSignals(RadioSetupDialog* dlg, const QStrin
     if (!dlg) return;
     connect(dlg, &RadioSetupDialog::txBandSettingsRequested,
             m_txBandAction, &QAction::trigger);
+    // EXTERNAL CONTROL pages (issue #17): the page already persisted the
+    // CatSettings / TciSettings / DaxSettings object; re-apply the running
+    // servers and sync the menu-item check state.
+    connect(dlg, &RadioSetupDialog::externalControlChanged, this, [this]() {
+        applyCatPortCount();
+        if (m_autoCatAction) m_autoCatAction->setChecked(CatSettings::enabled());
+#ifdef HAVE_WEBSOCKETS
+        if (tciServer()) {
+            const bool on = TciSettings::enabled();
+            const quint16 port = TciSettings::port();
+            if (on && !tciServer()->isRunning()) {
+                tciServer()->start(port);
+            } else if (!on && tciServer()->isRunning()) {
+                tciServer()->stop();
+            } else if (on && tciServer()->isRunning() && tciServer()->port() != port) {
+                tciServer()->stop();
+                tciServer()->start(port);
+            }
+            if (m_appletPanel && m_appletPanel->tciApplet())
+                m_appletPanel->tciApplet()->setTciEnabled(tciServer()->isRunning());
+        }
+        if (m_autoTciAction) m_autoTciAction->setChecked(TciSettings::enabled());
+#endif
+        if (m_radioModel.isConnected()) {
+            if (DaxSettings::audioEnabled()) {
+                if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
+                    m_appletPanel->daxApplet()->setDaxEnabled(true);
+            } else {
+                stopDax();
+                if (m_appletPanel && m_appletPanel->daxApplet())
+                    m_appletPanel->daxApplet()->setDaxEnabled(false);
+            }
+        }
+        if (m_autoDaxAction) m_autoDaxAction->setChecked(DaxSettings::audioEnabled());
+    });
     // Agent automation bridge toggle (#3646). The dialog already persisted
     // AutomationBridgeEnabled; here we act on it live. AETHER_AUTOMATION
     // force-enables at launch and the dialog disables the toggle in that

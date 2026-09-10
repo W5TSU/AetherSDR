@@ -332,6 +332,10 @@ void MainWindow::buildMenuBar()
     connect(usbCablesAction, &QAction::triggered, this, [this] {
         openRadioSetupPage(QStringLiteral("USB Cables"));
     });
+    auto* externalControlAction = settingsMenu->addAction("CAT && TCI...");
+    connect(externalControlAction, &QAction::triggered, this, [this] {
+        openRadioSetupPage(QStringLiteral("CAT"));
+    });
 #ifdef HAVE_MIDI
     auto* midiAction = settingsMenu->addAction("MIDI Mapping...");
     connect(midiAction, &QAction::triggered, this, [this] {
@@ -698,6 +702,7 @@ void MainWindow::buildMenuBar()
     // DaxSettings objects; these menu items are a thin front onto them and
     // will move into Radio Setup ▸ EXTERNAL CONTROL (issue #17).
     auto* autoCatAction = settingsMenu->addAction("Enable CAT server");
+    m_autoCatAction = autoCatAction;
     autoCatAction->setCheckable(true);
     autoCatAction->setChecked(CatSettings::enabled());
     connect(autoCatAction, &QAction::toggled, this, [this](bool on) {
@@ -706,6 +711,7 @@ void MainWindow::buildMenuBar()
     });
 
     auto* autoTciAction = settingsMenu->addAction("Enable TCI server");
+    m_autoTciAction = autoTciAction;
     autoTciAction->setCheckable(true);
     autoTciAction->setChecked(TciSettings::enabled());
     connect(autoTciAction, &QAction::toggled, this, [this](bool on) {
@@ -760,7 +766,7 @@ void MainWindow::buildMenuBar()
     for (auto* action : settingsMenu->actions()) {
         if (!action->isSeparator() && action != radioSetup && action != chooseRadio
             && action != networkAction && action != memoryAction && action != spotsAction
-            && action != usbCablesAction
+            && action != usbCablesAction && action != externalControlAction
 #ifdef HAVE_SERIALPORT
             && action != flexControlAction
 #endif

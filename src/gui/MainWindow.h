@@ -1469,10 +1469,14 @@ private:
     QMenu*           m_profilesMenu{nullptr};
     QAction*         m_txBandAction{nullptr};
     QMenu*           m_tuneInhibitMenu{nullptr};  // Flex rear-panel TX outputs — dimmed off-Flex (#5263)
-    // Settings ▸ "Autostart DAX with AetherSDR". Held so
-    // applyCapabilitiesToUi() can hide it on a radio with no DAX streams.
-    // Null on platforms without a DAX bridge, where the entry is never created.
+    // Settings ▸ "Enable DAX". Held so applyCapabilitiesToUi() can hide it on
+    // a radio with no DAX streams. Null on platforms without a DAX bridge,
+    // where the entry is never created.
     QAction*         m_autoDaxAction{nullptr};
+    // Settings ▸ "Enable CAT server" / "Enable TCI server" — held so the
+    // EXTERNAL CONTROL Radio Setup pages can keep the menu checkmarks in sync.
+    QAction*         m_autoCatAction{nullptr};
+    QAction*         m_autoTciAction{nullptr};
     // File ▸ Waveforms... and Settings ▸ multiFLEX... — held so
     // applyCapabilitiesToUi() can hide them on a radio with no installable
     // waveforms / no multi-client sessions.
