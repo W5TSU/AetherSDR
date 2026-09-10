@@ -6311,6 +6311,7 @@ void RadioModel::stageSessionModelsForReconnect()
     for (SliceModel* slice : m_slices) {
         if (slice) {
             slice->invalidateSquelchState();
+            slice->invalidateFrequencyObservation();
             m_staleSlices.insert(slice->sliceId(), slice);
         }
     }
@@ -7457,6 +7458,14 @@ void RadioModel::onDisconnected()
     emit otherClientsChanged(0, {});
     emit infoChanged();
     emit connectionStateChanged(false);
+    // After connectionStateChanged(false): protocol adapters detach and remove
+    // their slice resources on that edge, so invalidating here costs no
+    // republish of a resource that is about to be removed anyway.
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice) {
+            slice->invalidateFrequencyObservation();
+        }
+    }
     m_forcedDisconnectInProgress = false;
 
     if (m_wanConn) {
