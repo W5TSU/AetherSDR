@@ -831,6 +831,7 @@ set(CORE_SOURCES
     src/core/SpotCommandPolicy.cpp
     src/core/SpotModeResolver.cpp
     src/core/TciServer.cpp
+    src/core/TciPeerProcess.cpp
     src/core/TciProtocol.cpp
     src/core/TciRoutingState.cpp
     src/core/RadioCertification.cpp
@@ -2142,6 +2143,11 @@ target_link_libraries(aethercore PUBLIC
     aether_afskdemod
     ${CMAKE_DL_LIBS}   # NvidiaAfxFilter dlopen
 )
+if(WIN32)
+    # TciPeerProcess: GetExtendedTcpTable (iphlpapi) + the exe version
+    # resource (version) for the TCI client-identity log line (#5087).
+    target_link_libraries(aethercore PRIVATE iphlpapi version)
+endif()
 
 target_link_libraries(AetherSDR PRIVATE
     qgeoview           # gui/map only
