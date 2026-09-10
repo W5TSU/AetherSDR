@@ -46,6 +46,7 @@
 #include "WhatsNewDialog.h"
 #include "core/UpdateChecker.h"
 #include "core/AppSettings.h"
+#include "core/DaxSettings.h"
 #include "core/SpotModeResolver.h"
 #include "core/ThemeManager.h"
 #include "models/BandPlanManager.h"
@@ -328,6 +329,10 @@ void MainWindow::buildMenuBar()
     auto* usbCablesAction = settingsMenu->addAction("USB Cables...");
     connect(usbCablesAction, &QAction::triggered, this, [this] {
         openRadioSetupPage(QStringLiteral("USB Cables"));
+    });
+    auto* externalControlAction = settingsMenu->addAction("CAT && TCI...");
+    connect(externalControlAction, &QAction::triggered, this, [this] {
+        openRadioSetupPage(QStringLiteral("CAT"));
     });
 #ifdef HAVE_MIDI
     auto* midiAction = settingsMenu->addAction("MIDI Mapping...");
@@ -688,74 +693,15 @@ void MainWindow::buildMenuBar()
                 this, &MainWindow::enableNr2WithWisdom);
     }
 
-    settingsMenu->addSeparator();
-
-    // CAT: unified port manager (rigctld / TS-2000 / FlexCAT per port)
-    auto* autoCatAction = settingsMenu->addAction("Autostart CAT with AetherSDR");
-    autoCatAction->setCheckable(true);
-    autoCatAction->setChecked(
-        AppSettings::instance().value("CatEnabled", "False").toString() == "True");
-    connect(autoCatAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("CatEnabled", on ? "True" : "False");
-        s.save();
-        applyCatPortCount();
-    });
-
-    auto* autoTciAction = settingsMenu->addAction("Autostart TCI with AetherSDR");
-    autoTciAction->setCheckable(true);
-    autoTciAction->setChecked(
-        AppSettings::instance().value("AutoStartTCI", "False").toString() == "True");
-    connect(autoTciAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("AutoStartTCI", on ? "True" : "False");
-        s.save();
-#ifdef HAVE_WEBSOCKETS
-        if (tciServer()) {
-            if (on && !tciServer()->isRunning()) {
-                int port = s.value("TciPort", "50001").toInt();
-                tciServer()->start(static_cast<quint16>(port));
-            } else if (!on && tciServer()->isRunning()) {
-                tciServer()->stop();
-            }
-            if (m_appletPanel && m_appletPanel->tciApplet())
-                m_appletPanel->tciApplet()->setTciEnabled(on);
-        }
-#endif
-    });
-
+    // CAT / TCI / DAX enable moved to Radio Setup ▸ EXTERNAL CONTROL
+    // (issue #17). The old "Autostart … with AetherSDR" menu items are gone;
+    // the "CAT && TCI..." entry above deep-links to those pages.
 #if !defined(Q_OS_MAC) && !defined(HAVE_PIPEWIRE)
-    // DAX audio bridge requires macOS CoreAudio or Linux with PipeWire.
-    // Force off and omit the menu entry on platforms without a bridge (#1556).
-    {
-        auto& s = AppSettings::instance();
-        if (s.value("AutoStartDAX", "False").toString() != "False") {
-            s.setValue("AutoStartDAX", "False");
-            s.save();
-        }
+    // DAX audio bridge requires macOS CoreAudio or Linux with PipeWire; keep
+    // the setting forced off on platforms without a bridge (#1556).
+    if (DaxSettings::audioEnabled()) {
+        DaxSettings::setAudioEnabled(false);
     }
-#else
-    auto* autoDaxAction = settingsMenu->addAction("Autostart DAX with AetherSDR");
-    m_autoDaxAction = autoDaxAction;   // hidden by applyCapabilitiesToUi() on a
-                                       // radio that reports no DAX streams
-    autoDaxAction->setCheckable(true);
-    autoDaxAction->setChecked(
-        AppSettings::instance().value("AutoStartDAX", "False").toString() == "True");
-    connect(autoDaxAction, &QAction::toggled, this, [this](bool on) {
-        auto& s = AppSettings::instance();
-        s.setValue("AutoStartDAX", on ? "True" : "False");
-        s.save();
-        if (m_radioModel.isConnected()) {
-            if (on) {
-                if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
-                    m_appletPanel->daxApplet()->setDaxEnabled(true);
-            } else {
-                stopDax();
-                if (m_appletPanel && m_appletPanel->daxApplet())
-                    m_appletPanel->daxApplet()->setDaxEnabled(false);
-            }
-        }
-    });
 #endif
 
     // "Low-Latency DAX (FreeDV)" menu retired in v0.8.19 — the toggle
@@ -767,7 +713,7 @@ void MainWindow::buildMenuBar()
     for (auto* action : settingsMenu->actions()) {
         if (!action->isSeparator() && action != radioSetup && action != chooseRadio
             && action != networkAction && action != memoryAction && action != spotsAction
-            && action != usbCablesAction
+            && action != usbCablesAction && action != externalControlAction
 #ifdef HAVE_SERIALPORT
             && action != flexControlAction
 #endif
@@ -775,11 +721,6 @@ void MainWindow::buildMenuBar()
             && action != midiAction
 #endif
             && action != multiFlexAction
-            && action != autoCatAction
-            && action != autoTciAction
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
-            && action != autoDaxAction
-#endif
             ) {
             connect(action, &QAction::triggered, this, [this, action] {
                 statusBar()->showMessage(action->text().remove("...") + " — not yet implemented", 3000);

@@ -61,6 +61,7 @@
 #include "VfoWidget.h"
 #include "core/BandStackSettings.h"
 #include "core/AppSettings.h"
+#include "core/DaxSettings.h"
 #include "core/SpotCommandPolicy.h"
 #include "core/WaterfallRate.h"
 #include "core/SpotModeResolver.h"
@@ -2963,9 +2964,10 @@ void MainWindow::runProfileLoadRecoveryPass(const QString& profileType,
 #endif
 
     if (rearmDaxIq) {
-        auto& settings = AppSettings::instance();
+        const QVector<bool> iqEnabled = DaxSettings::iqChannelEnabled();
+        const QVector<int> iqRatesHz = DaxSettings::iqChannelRatesHz();
         for (int channel = 1; channel <= 4; ++channel) {
-            if (settings.value(QStringLiteral("DaxIqEnabled%1").arg(channel), "False").toString() != "True") {
+            if (!iqEnabled.value(channel - 1, false)) {
                 continue;
             }
             const DaxIqModel::IqStream stream = m_radioModel.daxIqModel().stream(channel);
@@ -2977,7 +2979,7 @@ void MainWindow::runProfileLoadRecoveryPass(const QString& profileType,
                 m_radioModel.daxIqModel().handleStreamRemoved(stream.streamId);
             }
             m_radioModel.daxIqModel().createStream(channel);
-            const int rate = settings.value(QStringLiteral("DaxIqRate%1").arg(channel), "48000").toInt();
+            const int rate = iqRatesHz.value(channel - 1, 48000);
             QTimer::singleShot(600, this, [this, channel, rate]() {
                 if (m_radioModel.isConnected()) {
                     m_radioModel.daxIqModel().setSampleRate(channel, rate);

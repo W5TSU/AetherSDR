@@ -2,6 +2,7 @@
 #include "MeterSlider.h"
 #include "SliceLabel.h"
 #include "core/AppSettings.h"
+#include "core/DaxSettings.h"
 #include "core/ThemeManager.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -22,12 +23,6 @@ constexpr const char* kSectionStyle =
     "QPushButton { background: #1a2a3a; border: 1px solid #205070;"
     "  border-radius: 3px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #c8d8e8; }"
     "QPushButton:hover { background: #204060; }";
-
-const QString kGreenToggle =
-    "QPushButton { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;"
-    " color: #c8d8e8; font-size: 11px; font-weight: bold; padding: 2px 8px; }"
-    "QPushButton:hover { background: #204060; }"
-    "QPushButton:checked { background: #006040; color: #00ff88; border: 1px solid #00a060; }";
 
 constexpr const char* kDimLabel =
     "QLabel { color: #8090a0; font-size: 11px; }";
@@ -76,35 +71,23 @@ void DaxApplet::buildUI()
 
     auto& settings = AppSettings::instance();
 
-    // DAX enable row
+    // Enable now lives in Radio Setup ▸ EXTERNAL CONTROL ▸ DAX (issue #17);
+    // this tile keeps only the operational gain sliders plus a link.
     auto* daxEnRow = new QHBoxLayout;
     daxEnRow->setContentsMargins(4, 2, 4, 2);
-    auto* daxLabel = new QLabel("DAX:");
+    auto* daxLabel = new QLabel("DAX gains");
     daxLabel->setStyleSheet(kDimLabel);
     daxEnRow->addWidget(daxLabel);
     daxEnRow->addStretch();
-    const bool daxAutoStart = settings.value("AutoStartDAX", "False").toString() == "True";
-    m_daxEnable = new QPushButton(daxAutoStart ? "Enabled" : "Disabled");
-    m_daxEnable->setCheckable(true);
-    m_daxEnable->setObjectName(QStringLiteral("daxEnable"));
-    m_daxEnable->setAccessibleName(tr("DAX enable"));
-    m_daxEnable->setAccessibleDescription(tr("Enable or disable DAX digital audio routing"));
-    m_daxEnable->setStyleSheet(kGreenToggle);
-    m_daxEnable->setFixedSize(76, 22);
-    daxEnRow->addWidget(m_daxEnable);
-
-    // DAX enable button → save setting + notify MainWindow
-    {
-        const QSignalBlocker b(m_daxEnable);
-        m_daxEnable->setChecked(daxAutoStart);
-    }
-    connect(m_daxEnable, &QPushButton::toggled, this, [this](bool on) {
-        m_daxEnable->setText(on ? "Enabled" : "Disabled");
-        auto& ss = AppSettings::instance();
-        ss.setValue("AutoStartDAX", on ? "True" : "False");
-        ss.save();
-        emit daxToggled(on);
-    });
+    auto* settingsBtn = new QPushButton(QStringLiteral("DAX settings…"));
+    settingsBtn->setFlat(true);
+    settingsBtn->setCursor(Qt::PointingHandCursor);
+    settingsBtn->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #4aa3df;"
+        " font-size: 10px; padding: 0; } QPushButton:hover { color: #7fc4f0; }");
+    connect(settingsBtn, &QPushButton::clicked, this,
+            &DaxApplet::openSettingsRequested);
+    daxEnRow->addWidget(settingsBtn);
 
     // RX channel meter/sliders (DAX 1-8)
     for (int i = 0; i < kChannels; ++i) {

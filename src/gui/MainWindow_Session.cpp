@@ -74,6 +74,8 @@
 #include "core/AppSettings.h"
 #include "core/AutomationBridgeSettings.h"
 #include "core/AutomationServer.h"
+#include "core/CatSettings.h"
+#include "core/ExternalControlMigration.h"
 
 #include <QStatusBar>
 #include "core/LogManager.h"
@@ -2100,8 +2102,11 @@ void MainWindow::wirePanLifecycle()
 void MainWindow::wireCatPorts()
 {
     // ── Unified CAT ports (kCatPorts slots, configured from settings) ───────────
-    // Migrate old dual-server settings to the new per-port schema on first run.
+    // Normalise the oldest dual-server keys into CatPort_<n>_*, then fold every
+    // legacy external-control flat key into the nested CatSettings/TciSettings/
+    // DaxSettings objects (one-way, legacy keys retained — Principle V/XIV).
     migrateCatSettings();
+    ExternalControlMigration::run();
     for (int i = 0; i < kCatPorts; ++i) {
         // Owned by the session — no QObject parent (parent-based deletion
         // would run after member destruction and recreate #2385).
@@ -2110,28 +2115,17 @@ void MainWindow::wireCatPorts()
         catPort(i)->setSymlinkPath(CatPort::defaultSymlinkPath(i));
         // Load persisted dialect and VFO config; port and enabled are read
         // in applyCatPortCount() just before starting.
-        const QString prefix = QString("CatPort_%1_").arg(i);
-        auto& s = AppSettings::instance();
-        QString d = s.value(prefix + "Dialect", "Rigctld").toString();
-        CatDialect dial = (d == "FlexCAT") ? CatDialect::FlexCAT
-                        : (d == "TS2000")  ? CatDialect::TS2000
-                        : CatDialect::Rigctld;
-        catPort(i)->setDialect(dial);
-        catPort(i)->setVfoA(s.value(prefix + "VfoA", "0").toInt());
-        catPort(i)->setVfoB(s.value(prefix + "VfoB", "-1").toInt());
+        const CatPortSpec spec = CatSettings::portAt(i);
+        catPort(i)->setDialect(catDialectFromToken(spec.dialect));
+        catPort(i)->setVfoA(spec.vfoA);
+        catPort(i)->setVfoB(spec.vfoB);
     }
 
-    // Wire the applet to the port objects
+    // Wire the status tile to the port objects; its "CAT settings…" button
+    // opens the Radio Setup ▸ EXTERNAL CONTROL ▸ CAT page (issue #17).
     m_appletPanel->catControlApplet()->setPorts(m_session->catPortsArray(), kCatPorts);
-    m_appletPanel->catControlApplet()->setMaxSlices(catPortTargetCount());
-
-    // Wire master enable toggle from the docked applet
-    connect(m_appletPanel->catControlApplet(), &CatControlApplet::enableChanged,
-            this, [this](bool) { applyCatPortCount(); });
-
-    // Per-port config changes in the floating table → re-apply port states
-    connect(m_appletPanel->catControlApplet(), &CatControlApplet::configChanged,
-            this, [this]() { applyCatPortCount(); });
+    connect(m_appletPanel->catControlApplet(), &CatControlApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("CAT")); });
 
     // Auto-start based on saved master enable
     applyCatPortCount();
@@ -2162,6 +2156,8 @@ void MainWindow::wireCatPorts()
     }
 
     // TCI applet sliders → TciServer gain setters
+    connect(m_appletPanel->tciApplet(), &TciApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("TCI")); });
     connect(m_appletPanel->tciApplet(), &TciApplet::tciRxGainChanged,
             tciServer(), &TciServer::setRxChannelGain);
     connect(m_appletPanel->tciApplet(), &TciApplet::tciTxGainChanged,
@@ -2479,16 +2475,11 @@ void MainWindow::wireDaxIq()
     }
 
 #if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
-    // DAX enable button in DaxApplet → start/stop DAX bridge
-    connect(m_appletPanel->daxApplet(), &DaxApplet::daxToggled,
-            this, [this](bool on) {
-        if (on) {
-            if (!startDax() && m_appletPanel && m_appletPanel->daxApplet())
-                m_appletPanel->daxApplet()->setDaxEnabled(false);
-        } else {
-            stopDax();
-        }
-    });
+    // DAX enable moved to Radio Setup ▸ EXTERNAL CONTROL ▸ DAX; the tile's
+    // "DAX settings…" button opens it. Start/stop is driven from
+    // wireRadioSetupDialogSignals() on externalControlChanged().
+    connect(m_appletPanel->daxApplet(), &DaxApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("DAX")); });
 #endif
 
 }

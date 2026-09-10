@@ -18,6 +18,7 @@
 #include "core/backends/rtl/RtlSdrBackend.h"    // RTL-SDR backend (family "rtl")
 #endif
 #include "core/AppSettings.h"
+#include "core/TciSettings.h"
 #include "core/RadioStateMemory.h"  // RFC #4603 typed restore handoff
 #include "core/ShutdownTrace.h"
 #include "core/CwTrace.h"
@@ -8946,7 +8947,7 @@ bool RadioModel::handleRemoteAudioRxStreamStatus(const QString& object,
 void RadioModel::logRemoteAudioRxSummary(const QString& reason) const
 {
     const bool pcAudio = AppSettings::instance().value("PcAudioEnabled", "True").toString() == "True";
-    const bool autoStartTci = AppSettings::instance().value("AutoStartTCI", "False").toString() == "True";
+    const bool autoStartTci = TciSettings::enabled();
     const bool ownerKnown = m_rxAudio.clientHandle != 0;
     const bool ownedByUs = ownerKnown && m_rxAudio.clientHandle == clientHandle();
 

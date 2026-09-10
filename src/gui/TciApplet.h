@@ -35,13 +35,15 @@ public:
     // (#4854 review)
     void setMaxDaxChannels(int n);
 
-    // Sync Enable button state (called by MainWindow on autostart)
+    // Refresh the status line (called by MainWindow when the server state
+    // changes). Enable/port now live in Radio Setup ▸ EXTERNAL CONTROL.
     void setTciEnabled(bool on);
     void setTciRxLevel(int channel, float rms);  // channel 1-4
     void setTciTxLevel(float rms);
 
 signals:
-    void tciToggled(bool on);
+    // The "TCI settings…" button was clicked — MainWindow opens Radio Setup.
+    void openSettingsRequested();
     void tciRxGainChanged(int channel, float gain);  // 1-4, 0.0–1.0
     void tciTxGainChanged(float gain);
     // 0=Clip, 1=NaNGuard, 2=Measure — selected via right-click on TX slider.
@@ -56,8 +58,6 @@ private:
     TciServer*  m_tciServer{nullptr};
     int m_maxDaxChannels{kChannels};  // radio slice capacity (FlexLib table)
 
-    QPushButton* m_tciEnable{nullptr};
-    QLineEdit*   m_tciPort{nullptr};
     QLabel*      m_tciStatus{nullptr};
 
     QWidget*     m_rxRow[kChannels]{};  // per-channel row container — hidden to gate to maxSlices()

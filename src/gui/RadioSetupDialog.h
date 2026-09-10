@@ -92,6 +92,10 @@ signals:
     // PeripheralSettings before this fires; MainWindow re-reads it and
     // pushes the new scale into VkampApplet::setVariant().
     void vkampVariantChanged();
+    // Fired when the user edits any EXTERNAL CONTROL page (CAT / TCI / DAX /
+    // DAX-IQ). The CatSettings / TciSettings / DaxSettings object is persisted
+    // before this fires; MainWindow re-applies the running servers.
+    void externalControlChanged();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -140,6 +144,19 @@ private:
     // OS keychain, lookups cached 7 days by CallsignLookupService.
     QWidget* buildQrzTab();
 
+    // EXTERNAL CONTROL category (issue #17): one page per outward-facing
+    // server, each editing the matching nested-JSON settings object.
+    QWidget* buildCatServerTab();
+    QWidget* buildTciServerTab();
+    QWidget* buildDaxServerTab();
+    QWidget* buildDaxIqServerTab();
+    // Read every row of m_catPortsTable back into CatSettings and emit
+    // externalControlChanged().
+    void     commitCatPortsTable();
+    // Repopulate m_catPortsTable from CatSettings::ports() and enable/disable
+    // the "Add CAT port" button at the CatSettings::kMaxPorts cap.
+    void     reloadCatPortsTable();
+
 public:
     // Public so MainWindow can refresh the table from outside this
     // dialog when an accept-after-mismatch flow rewrites the pin
@@ -155,6 +172,11 @@ private:
     // SmartLink Pinned Certs UI handle (#2951). Forward-declared at
     // file scope above; full type comes from <QTableWidget> in the cpp.
     QTableWidget* m_pinnedCertsTable{nullptr};
+
+    // EXTERNAL CONTROL ▸ CAT listener table (issue #17).
+    QTableWidget* m_catPortsTable{nullptr};
+    QPushButton*  m_catAddPortBtn{nullptr};
+    bool          m_catPortsLoading{false};   // guard table-signal reentry
 
     RadioModel*  m_model;
     AudioEngine* m_audio{nullptr};

@@ -8,6 +8,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### External control moved to Radio Setup (#17)
+
+- **CAT, TCI, DAX and DAX-IQ configuration now lives in Radio Setup ▸
+  EXTERNAL CONTROL**, one page per server. Each service has a single
+  "Enable `<service>`" control that starts it now and comes back on the
+  next radio connection; the three "Autostart … with AetherSDR" items are
+  gone from the Settings menu, replaced by a **CAT & TCI…** entry that
+  opens the pages. The CAT page presents listeners as an add/remove list
+  (capped at eight).
+- The **CAT Control**, **TCI Server** and **DAX Audio** drawer tiles are
+  now status readouts. TCI and DAX keep their gain meters/sliders; the
+  port fields and enable toggles are gone, each with a "… settings…"
+  link to its page.
+- Existing settings **migrate automatically** on first launch into the
+  nested `CatServer` / `TciServer` / `DaxServer` objects (Constitution
+  Principle V/XIV); the old flat keys are left in place for downgrade
+  safety.
+- New `docs/external-control-review.md` — an inventory of how AetherSDR
+  talks to WSJT-X, JS8Call, loggers, HamClock and others, and where the
+  gaps are.
+
 ## [v26.9.6] — 2026-09-08
 
 ### Synced with upstream v26.9.2 · Windows code signing

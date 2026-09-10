@@ -7,6 +7,9 @@
 #include "models/XvtrPolicy.h"
 #include "core/AppSettings.h"
 #include "core/AutomationBridgeSettings.h"
+#include "core/CatSettings.h"
+#include "core/DaxSettings.h"
+#include "core/TciSettings.h"
 #include "core/backends/hl2/Hl2Discovery.h"   // HL2 custom-nickname settings key
 #include "core/backends/hl2/Hl2FreqCal.h"     // manual frequency calibration (Calibration page)
 #include "core/backends/hl2/Hl2MiscOptionsSettings.h" // Hermes Lite 2 misc-options page
@@ -873,6 +876,28 @@ RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
 #ifdef HAVE_SERIALPORT
     addPage(hardwareCategory, QStringLiteral("Serial & Controllers"),
         QStringLiteral("serial flexcontrol midi controller knob com port baud ptt cw"), [this] { return buildSerialTab(); });
+#endif
+
+    // ── EXTERNAL CONTROL (issue #17) ─────────────────────────────────────────
+    auto* externalCategory = addCategory(QStringLiteral("EXTERNAL CONTROL"));
+    addPage(externalCategory, QStringLiteral("CAT"),
+        QStringLiteral("cat rigctld hamlib ts-2000 flexcat wsjt-x js8call serial pty "
+                       "dialect vfo external control autostart enable"),
+        [this] { return buildCatServerTab(); });
+#ifdef HAVE_WEBSOCKETS
+    addPage(externalCategory, QStringLiteral("TCI"),
+        QStringLiteral("tci expertsdr websocket wsjt-x jtdx log4om skimmer "
+                       "external control autostart enable port"),
+        [this] { return buildTciServerTab(); });
+#endif
+#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+    addPage(externalCategory, QStringLiteral("DAX"),
+        QStringLiteral("dax virtual audio wsjt-x fldigi vara pipewire pulseaudio "
+                       "external control autostart enable"),
+        [this] { return buildDaxServerTab(); });
+    addPage(externalCategory, QStringLiteral("DAX-IQ"),
+        QStringLiteral("dax-iq iq skimmer wsjt-x fldigi external control rate channel"),
+        [this] { return buildDaxIqServerTab(); });
 #endif
 
     m_navigation->expandAll();
@@ -2355,6 +2380,326 @@ QWidget* RadioSetupDialog::buildGpsTab()
     vbox->addStretch(1);
     return page;
 }
+
+// ── EXTERNAL CONTROL pages (issue #17) ───────────────────────────────────────
+
+namespace {
+
+QCheckBox* makeEnableCheck(const QString& text, bool checked)
+{
+    auto* c = new QCheckBox(text);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(
+        c, "QCheckBox { color: #c8d8e8; font-size: 12px; spacing: 8px; }"
+           + kCheckBoxIndicator);
+    c->setChecked(checked);
+    return c;
+}
+
+} // namespace
+
+QWidget* RadioSetupDialog::buildCatServerTab()
+{
+    auto* page = new QWidget;
+    auto* vbox = new QVBoxLayout(page);
+    vbox->setSpacing(10);
+
+    auto* intro = new QLabel(
+        "AetherSDR emulates a rig so WSJT-X, JS8Call, a logger or HamClock can "
+        "control it. Each listener is one TCP port (and, on Linux/macOS, a "
+        "virtual serial device) speaking one protocol dialect.");
+    intro->setWordWrap(true);
+    intro->setStyleSheet(kLabelStyle);
+    vbox->addWidget(intro);
+
+    auto* enable = makeEnableCheck(QStringLiteral("Enable CAT server"),
+                                   CatSettings::enabled());
+    connect(enable, &QCheckBox::toggled, this, [this](bool on) {
+        CatSettings::setEnabled(on);
+        emit externalControlChanged();
+    });
+    vbox->addWidget(enable);
+
+    m_catPortsTable = new QTableWidget(0, 5, page);
+    m_catPortsTable->setHorizontalHeaderLabels(
+        {"Enabled", "Port", "Dialect", "VFO A", "VFO B"});
+    m_catPortsTable->verticalHeader()->setVisible(false);
+    m_catPortsTable->horizontalHeader()->setStretchLastSection(true);
+    m_catPortsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_catPortsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_catPortsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    vbox->addWidget(m_catPortsTable, 1);
+
+    auto* btnRow = new QHBoxLayout;
+    m_catAddPortBtn = new QPushButton(QStringLiteral("Add CAT port"));
+    auto* removeBtn = new QPushButton(QStringLiteral("Remove selected"));
+    btnRow->addWidget(m_catAddPortBtn);
+    btnRow->addWidget(removeBtn);
+    btnRow->addStretch(1);
+    vbox->addLayout(btnRow);
+
+    connect(m_catAddPortBtn, &QPushButton::clicked, this, [this] {
+        QVector<CatPortSpec> ports = CatSettings::ports();
+        if (ports.size() >= CatSettings::kMaxPorts) {
+            return;
+        }
+        CatPortSpec spec;
+        spec.port = ports.isEmpty() ? 4532 : 0;
+        ports.append(spec);
+        CatSettings::setPorts(ports);
+        emit externalControlChanged();
+        reloadCatPortsTable();
+    });
+    connect(removeBtn, &QPushButton::clicked, this, [this] {
+        const int row = m_catPortsTable->currentRow();
+        if (row < 0) {
+            return;
+        }
+        QVector<CatPortSpec> ports = CatSettings::ports();
+        if (row < ports.size()) {
+            ports.removeAt(row);
+            CatSettings::setPorts(ports);
+            emit externalControlChanged();
+            reloadCatPortsTable();
+        }
+    });
+
+    auto* seeAlso = new QLabel(
+        "See also: MQTT… (Settings menu) and the agent automation bridge "
+        "(Radio Setup ▸ Network).");
+    seeAlso->setWordWrap(true);
+    seeAlso->setStyleSheet("QLabel { color: #8090a0; font-size: 11px; }");
+    vbox->addWidget(seeAlso);
+
+    reloadCatPortsTable();
+    return page;
+}
+
+void RadioSetupDialog::reloadCatPortsTable()
+{
+    if (!m_catPortsTable) {
+        return;
+    }
+    m_catPortsLoading = true;
+    const QVector<CatPortSpec> ports = CatSettings::ports();
+    m_catPortsTable->setRowCount(ports.size());
+    for (int i = 0; i < ports.size(); ++i) {
+        const CatPortSpec& spec = ports.at(i);
+
+        auto* enabled = new QCheckBox;
+        enabled->setChecked(spec.enabled);
+        connect(enabled, &QCheckBox::toggled, this, [this] { commitCatPortsTable(); });
+        auto* enWrap = new QWidget;
+        auto* enLay = new QHBoxLayout(enWrap);
+        enLay->setContentsMargins(0, 0, 0, 0);
+        enLay->setAlignment(Qt::AlignCenter);
+        enLay->addWidget(enabled);
+        m_catPortsTable->setCellWidget(i, 0, enWrap);
+
+        auto* port = new QSpinBox;
+        port->setRange(0, 65535);
+        port->setSpecialValueText(QStringLiteral("—"));
+        port->setValue(spec.port);
+        connect(port, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this] { commitCatPortsTable(); });
+        m_catPortsTable->setCellWidget(i, 1, port);
+
+        auto* dialect = new QComboBox;
+        dialect->addItem(QStringLiteral("Rigctld"),
+                         static_cast<int>(CatDialect::Rigctld));
+        dialect->addItem(QStringLiteral("TS-2000"),
+                         static_cast<int>(CatDialect::TS2000));
+        dialect->addItem(QStringLiteral("Flex"),
+                         static_cast<int>(CatDialect::FlexCAT));
+        dialect->setCurrentIndex(qMax(0, dialect->findData(
+            static_cast<int>(catDialectFromToken(spec.dialect)))));
+        connect(dialect, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this] { commitCatPortsTable(); });
+        m_catPortsTable->setCellWidget(i, 2, dialect);
+
+        auto* vfoA = new QSpinBox;
+        vfoA->setRange(-1, 7);
+        vfoA->setSpecialValueText(QStringLiteral("none"));
+        vfoA->setValue(spec.vfoA);
+        connect(vfoA, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this] { commitCatPortsTable(); });
+        m_catPortsTable->setCellWidget(i, 3, vfoA);
+
+        auto* vfoB = new QSpinBox;
+        vfoB->setRange(-1, 7);
+        vfoB->setSpecialValueText(QStringLiteral("none"));
+        vfoB->setValue(spec.vfoB);
+        connect(vfoB, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this] { commitCatPortsTable(); });
+        m_catPortsTable->setCellWidget(i, 4, vfoB);
+    }
+    if (m_catAddPortBtn) {
+        m_catAddPortBtn->setEnabled(ports.size() < CatSettings::kMaxPorts);
+    }
+    m_catPortsLoading = false;
+}
+
+void RadioSetupDialog::commitCatPortsTable()
+{
+    if (!m_catPortsTable || m_catPortsLoading) {
+        return;
+    }
+    QVector<CatPortSpec> ports;
+    for (int i = 0; i < m_catPortsTable->rowCount(); ++i) {
+        CatPortSpec spec;
+        if (auto* wrap = m_catPortsTable->cellWidget(i, 0)) {
+            if (auto* cb = wrap->findChild<QCheckBox*>()) {
+                spec.enabled = cb->isChecked();
+            }
+        }
+        if (auto* sb = qobject_cast<QSpinBox*>(m_catPortsTable->cellWidget(i, 1))) {
+            spec.port = static_cast<quint16>(sb->value());
+        }
+        if (auto* cb = qobject_cast<QComboBox*>(m_catPortsTable->cellWidget(i, 2))) {
+            spec.dialect = catDialectToken(
+                static_cast<CatDialect>(cb->currentData().toInt()));
+        }
+        if (auto* sb = qobject_cast<QSpinBox*>(m_catPortsTable->cellWidget(i, 3))) {
+            spec.vfoA = sb->value();
+        }
+        if (auto* sb = qobject_cast<QSpinBox*>(m_catPortsTable->cellWidget(i, 4))) {
+            spec.vfoB = sb->value();
+        }
+        ports.append(spec);
+    }
+    CatSettings::setPorts(ports);
+    emit externalControlChanged();
+}
+
+QWidget* RadioSetupDialog::buildTciServerTab()
+{
+    auto* page = new QWidget;
+    auto* vbox = new QVBoxLayout(page);
+    vbox->setSpacing(10);
+
+    auto* intro = new QLabel(
+        "The TCI (ExpertSDR) WebSocket server exposes VFO, mode, PTT, audio, IQ "
+        "and spots over one connection — used by WSJT-X/JTDX in TCI mode, "
+        "Log4OM, skimmers and StreamDeck tools.");
+    intro->setWordWrap(true);
+    intro->setStyleSheet(kLabelStyle);
+    vbox->addWidget(intro);
+
+    auto* enable = makeEnableCheck(QStringLiteral("Enable TCI server"),
+                                   TciSettings::enabled());
+    vbox->addWidget(enable);
+
+    auto* portRow = new QHBoxLayout;
+    auto* portLbl = new QLabel(QStringLiteral("Port:"));
+    portLbl->setStyleSheet(kLabelStyle);
+    auto* port = new QSpinBox;
+    port->setRange(1024, 65535);
+    port->setValue(TciSettings::port());
+    portRow->addWidget(portLbl);
+    portRow->addWidget(port);
+    portRow->addStretch(1);
+    vbox->addLayout(portRow);
+
+    connect(enable, &QCheckBox::toggled, this, [this, port](bool on) {
+        TciSettings::setPort(static_cast<quint16>(port->value()));
+        TciSettings::setEnabled(on);
+        emit externalControlChanged();
+    });
+    connect(port, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int v) {
+        TciSettings::setPort(static_cast<quint16>(v));
+        emit externalControlChanged();
+    });
+
+    vbox->addStretch(1);
+    return page;
+}
+
+QWidget* RadioSetupDialog::buildDaxServerTab()
+{
+    auto* page = new QWidget;
+    auto* vbox = new QVBoxLayout(page);
+    vbox->setSpacing(10);
+
+    auto* intro = new QLabel(
+        "DAX presents the receiver passband to WSJT-X, fldigi, VARA and other "
+        "digimode apps as a virtual audio device, and accepts their transmit "
+        "audio back.");
+    intro->setWordWrap(true);
+    intro->setStyleSheet(kLabelStyle);
+    vbox->addWidget(intro);
+
+    auto* enable = makeEnableCheck(QStringLiteral("Enable DAX"),
+                                   DaxSettings::audioEnabled());
+    connect(enable, &QCheckBox::toggled, this, [this](bool on) {
+        DaxSettings::setAudioEnabled(on);
+        emit externalControlChanged();
+    });
+    vbox->addWidget(enable);
+
+    vbox->addStretch(1);
+    return page;
+}
+
+QWidget* RadioSetupDialog::buildDaxIqServerTab()
+{
+    auto* page = new QWidget;
+    auto* vbox = new QVBoxLayout(page);
+    vbox->setSpacing(10);
+
+    auto* intro = new QLabel(
+        "DAX-IQ streams up to four raw I/Q channels (24–192 kHz) for skimmers "
+        "and wide decoders.");
+    intro->setWordWrap(true);
+    intro->setStyleSheet(kLabelStyle);
+    vbox->addWidget(intro);
+
+    const QVector<int> rates = DaxSettings::iqChannelRatesHz();
+    const QVector<bool> enabled = DaxSettings::iqChannelEnabled();
+
+    auto* grid = new QGridLayout;
+    grid->setSpacing(8);
+    grid->addWidget(new QLabel(QStringLiteral("Channel")), 0, 0);
+    grid->addWidget(new QLabel(QStringLiteral("Sample rate")), 0, 1);
+    grid->addWidget(new QLabel(QStringLiteral("Enabled")), 0, 2);
+
+    for (int i = 0; i < DaxSettings::kIqChannels; ++i) {
+        auto* chLbl = new QLabel(QString("IQ %1").arg(i + 1));
+        chLbl->setStyleSheet(kLabelStyle);
+        grid->addWidget(chLbl, i + 1, 0);
+
+        auto* rate = new QComboBox;
+        for (int hz : {24000, 48000, 96000, 192000}) {
+            rate->addItem(QString("%1k").arg(hz / 1000), hz);
+        }
+        rate->setCurrentIndex(qMax(0, rate->findData(rates.value(i, 48000))));
+        connect(rate, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this, i, rate](int) {
+            QVector<int> r = DaxSettings::iqChannelRatesHz();
+            if (i < r.size()) {
+                r[i] = rate->currentData().toInt();
+                DaxSettings::setIqChannelRatesHz(r);
+                emit externalControlChanged();
+            }
+        });
+        grid->addWidget(rate, i + 1, 1);
+
+        auto* en = new QCheckBox;
+        en->setChecked(enabled.value(i, false));
+        connect(en, &QCheckBox::toggled, this, [this, i](bool on) {
+            QVector<bool> e = DaxSettings::iqChannelEnabled();
+            if (i < e.size()) {
+                e[i] = on;
+                DaxSettings::setIqChannelEnabled(e);
+                emit externalControlChanged();
+            }
+        });
+        grid->addWidget(en, i + 1, 2);
+    }
+    vbox->addLayout(grid);
+    vbox->addStretch(1);
+    return page;
+}
+
 QWidget* RadioSetupDialog::buildTxTab()
 {
     auto& tx = m_model->transmitModel();

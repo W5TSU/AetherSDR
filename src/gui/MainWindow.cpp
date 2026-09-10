@@ -234,6 +234,11 @@
 #include <QMediaDevices>
 #include "core/AppSettings.h"
 #include "core/AutomationServer.h"
+#include "core/CatSettings.h"
+#include "core/DaxSettings.h"
+#include "core/ExternalControlMigration.h"
+#include "core/TciSettings.h"
+#include "models/DaxIqModel.h"
 #include "core/SpotCommandPolicy.h"
 #include "core/SpotModeResolver.h"
 #ifdef HAVE_RADE
@@ -3361,6 +3366,60 @@ void MainWindow::wireRadioSetupDialogSignals(RadioSetupDialog* dlg, const QStrin
     if (!dlg) return;
     connect(dlg, &RadioSetupDialog::txBandSettingsRequested,
             m_txBandAction, &QAction::trigger);
+    // EXTERNAL CONTROL pages (issue #17): the page already persisted the
+    // CatSettings / TciSettings / DaxSettings object; re-apply the running
+    // servers and sync the drawer status tiles.
+    connect(dlg, &RadioSetupDialog::externalControlChanged, this, [this]() {
+        applyCatPortCount();
+#ifdef HAVE_WEBSOCKETS
+        if (tciServer()) {
+            const bool on = TciSettings::enabled();
+            const quint16 port = TciSettings::port();
+            if (on && !tciServer()->isRunning()) {
+                tciServer()->start(port);
+            } else if (!on && tciServer()->isRunning()) {
+                tciServer()->stop();
+            } else if (on && tciServer()->isRunning() && tciServer()->port() != port) {
+                tciServer()->stop();
+                tciServer()->start(port);
+            }
+            if (m_appletPanel && m_appletPanel->tciApplet())
+                m_appletPanel->tciApplet()->setTciEnabled(tciServer()->isRunning());
+        }
+#endif
+        if (m_radioModel.isConnected()) {
+            if (DaxSettings::audioEnabled()) {
+                if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
+                    m_appletPanel->daxApplet()->setDaxEnabled(true);
+            } else {
+                stopDax();
+                if (m_appletPanel && m_appletPanel->daxApplet())
+                    m_appletPanel->daxApplet()->setDaxEnabled(false);
+            }
+
+            // DAX-IQ: reconcile live streams to the per-channel enable/rate the
+            // Radio Setup page just persisted (issue #17).
+            const QVector<bool> iqEnabled = DaxSettings::iqChannelEnabled();
+            const QVector<int>  iqRatesHz = DaxSettings::iqChannelRatesHz();
+            for (int ch = 1; ch <= DaxSettings::kIqChannels; ++ch) {
+                const bool want = iqEnabled.value(ch - 1, false);
+                const auto stream = m_radioModel.daxIqModel().stream(ch);
+                if (want && !stream.exists) {
+                    m_radioModel.daxIqModel().createStream(ch);
+                    const int rate = iqRatesHz.value(ch - 1, 48000);
+                    QTimer::singleShot(600, this, [this, ch, rate] {
+                        if (m_radioModel.isConnected())
+                            m_radioModel.daxIqModel().setSampleRate(ch, rate);
+                    });
+                } else if (!want && stream.exists) {
+                    m_radioModel.daxIqModel().removeStream(ch);
+                } else if (want && stream.exists
+                           && stream.sampleRate != iqRatesHz.value(ch - 1, 48000)) {
+                    m_radioModel.daxIqModel().setSampleRate(ch, iqRatesHz.value(ch - 1, 48000));
+                }
+            }
+        }
+    });
     // Agent automation bridge toggle (#3646). The dialog already persisted
     // AutomationBridgeEnabled; here we act on it live. AETHER_AUTOMATION
     // force-enables at launch and the dialog disables the toggle in that
@@ -5919,32 +5978,26 @@ int MainWindow::catPortTargetCount() const
 
 void MainWindow::applyCatPortCount()
 {
-    auto& s = AppSettings::instance();
-    const bool masterOn = s.value("CatEnabled", "False").toString() == "True";
+    const bool masterOn = CatSettings::enabled();
     const int  target   = catPortTargetCount();  // bounds applet VFO letters, not port count
+    const QVector<CatPortSpec> specs = CatSettings::ports();
 
     for (int i = 0; i < kCatPorts; ++i) {
         if (!catPort(i)) continue;
 
-        const QString prefix = QString("CatPort_%1_").arg(i);
-        const bool portEnabled = s.value(prefix + "Enabled", "False").toString() == "True";
-        const int  portNum     = s.value(prefix + "Port", "").toInt();
+        const CatPortSpec spec = (i < specs.size()) ? specs.at(i) : CatPortSpec{};
         // A CAT port is a control channel, not a 1:1 mapping to a slice — don't
         // cap how many configured ports start by the radio's receiver count
         // (#3693). Receiver capacity bounds the VFO-letter choices per port
         // (catPortTargetCount() feeds the applet), not whether a port runs.
-        const bool shouldRun   = masterOn && portEnabled && (portNum >= 1024);
+        const bool shouldRun = CatSettings::listenerRuns(spec, masterOn);
 
         if (shouldRun && !catPort(i)->isRunning()) {
             // Re-apply config in case dialect/VFO was changed while stopped
-            QString d = s.value(prefix + "Dialect", "Rigctld").toString();
-            CatDialect dial = (d == "FlexCAT") ? CatDialect::FlexCAT
-                            : (d == "TS2000")  ? CatDialect::TS2000
-                            : CatDialect::Rigctld;
-            catPort(i)->setDialect(dial);
-            catPort(i)->setVfoA(s.value(prefix + "VfoA", "0").toInt());
-            catPort(i)->setVfoB(s.value(prefix + "VfoB", "-1").toInt());
-            catPort(i)->start(static_cast<quint16>(portNum));
+            catPort(i)->setDialect(catDialectFromToken(spec.dialect));
+            catPort(i)->setVfoA(spec.vfoA);
+            catPort(i)->setVfoB(spec.vfoB);
+            catPort(i)->start(spec.port);
         } else if (!shouldRun && catPort(i)->isRunning()) {
             catPort(i)->stop();
         }
@@ -6189,10 +6242,10 @@ void MainWindow::onConnectionStateChanged(bool connected)
         applyCatPortCount();
 #ifdef HAVE_WEBSOCKETS
         // Auto-start TCI WebSocket server if enabled
-        if (AppSettings::instance().value("AutoStartTCI", "False").toString() == "True") {
+        if (TciSettings::enabled()) {
             if (tciServer() && !tciServer()->isRunning()) {
-                int tciPort = AppSettings::instance().value("TciPort", "50001").toInt();
-                tciServer()->start(static_cast<quint16>(tciPort));
+                const quint16 tciPort = TciSettings::port();
+                tciServer()->start(tciPort);
                 qDebug() << "AutoStart: TCI on port" << tciPort
                          << " running=" << tciServer()->isRunning();
             }
@@ -6243,7 +6296,7 @@ void MainWindow::onConnectionStateChanged(bool connected)
         // Starting too early causes our mic_selection=PC and dax=1 to be
         // overridden by RadioModel's own setup, and DAX stream IDs won't
         // be registered in PanadapterStream yet.
-        if (AppSettings::instance().value("AutoStartDAX", "False").toString() == "True") {
+        if (DaxSettings::audioEnabled()) {
             QTimer::singleShot(3000, this, [this]() {
                 if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
                     m_appletPanel->daxApplet()->setDaxEnabled(true);
@@ -7400,9 +7453,6 @@ void MainWindow::applyCapabilitiesToUi(bool connected, const RadioCapabilities& 
     }
     for (VfoWidget* vfo : findChildren<VfoWidget*>())
         vfo->setDaxVisible(dax);
-    if (m_autoDaxAction) {
-        m_autoDaxAction->setVisible(dax);
-    }
 
     // ── Extended DSP: the NRS / RNN / NRF buttons in every slice VFO ────────
     //
