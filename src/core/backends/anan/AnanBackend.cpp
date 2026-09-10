@@ -335,6 +335,7 @@ RadioCapabilities AnanBackend::capabilities() const
     c.hasAgcThreshold = true; // Host receiver DSP implements threshold/off gain.
     c.manufacturer = QStringLiteral("Apache Labs");
     c.model = QStringLiteral("ANAN-G2");
+    c.canCreateSlices = false;
     c.maxSlices = 1;
     c.maxPanadapters = 1;
     for (const int ksps : kDdc0RatesKsps)

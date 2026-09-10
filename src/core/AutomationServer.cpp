@@ -7164,14 +7164,23 @@ QJsonObject AutomationServer::doSlice(const QString& action, const QString& arg)
             return err(msg + QStringLiteral(")"));
         }
 
-        bool okF = false;
-        const double freq = arg.toDouble(&okF);
-        if (okF && freq > 0)
-            radio->addSliceOnPan(radio->panId(), freq);   // specific frequency
-        else
-            radio->addSlice();                            // default (TX freq / active pan)
+        // An omitted value asks for default placement; an explicit value gets
+        // the same parse/range rule as every other MHz-taking verb, so a
+        // malformed one is refused rather than becoming a default-frequency
+        // request — see refuseUntunableMhz().
+        double freq = 0.0;
+        if (!arg.isEmpty()) {
+            if (const auto refusal = refuseUntunableMhz(QStringLiteral("slice add"), arg, freq))
+                return *refusal;
+        }
+        const bool accepted = arg.isEmpty()
+            ? radio->addSlice()
+            : radio->addSliceOnPan(radio->panId(), freq);
+        if (!accepted) {
+            return err(QStringLiteral("refused: radio did not accept slice creation"));
+        }
         return QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("slice"), QStringLiteral("add")},
-                           {QStringLiteral("freq"), okF ? QJsonValue(freq) : QJsonValue()},
+                           {QStringLiteral("freq"), arg.isEmpty() ? QJsonValue() : QJsonValue(freq)},
                            {QStringLiteral("requested"), true},
                            {QStringLiteral("sliceCount"), radio->slices().size()}};
     }
@@ -7184,12 +7193,9 @@ QJsonObject AutomationServer::doSlice(const QString& action, const QString& arg)
             return err(QStringLiteral("refused: cannot remove the last slice"));
         if (!radio->slice(id))
             return err(QStringLiteral("no slice with id ") + arg);
-        // `slice remove` is Flex wire text and no seam verb exists for it yet
-        // — refuse rather than report ok for a command the model will drop
-        // (M0, #5263).
-        if (!radio->hasCommandPlane())
-            return err(QStringLiteral("not supported on this radio (no Flex command plane)"));
-        radio->sendCommand(QStringLiteral("slice remove %1").arg(id));
+        if (!radio->removeSlice(id)) {
+            return err(QStringLiteral("refused: radio did not accept slice removal"));
+        }
         return QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("slice"), QStringLiteral("remove")},
                            {QStringLiteral("id"), id}};
     }
