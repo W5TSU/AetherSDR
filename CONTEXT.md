@@ -100,6 +100,43 @@ The HPSDR Protocol-1 request/acknowledge pattern — a single outstanding
 request, no transaction id, matched by echo. Model it as a state machine, not
 as RPC.
 
+## External control and integration
+
+**CAT server** (a.k.a. **CAT port**):
+AetherSDR *emulating a rig* over a text protocol so that other software drives
+it — a rigctld / Kenwood TS-2000 / FlexRadio-ZZ *server*. This is the inverse
+of the ham-radio convention, where "CAT" is the program that controls a rig.
+There is no CAT *client* here: control of the real hardware goes through the
+backend wire protocol, not a CAT layer. One **CAT port** is one listener (TCP
+socket plus, on non-Windows, a PTY / virtual serial device) with its own
+dialect and VFO-A/VFO-B slice assignment.
+_Avoid_: "CAT client", "rig control" (as a name for this — it controls nothing).
+
+**TCI server**:
+AetherSDR exposing radio state *and* audio/IQ/spots over the ExpertSDR **TCI**
+WebSocket protocol, again as the provider that other software connects to.
+There is no TCI client mode.
+
+**Applet**:
+A dockable, floatable tile registered in `AppletPanel`, toggled from the button
+drawer at the bottom of the control panel, and filed under a catalog category.
+The user-facing unit of optional UI. Not a plugin — there is no dynamic module
+loader.
+_Avoid_: "module", "plugin", "widget" (for this specific thing).
+
+**Status tile** (vs a configuring applet):
+An applet that displays live state — enabled indicator, port, client count,
+activity — and carries only *operational* controls (e.g. TCI/DAX gain), never
+*configuration*. Configuration for these services lives in Radio Setup, not in
+the drawer. The split exists so the drawer is for operating, not setup.
+
+**Enable `<service>`** (retired: **Autostart**):
+Each external-control service (CAT, TCI, DAX, DAX-IQ) has exactly one
+persistent on/off. It starts/stops the service immediately and is re-applied on
+the next **radio connect**. The older split — a session "Enabled" toggle plus a
+separate persistent "Autostart …" menu item — is gone; "Autostart" is not a
+term this project uses any more.
+
 ## Certification
 
 **Certified by effect**:
