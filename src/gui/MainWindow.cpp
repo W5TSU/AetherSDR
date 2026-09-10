@@ -3388,6 +3388,9 @@ void MainWindow::wireRadioSetupDialogSignals(RadioSetupDialog* dlg, const QStrin
         }
 #endif
         if (m_radioModel.isConnected()) {
+#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+            // The DAX audio bridge exists only on macOS CoreAudio / Linux
+            // PipeWire; on Windows DAX is SmartSDR's own driver (no start/stop).
             if (DaxSettings::audioEnabled()) {
                 if (startDax() && m_appletPanel && m_appletPanel->daxApplet())
                     m_appletPanel->daxApplet()->setDaxEnabled(true);
@@ -3396,6 +3399,7 @@ void MainWindow::wireRadioSetupDialogSignals(RadioSetupDialog* dlg, const QStrin
                 if (m_appletPanel && m_appletPanel->daxApplet())
                     m_appletPanel->daxApplet()->setDaxEnabled(false);
             }
+#endif
 
             // DAX-IQ: reconcile live streams to the per-channel enable/rate the
             // Radio Setup page just persisted (issue #17).
