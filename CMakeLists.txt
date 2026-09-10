@@ -825,6 +825,10 @@ set(CORE_SOURCES
     src/core/MqttAntennaAlias.cpp
     src/core/MqttSettings.cpp
     src/core/AutomationBridgeSettings.cpp
+    src/core/CatSettings.cpp  # owned config object, "CatServer" root key (Principle V)
+    src/core/TciSettings.cpp  # owned config object, "TciServer" root key (Principle V)
+    src/core/DaxSettings.cpp  # owned config object, "DaxServer" root key (Principle V)
+    src/core/ExternalControlMigration.cpp  # one-way flat-key -> nested migration
     src/core/SpotCommandPolicy.cpp
     src/core/SpotModeResolver.cpp
     src/core/TciServer.cpp

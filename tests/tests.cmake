@@ -3534,6 +3534,26 @@ target_include_directories(anan_settings_test PRIVATE src tests)
 target_link_libraries(anan_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME anan_settings_test COMMAND anan_settings_test)
 
+add_executable(cat_settings_test tests/cat_settings_test.cpp)
+target_include_directories(cat_settings_test PRIVATE src tests)
+target_link_libraries(cat_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME cat_settings_test COMMAND cat_settings_test)
+
+add_executable(tci_settings_test tests/tci_settings_test.cpp)
+target_include_directories(tci_settings_test PRIVATE src tests)
+target_link_libraries(tci_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME tci_settings_test COMMAND tci_settings_test)
+
+add_executable(dax_settings_test tests/dax_settings_test.cpp)
+target_include_directories(dax_settings_test PRIVATE src tests)
+target_link_libraries(dax_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME dax_settings_test COMMAND dax_settings_test)
+
+add_executable(external_control_migration_test tests/external_control_migration_test.cpp)
+target_include_directories(external_control_migration_test PRIVATE src tests)
+target_link_libraries(external_control_migration_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME external_control_migration_test COMMAND external_control_migration_test)
+
 add_executable(icom_family_test tests/icom_family_test.cpp)
 target_include_directories(icom_family_test PRIVATE src)
 target_link_libraries(icom_family_test PRIVATE aethercore Qt6::Core Qt6::Test)
