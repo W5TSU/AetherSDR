@@ -181,6 +181,13 @@ add_dependencies(aetherd_discovery_startup_test aetherd)
 add_test(NAME aetherd_discovery_startup_test
     COMMAND aetherd_discovery_startup_test $<TARGET_FILE:aetherd>)
 
+# Async bridge-start outcome policy (#4181): socket-free, the bind result is
+# injected as a bool — see AutomationBridgeSettings::recordStartOutcome().
+add_executable(automation_bridge_start_outcome_test tests/automation_bridge_start_outcome_test.cpp)
+target_include_directories(automation_bridge_start_outcome_test PRIVATE src tests)
+target_link_libraries(automation_bridge_start_outcome_test PRIVATE aethercore Qt6::Core)
+add_test(NAME automation_bridge_start_outcome_test COMMAND automation_bridge_start_outcome_test)
+
 # ── Digital-voice / D-STAR tests ─────────────────────────────────────────────
 # Guarded by the same condition as the aether-dv-waveform target they exercise.
 # DIGITAL_VOICE_WAVEFORM_DIR, CRDV_DIR and crdv::crdv are all defined by the time
@@ -4737,6 +4744,7 @@ set(AETHER_SETTINGS_CONSUMERS
     icom_control_profile_test
     control_resource_service_test
     aetherd_discovery_startup_test
+    automation_bridge_start_outcome_test
     slice_label_test
     ulanzi_mapping_migration_test
     theme_manager_test
