@@ -2121,17 +2121,11 @@ void MainWindow::wireCatPorts()
         catPort(i)->setVfoB(spec.vfoB);
     }
 
-    // Wire the applet to the port objects
+    // Wire the status tile to the port objects; its "CAT settings…" button
+    // opens the Radio Setup ▸ EXTERNAL CONTROL ▸ CAT page (issue #17).
     m_appletPanel->catControlApplet()->setPorts(m_session->catPortsArray(), kCatPorts);
-    m_appletPanel->catControlApplet()->setMaxSlices(catPortTargetCount());
-
-    // Wire master enable toggle from the docked applet
-    connect(m_appletPanel->catControlApplet(), &CatControlApplet::enableChanged,
-            this, [this](bool) { applyCatPortCount(); });
-
-    // Per-port config changes in the floating table → re-apply port states
-    connect(m_appletPanel->catControlApplet(), &CatControlApplet::configChanged,
-            this, [this]() { applyCatPortCount(); });
+    connect(m_appletPanel->catControlApplet(), &CatControlApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("CAT")); });
 
     // Auto-start based on saved master enable
     applyCatPortCount();
@@ -2162,6 +2156,8 @@ void MainWindow::wireCatPorts()
     }
 
     // TCI applet sliders → TciServer gain setters
+    connect(m_appletPanel->tciApplet(), &TciApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("TCI")); });
     connect(m_appletPanel->tciApplet(), &TciApplet::tciRxGainChanged,
             tciServer(), &TciServer::setRxChannelGain);
     connect(m_appletPanel->tciApplet(), &TciApplet::tciTxGainChanged,
@@ -2479,16 +2475,11 @@ void MainWindow::wireDaxIq()
     }
 
 #if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
-    // DAX enable button in DaxApplet → start/stop DAX bridge
-    connect(m_appletPanel->daxApplet(), &DaxApplet::daxToggled,
-            this, [this](bool on) {
-        if (on) {
-            if (!startDax() && m_appletPanel && m_appletPanel->daxApplet())
-                m_appletPanel->daxApplet()->setDaxEnabled(false);
-        } else {
-            stopDax();
-        }
-    });
+    // DAX enable moved to Radio Setup ▸ EXTERNAL CONTROL ▸ DAX; the tile's
+    // "DAX settings…" button opens it. Start/stop is driven from
+    // wireRadioSetupDialogSignals() on externalControlChanged().
+    connect(m_appletPanel->daxApplet(), &DaxApplet::openSettingsRequested,
+            this, [this] { openRadioSetupPage(QStringLiteral("DAX")); });
 #endif
 
 }

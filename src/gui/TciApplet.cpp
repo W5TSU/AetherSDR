@@ -33,18 +33,8 @@ constexpr const char* kSectionStyle =
     "  border-radius: 3px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #c8d8e8; }"
     "QPushButton:hover { background: #204060; }";
 
-const QString kGreenToggle =
-    "QPushButton { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;"
-    " color: #c8d8e8; font-size: 11px; font-weight: bold; padding: 2px 8px; }"
-    "QPushButton:hover { background: #204060; }"
-    "QPushButton:checked { background: #006040; color: #00ff88; border: 1px solid #00a060; }";
-
 constexpr const char* kDimLabel =
     "QLabel { color: #8090a0; font-size: 11px; }";
-
-constexpr const char* kInsetStyle =
-    "QLineEdit { font-size: 10px; background: #0a0a18; border: 1px solid #1e2e3e;"
-    " border-radius: 3px; padding: 0px 2px; color: #c8d8e8; }";
 
 const QString kStatusLabel = "QLabel { color: #506070; font-size: 11px; }";
 
@@ -198,86 +188,30 @@ void TciApplet::buildUI()
         outer->addLayout(row);
     }
 
-    // Port + Enable row (bottom)
-    auto* enableRow = new QHBoxLayout;
-    enableRow->setContentsMargins(4, 2, 4, 2);
-    enableRow->setSpacing(4);
-
-    auto* portLabel = new QLabel("Port:");
-    portLabel->setStyleSheet(kDimLabel);
-    enableRow->addWidget(portLabel);
-
-    m_tciPort = new QLineEdit(QString::number(TciSettings::port()));
-    m_tciPort->setStyleSheet(kInsetStyle);
-    m_tciPort->setFixedWidth(46);
-    m_tciPort->setAlignment(Qt::AlignCenter);
-    m_tciPort->setObjectName(QStringLiteral("tciPort"));
-    m_tciPort->setAccessibleName(tr("TCI port"));
-    m_tciPort->setAccessibleDescription(tr("TCP port the TCI server listens on"));
-    enableRow->addWidget(m_tciPort);
+    // Status row (bottom). Enable + port live in Radio Setup ▸ EXTERNAL
+    // CONTROL ▸ TCI now (issue #17); this row is read-only plus a link.
+    auto* statusRow = new QHBoxLayout;
+    statusRow->setContentsMargins(4, 2, 4, 2);
+    statusRow->setSpacing(6);
 
     m_tciStatus = new QLabel("(stopped)");
     AetherSDR::ThemeManager::instance().applyStyleSheet(m_tciStatus, "QLabel { color: {{color.background.3}}; font-size: 10px; }");
-    enableRow->addWidget(m_tciStatus, 1);
+    statusRow->addWidget(m_tciStatus, 1);
 
-    const bool tciAutoStart = TciSettings::enabled();
-    m_tciEnable = new QPushButton(tciAutoStart ? "Enabled" : "Disabled");
-    m_tciEnable->setCheckable(true);
-    m_tciEnable->setObjectName(QStringLiteral("tciEnable"));
-    m_tciEnable->setAccessibleName(tr("TCI server enable"));
-    m_tciEnable->setAccessibleDescription(tr("Start or stop the TCI server"));
-    m_tciEnable->setStyleSheet(kGreenToggle);
-    m_tciEnable->setFixedSize(76, 22);
-    {
-        QSignalBlocker b(m_tciEnable);
-        m_tciEnable->setChecked(tciAutoStart);
-    }
-    enableRow->addWidget(m_tciEnable);
+    auto* settingsBtn = new QPushButton(QStringLiteral("TCI settings…"));
+    settingsBtn->setFlat(true);
+    settingsBtn->setCursor(Qt::PointingHandCursor);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(settingsBtn,
+        "QPushButton { background: transparent; border: none; "
+        "color: {{color.accent}}; font-size: 10px; padding: 0; }"
+        "QPushButton:hover { color: {{color.accent.bright}}; }");
+    connect(settingsBtn, &QPushButton::clicked, this,
+            &TciApplet::openSettingsRequested);
+    statusRow->addWidget(settingsBtn);
 
-    outer->addLayout(enableRow);
+    outer->addLayout(statusRow);
 
-    connect(m_tciPort, &QLineEdit::editingFinished, this, [this]() {
-        const quint16 port = TciSettings::sanitizePort(m_tciPort->text().toInt());
-        if (QString::number(port) != m_tciPort->text()) {
-            m_tciPort->setText(QString::number(port));
-        }
-        TciSettings::setPort(port);
-        // If running, restart with new port
-        if (m_tciEnable->isChecked() && m_tciServer) {
-            m_tciServer->stop();
-            m_tciServer->start(port);
-            updateTciStatus();
-        }
-    });
-
-    connect(m_tciEnable, &QPushButton::toggled, this, [this](bool on) {
-        m_tciEnable->setText(on ? "Enabled" : "Disabled");
-        const quint16 port = TciSettings::sanitizePort(m_tciPort->text().toInt());
-        TciSettings::setPort(port);
-        TciSettings::setEnabled(on);
-        if (m_tciServer) {
-            if (on) {
-                m_tciServer->start(port);
-                // If bind failed, snap the button back off so the UI doesn't
-                // claim the server is enabled while isRunning() is false.
-                if (!m_tciServer->isRunning() && m_tciEnable) {
-                    QSignalBlocker b(m_tciEnable);
-                    m_tciEnable->setChecked(false);
-                    m_tciEnable->setText("Disabled");
-                    m_tciStatus->setText("(port in use)");
-                    m_tciStatus->setStyleSheet(
-                        "QLabel { color: #cc3333; font-size: 10px; }");
-                    TciSettings::setEnabled(false);
-                    emit tciToggled(false);
-                    return;
-                }
-            } else {
-                m_tciServer->stop();
-            }
-            updateTciStatus();
-        }
-        emit tciToggled(on);
-    });
+    updateTciStatus();
 }
 
 void TciApplet::updateTciStatus()
@@ -408,11 +342,7 @@ void TciApplet::setMaxDaxChannels(int n)
 void TciApplet::setTciEnabled(bool on)
 {
 #ifdef HAVE_WEBSOCKETS
-    if (m_tciEnable) {
-        QSignalBlocker b(m_tciEnable);
-        m_tciEnable->setChecked(on);
-        m_tciEnable->setText(on ? "Enabled" : "Disabled");
-    }
+    (void)on;
     updateTciStatus();
 #else
     (void)on;

@@ -35,7 +35,8 @@ public:
     void setDaxTxLevel(float rms);
 
 signals:
-    void daxToggled(bool on);
+    // The "DAX settings…" button was clicked — MainWindow opens Radio Setup.
+    void openSettingsRequested();
     void daxRxGainChanged(int channel, float gain);  // 1-8, 0.0–1.0
     void daxTxGainChanged(float gain);
 

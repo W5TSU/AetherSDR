@@ -971,21 +971,7 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
     }
 
     m_catControlApplet = new CatControlApplet;
-    {
-        auto catEntry = makeEntry("CAT", "CAT Control", m_catControlApplet, false, m_drawer, m_drawerLayout);
-        m_appletOrder.append(catEntry);
-        // Switch the applet between its simple (docked) and full-table (floating) views.
-        if (auto* c = qobject_cast<ContainerWidget*>(catEntry.widget)) {
-            connect(c, &ContainerWidget::dockModeChanged, m_catControlApplet,
-                    [this](ContainerWidget::DockMode mode) {
-                        // Canvas = the full-table floating view (see the
-                        // VU handler above): the operator sized the rect,
-                        // so the simple rail page wastes it.
-                        m_catControlApplet->setFloating(
-                            mode != ContainerWidget::DockMode::PanelDocked);
-                    });
-        }
-    }
+    m_appletOrder.append(makeEntry("CAT", "CAT Control", m_catControlApplet, false, m_drawer, m_drawerLayout));
 
     m_daxApplet = new DaxApplet;
     m_appletOrder.append(makeEntry("DAX", "DAX Audio", m_daxApplet, false, m_drawer, m_drawerLayout));
