@@ -131,11 +131,11 @@ activity — and carries only *operational* controls (e.g. TCI/DAX gain), never
 the drawer. The split exists so the drawer is for operating, not setup.
 
 **Enable `<service>`** (retired: **Autostart**):
-Each external-control service (CAT, TCI, DAX, DAX-IQ) has exactly one
-persistent on/off. It starts/stops the service immediately and is re-applied on
-the next **radio connect**. The older split — a session "Enabled" toggle plus a
-separate persistent "Autostart …" menu item — is gone; "Autostart" is not a
-term this project uses any more.
+CAT, TCI and DAX each have exactly one persistent on/off (DAX-IQ has one per
+channel). It starts/stops the service immediately and is re-applied on the next
+**radio connect**. The older split — a session "Enabled" toggle plus a separate
+persistent "Autostart …" menu item — is gone; "Autostart" is not a term this
+project uses any more. All four live on Radio Setup ▸ EXTERNAL CONTROL.
 
 ## Certification
 
