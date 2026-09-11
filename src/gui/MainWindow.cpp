@@ -241,7 +241,6 @@
 #include "core/DaxSettings.h"
 #include "core/ExternalControlMigration.h"
 #include "core/TciSettings.h"
-#include "models/DaxIqModel.h"
 #include "core/SpotCommandPolicy.h"
 #include "core/SpotModeResolver.h"
 #ifdef HAVE_RADE
