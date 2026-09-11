@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.7] — 2026-09-11
+
 ### External control moved to Radio Setup (#17)
 
 - **CAT, TCI, DAX and DAX-IQ configuration now lives in Radio Setup ▸
