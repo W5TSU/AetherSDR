@@ -12,7 +12,7 @@
 | Windows .exe | GPG detached signature (`.asc`) |
 | Windows .zip | GPG detached signature (`.asc`) |
 | Source archive | GPG detached signature (`.asc`) |
-| macOS DMG / .pkg | not currently produced by this fork |
+| macOS DMG / .pkg | unsigned, not notarized (no Apple Developer ID cert on this fork); not covered by SHA256SUMS.txt |
 
 Each release also includes a GPG-signed `SHA256SUMS.txt` covering all
 Linux, Windows and source artifacts.
@@ -68,8 +68,19 @@ sudo apt install gnupg
 
 ## macOS Users
 
-This fork does not currently publish macOS DMG or `.pkg` artifacts. Build
-from source, or use the upstream `aethersdr/AetherSDR` macOS release.
+This fork has no Apple Developer ID certificate configured, so the DMG
+and the DAX driver `.pkg` inside it are built unsigned and un-notarized
+— `macos-dmg.yml` detects the missing signing secrets and skips every
+signing/notarization step rather than failing the build. macOS Gatekeeper
+will refuse to open an unsigned app with a plain double-click. To run it:
+
+```
+# Right-click (or Control-click) AetherSDR.app → Open → Open,
+# instead of double-clicking. Only needed the first time.
+```
+
+Alternatively, build from source, or use the upstream
+`aethersdr/AetherSDR` macOS release, which is signed and notarized.
 
 ## Windows Users
 
