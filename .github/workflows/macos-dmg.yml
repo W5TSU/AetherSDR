@@ -51,6 +51,40 @@ jobs:
         with:
           clean: false  # skip post-run cleanup — the aqt Qt tree is large
 
+      # Whether the six Apple signing/notarization secrets are all present.
+      # Same reasoning as windows-installer.yml's "Resolve signing method":
+      # resolved in a run: step rather than gating each downstream step
+      # directly on `secrets.APPLE_CERT_BASE64 != ''`, because a step's own
+      # secret-backed `env:` is not visible to any other step's `if:`, and
+      # GitHub evaluates `if:` before that step even starts. This fork (and
+      # any other secret-less fork or PR-triggered run) carries none of
+      # these, so every signing/notarization step below is skipped and the
+      # DMG ships unsigned, un-notarized — degrade-gracefully, the same
+      # contract windows-installer.yml already has via ./.github/actions/
+      # sign-windows. All six are required together: a signed-but-
+      # unnotarized app, or a notarized app built from an unsigned PKG, is a
+      # broken half-state Gatekeeper rejects anyway, so partial credentials
+      # get treated the same as none.
+      - name: Resolve signing method
+        id: signing
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_INSTALLER_CERT_BASE64: ${{ secrets.APPLE_INSTALLER_CERT_BASE64 }}
+          APPLE_INSTALLER_CERT_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          on=false
+          if [ -n "$APPLE_CERT_BASE64" ] && [ -n "$APPLE_CERT_PASSWORD" ] && \
+             [ -n "$APPLE_INSTALLER_CERT_BASE64" ] && [ -n "$APPLE_INSTALLER_CERT_PASSWORD" ] && \
+             [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            on=true
+          fi
+          echo "configured=$on" >> "$GITHUB_OUTPUT"
+          echo "signing configured: $on"
+
       - name: Install dependencies via Homebrew
         run: |
           # No Homebrew Qt on either leg. Apple Silicon used to take qt@6 here,
@@ -514,6 +548,7 @@ jobs:
             build/AetherSDR.app "${{ matrix.deploy_target }}"
 
       - name: Import code signing certificate
+        if: steps.signing.outputs.configured == 'true'
         env:
           APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -532,6 +567,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
 
       - name: Code sign application
+        if: steps.signing.outputs.configured == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -581,6 +617,7 @@ jobs:
           echo "Code signing verified successfully"
 
       - name: Code sign DAX driver
+        if: steps.signing.outputs.configured == 'true'
         run: |
           codesign --force --options runtime --timestamp \
             --sign "Developer ID Application" \
@@ -590,6 +627,7 @@ jobs:
           echo "DAX driver signing verified"
 
       - name: Import installer certificate for PKG signing
+        if: steps.signing.outputs.configured == 'true'
         env:
           APPLE_INSTALLER_CERT_BASE64: ${{ secrets.APPLE_INSTALLER_CERT_BASE64 }}
           APPLE_INSTALLER_CERT_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERT_PASSWORD }}
@@ -632,13 +670,22 @@ jobs:
           sed -i '' 's/^          //' distribution.xml
           sed -i '' "s/__VERSION__/$APP_VERSION/g" distribution.xml
 
+          # Signed only when the installer certificate was imported above
+          # (gated on the same steps.signing.outputs.configured check). An
+          # unsigned product archive still installs fine locally; it just
+          # carries the same Gatekeeper prompt as the rest of an unsigned
+          # DMG rather than a silent, trusted install.
+          SIGN_ARGS=()
+          if [ "${{ steps.signing.outputs.configured }}" = "true" ]; then
+            SIGN_ARGS=(--sign "Developer ID Installer")
+          fi
           productbuild \
             --distribution distribution.xml \
             --package-path . \
-            --sign "Developer ID Installer" \
+            "${SIGN_ARGS[@]}" \
             "AetherSDR DAX Drivers.pkg"
 
-          echo "DAX driver PKG v${APP_VERSION} built and signed"
+          echo "DAX driver PKG v${APP_VERSION} built ($([ "${{ steps.signing.outputs.configured }}" = "true" ] && echo signed || echo unsigned))"
 
       - name: Create DMG
         run: |
@@ -685,6 +732,7 @@ jobs:
           fi
 
       - name: Sign DMG
+        if: steps.signing.outputs.configured == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -693,6 +741,7 @@ jobs:
             AetherSDR-${{ github.ref_name }}-macOS-${{ matrix.label }}.dmg
 
       - name: Notarize DMG
+        if: steps.signing.outputs.configured == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
