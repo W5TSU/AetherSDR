@@ -1,4 +1,5 @@
 #include "CityLightsSource.h"
+#include "MapProviderNetworkAccessManager.h"
 #include "SolarTerminator.h"
 
 #include <array>
@@ -23,7 +24,7 @@ constexpr double kNativePixelMetres = kRadarWorldWidth / 65536.0;
 }
 
 CityLightsSource::CityLightsSource(QObject* parent, QNetworkAccessManager* network)
-    : QObject(parent), m_network(network != nullptr ? network : new QNetworkAccessManager(this))
+    : QObject(parent), m_network(network != nullptr ? network : new MapProviderNetworkAccessManager(this))
 {
     if (network == nullptr) {
         auto* cache = new QNetworkDiskCache(m_network);
@@ -33,6 +34,8 @@ CityLightsSource::CityLightsSource(QObject* parent, QNetworkAccessManager* netwo
         m_network->setCache(cache);
     }
     m_debounce.setSingleShot(true);
+    // Coarse timers may fire early and miss the provider cooldown plus jitter.
+    m_debounce.setTimerType(Qt::PreciseTimer);
     connect(&m_debounce, &QTimer::timeout, this, &CityLightsSource::requestImage);
     m_clock.setInterval(60 * 1000);
     connect(&m_clock, &QTimer::timeout, this, &CityLightsSource::renderImage);
@@ -283,7 +286,7 @@ void CityLightsSource::requestImage()
         m_reply = nullptr;
         auto* watcher = new QFutureWatcher<QImage>(this);
         connect(watcher, &QFutureWatcher<QImage>::finished, this,
-                [this, watcher, requested, generation] {
+                [this, watcher, requested, generation, valid] {
             const QImage image = watcher->result();
             watcher->deleteLater();
             if (generation != m_generation || !m_enabled) {
@@ -292,11 +295,12 @@ void CityLightsSource::requestImage()
             if (image.isNull()) {
                 // A provider can return an XML error with HTTP 200. Do not
                 // replay that cached error on every retry for this viewport.
-                if (m_network->cache() != nullptr) {
+                // Transport errors and local denials contain no image to judge.
+                if (valid && m_network->cache() != nullptr) {
                     m_network->cache()->remove(imageUrl(requested));
                 }
                 emit statusChanged(tr("City lights unavailable — retrying"));
-                m_debounce.start(30000);
+                m_debounce.start(MapProviderRetryPolicy::kConsumerRetryMs);
                 return;
             }
             m_loaded = requested;

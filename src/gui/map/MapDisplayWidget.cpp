@@ -1,4 +1,5 @@
 #include "MapDisplayWidget.h"
+#include "MapProviderNetworkAccessManager.h"
 #include "CityLightsSource.h"
 #include "GlobeMapView.h"
 #include "WeatherRadarPlaybackTimeline.h"
@@ -135,11 +136,13 @@ MapDisplayWidget::MapDisplayWidget(QWidget* parent)
     connect(m_weatherRadarPlaybackTimer, &QTimer::timeout,
             this, &MapDisplayWidget::updateWeatherRadarPlayback);
     m_weatherRadarRebufferTimer = new QTimer(this);
+    // Recovery must not fire early inside the provider cooldown plus jitter.
+    m_weatherRadarRebufferTimer->setTimerType(Qt::PreciseTimer);
     m_weatherRadarRebufferTimer->setSingleShot(true);
     m_weatherRadarRebufferTimer->setInterval(350);
     connect(m_weatherRadarRebufferTimer, &QTimer::timeout,
             this, &MapDisplayWidget::rebufferWeatherRadarPlayback);
-    m_weatherRadarNetwork = new QNetworkAccessManager(this);
+    m_weatherRadarNetwork = new MapProviderNetworkAccessManager(this);
     m_weatherRadarNetwork->setTransferTimeout(kTimelineTimeoutMs);
     m_weatherRadarLoadingLabel = new QLabel(this);
     m_weatherRadarLoadingLabel->setObjectName(QStringLiteral("pskReporterWeatherRadarLoading"));
@@ -304,6 +307,24 @@ void MapDisplayWidget::setCityLightsFaintLights(int percent)
         m_globeView->setCityLightsFaintLights(m_cityLightsFaintLights);
     } else {
         m_cityLightsSource->setFaintLights(m_cityLightsFaintLights);
+    }
+}
+
+void MapDisplayWidget::setBasemapDarkEnabled(bool enabled)
+{
+    m_basemapDarkEnabled = enabled;
+    m_flatView->setBasemapDarkEnabled(enabled);
+    if (m_globeView != nullptr) {
+        m_globeView->setBasemapDarkEnabled(enabled);
+    }
+}
+
+void MapDisplayWidget::setBasemapBrightness(int percent)
+{
+    m_basemapBrightness = std::clamp(percent, 20, 100);
+    m_flatView->setBasemapBrightness(m_basemapBrightness);
+    if (m_globeView != nullptr) {
+        m_globeView->setBasemapBrightness(m_basemapBrightness);
     }
 }
 
@@ -512,7 +533,7 @@ void MapDisplayWidget::retryWeatherRadarHistory()
     emit weatherRadarTimelineLoadingChanged(false);
     m_weatherRadarTimelineCache.clear();
     m_weatherRadarTimelineCachedAt = {};
-    m_weatherRadarRebufferTimer->start(5000);
+    m_weatherRadarRebufferTimer->start(MapProviderRetryPolicy::kConsumerRetryMs);
     updateWeatherRadarLoadingStatus();
 }
 
@@ -1144,7 +1165,7 @@ void MapDisplayWidget::finishWeatherRadarDownloadBatch()
         // No timeline/cadence reset on a zoom. Failed detail keeps that frame's
         // older image; retry only the missing upgrades after a bounded delay.
         if (!m_weatherRadarDownloadFailed.isEmpty()) {
-            m_weatherRadarRebufferTimer->start(5000);
+            m_weatherRadarRebufferTimer->start(MapProviderRetryPolicy::kConsumerRetryMs);
         }
         if (m_weatherRadarPlayableFrameCount != m_weatherRadarFrames.size()
             || std::any_of(m_weatherRadarFrames.cbegin(), m_weatherRadarFrames.cend(),
@@ -1312,7 +1333,7 @@ void MapDisplayWidget::applyFinalizedWeatherRadarBuffering()
     }
     m_weatherRadarBufferFinalizationPending = false;
     if (!m_weatherRadarRetryFrames.isEmpty()) {
-        m_weatherRadarRebufferTimer->start(5000);
+        m_weatherRadarRebufferTimer->start(MapProviderRetryPolicy::kConsumerRetryMs);
     }
     if (m_weatherRadarFrames.size() < 2) {
         resetWeatherRadarAnimation(true);
@@ -1986,6 +2007,8 @@ void MapDisplayWidget::ensureGlobeView()
     connect(m_globeView, &GlobeMapView::weatherRadarPlaybackPresented,
             this, &MapDisplayWidget::handleWeatherRadarPlaybackPresented,
             Qt::QueuedConnection);
+    m_globeView->setBasemapDarkEnabled(m_basemapDarkEnabled);
+    m_globeView->setBasemapBrightness(m_basemapBrightness);
     m_globeView->setHomeSpanDegrees(m_homeSpanDegrees);
     if (m_hasHome) {
         m_globeView->setHomePosition(m_homeLat, m_homeLon, m_homeLabel,
@@ -2029,6 +2052,8 @@ void MapDisplayWidget::synchronizeGlobeView()
     if (!m_globeViewDirty) {
         return;
     }
+    m_globeView->setBasemapDarkEnabled(m_basemapDarkEnabled);
+    m_globeView->setBasemapBrightness(m_basemapBrightness);
     m_globeView->setHomeSpanDegrees(m_homeSpanDegrees);
     if (m_hasHome) {
         m_globeView->setHomePosition(m_homeLat, m_homeLon, m_homeLabel,

@@ -18,36 +18,44 @@ WeatherRadarTileLayer::WeatherRadarTileLayer()
     setHorizontalWrapEnabled(true);
     setOpacity(kWeatherRadarOpacity);
     m_readinessTimer.setInterval(25);
+    m_retryElapsed.start();
     connect(&m_readinessTimer, &QTimer::timeout, this, [this] {
-        const int pending = pendingRequestCount();
-        if (pending == 0
-            && failedTileRequestCount() > m_failureBaseline) {
-            if (m_readinessElapsed.elapsed() < (m_loadFailed ? 5000 : 1000)) {
-                return;
-            }
-            if (m_retryCount >= 3 && !m_loadFailed) {
-                m_loadFailed = true;
-                emit frameLoadFailed(m_source.frameTime());
-            }
-            m_retryCount = std::min(3, m_retryCount + 1);
-            m_failureBaseline = failedTileRequestCount();
-            m_readinessElapsed.restart();
-            // Retain completed tiles and retry real null placeholders even
-            // without camera movement. After reporting failure, keep retrying
-            // quietly at a slower cadence until disabled or superseded.
-            retryUnfinishedTiles();
+        checkReadiness(m_readinessElapsed.elapsed(), m_retryElapsed.elapsed());
+    });
+}
+
+void WeatherRadarTileLayer::checkReadiness(qint64 elapsedMs, qint64 retryElapsedMs)
+{
+    const int pending = pendingRequestCount();
+    // Camera processing is coalesced by QGeoView. Give it a short window
+    // to enqueue requests; an all-cache hit legitimately stays at zero.
+    if (pending == 0 && currentTilesComplete()
+        && elapsedMs >= 300) {
+        m_readinessTimer.stop();
+        m_loadFailed = false;
+        m_readyFrameId = m_source.frameId();
+        emit frameReady(m_source.frameTime());
+        return;
+    }
+    if (pending == 0
+        && failedTileRequestCount() > m_failureBaseline) {
+        if (retryElapsedMs < (m_loadFailed ? 5000 : 1000)) {
             return;
         }
-        // Camera processing is coalesced by QGeoView. Give it a short window
-        // to enqueue requests; an all-cache hit legitimately stays at zero.
-        if (pending == 0 && currentTilesComplete()
-            && m_readinessElapsed.elapsed() >= 300) {
-            m_readinessTimer.stop();
-            m_loadFailed = false;
-            m_readyFrameId = m_source.frameId();
-            emit frameReady(m_source.frameTime());
+        if (m_retryCount >= 3 && !m_loadFailed) {
+            m_loadFailed = true;
+            emit frameLoadFailed(m_source.frameTime());
         }
-    });
+        m_retryCount = std::min(3, m_retryCount + 1);
+        m_failureBaseline = failedTileRequestCount();
+        m_readinessElapsed.restart();
+        m_retryElapsed.restart();
+        // Retain completed tiles and retry real null placeholders even
+        // without camera movement. After reporting failure, keep retrying
+        // quietly at a slower cadence. The shared manager gates provider HTTP.
+        retryUnfinishedTiles();
+        return;
+    }
 }
 
 void WeatherRadarTileLayer::setSource(const WeatherRadarSource& source)
@@ -93,6 +101,7 @@ void WeatherRadarTileLayer::beginReadinessCheck()
     }
     m_failureBaseline = failedTileRequestCount();
     m_retryCount = 0;
+    m_retryElapsed.start();
     m_readinessElapsed.restart();
     m_readinessTimer.start();
 }
@@ -106,7 +115,8 @@ void WeatherRadarTileLayer::onCamera(
         // the newly visible high-resolution coverage succeeded.
         m_readyFrameId.clear();
         // A small pan can keep exactly the same completed tile set. Preserve
-        // failure accounting too: a pan must not forgive an unfinished tile.
+        // failure accounting and its retry clock too: a pan must not forgive
+        // an unfinished tile or postpone recovery indefinitely.
         m_readinessElapsed.restart();
         m_readinessTimer.start();
     }

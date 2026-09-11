@@ -1792,7 +1792,7 @@ void SpectrumOverlayMenu::buildDisplayPanel()
 
         auto* lineWidthSlider = new GuardedSlider(Qt::Horizontal);
         lineWidthSlider->setRange(0, 10);
-        lineWidthSlider->setValue(4);
+        lineWidthSlider->setValue(2);
         lineWidthSlider->setSingleStep(1);
         lineWidthSlider->setPageStep(1);
         lineWidthSlider->setObjectName("displayFftLineWidthSlider");
@@ -1805,7 +1805,7 @@ void SpectrumOverlayMenu::buildDisplayPanel()
         applyPrimarySliderStyle(m_lineWidthSlider);
         grid->addWidget(m_lineWidthSlider, row, 2);
 
-        m_lineWidthLabel = new QLabel("2.0");
+        m_lineWidthLabel = new QLabel("1.0");
         m_lineWidthLabel->setStyleSheet(valStyle);
         reserveValueColumnLabel(m_lineWidthLabel);
         m_lineWidthLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
