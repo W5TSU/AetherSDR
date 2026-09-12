@@ -4,6 +4,8 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
+
 namespace AetherSDR {
 
 class CwxModel : public QObject {
@@ -38,6 +40,15 @@ public:
     // recognised as stale and ignored rather than re-arming the watch. (#3949)
     int   drainEpoch()  const { return m_drainEpoch; }
     QString macro(int idx) const;  // 0-based (0=F1, 11=F12)
+
+    // Read-only TX availability for text keying (#5422). RadioModel wires this
+    // to TransmitModel::admitsCwxSend() so no text is queued while TUNE is
+    // active (the radio would key it at TUNE power). Unset = always available.
+    using SendAvailability = std::function<bool()>;
+    void setSendAvailability(SendAvailability availability) { m_sendAvailability = std::move(availability); }
+    // Ask before committing anything (history bubble, editor clear, speed
+    // changes): true when a send would be admitted right now. (#5422)
+    bool canSend() const { return !m_sendAvailability || m_sendAvailability(); }
 
     // Actions
     void send(const QString& text);      // Send mode: full string
@@ -115,6 +126,7 @@ signals:
 
 private:
     void emitExpandedSend(const QVector<SpeedSegment>& segs);
+    SendAvailability m_sendAvailability;
 
     int     m_speed{20};
     int     m_delay{5};

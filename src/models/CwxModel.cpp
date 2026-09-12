@@ -145,6 +145,10 @@ void CwxModel::send(const QString& text)
     if (text.isEmpty()) {
         return;
     }
+    if (!canSend()) {
+        qCWarning(lcCw) << "CWX send refused: TUNE is active (#5422)";
+        return;
+    }
     if (!m_speedModifiersEnabled) {
         emit transmissionRequested(text, m_speed);
         return;
@@ -155,6 +159,10 @@ void CwxModel::send(const QString& text)
 void CwxModel::sendChar(const QString& ch)
 {
     if (ch.isEmpty()) return;
+    if (!canSend()) {
+        qCWarning(lcCw) << "CWX send refused: TUNE is active (#5422)";
+        return;
+    }
     QString encoded = ch;
     encoded.replace(' ', QChar(0x7f));
     // Live-mode chars go via the reply path (not fire-and-forget commandReady)
@@ -170,6 +178,10 @@ void CwxModel::sendChar(const QString& ch)
 void CwxModel::sendMacro(int idx)
 {
     if (idx < 1 || idx > 12) return;
+    if (!canSend()) {
+        qCWarning(lcCw) << "CWX macro refused: TUNE is active (#5422)";
+        return;
+    }
     const QString text = m_macros[idx - 1];
     if (text.isEmpty()) {
         // Local copy not yet synced (the macroN= status is still pending in the

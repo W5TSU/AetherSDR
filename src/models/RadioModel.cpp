@@ -2539,6 +2539,14 @@ RadioModel::RadioModel(QObject* parent)
         m_pendingTransmitPreflightSource = source;
         return localPttInterlockMessage(source);
     });
+    // No TUNE start while a client CW source is keying (#5422): the radio
+    // would come up with no carrier and stay in TX with tune=1.
+    m_transmitModel.setTuneAdmission([this]() -> QString {
+        if (m_cwKeyActive || m_cwPaddleHeld || m_cwxActive) {
+            return tr("TUNE not started: CW is keyed");
+        }
+        return {};
+    });
     connect(&m_transmitModel, &TransmitModel::pttBlocked,
             this, [this](const QString& message) {
         m_pendingTransmitPreflightSource = TransmitModel::PttSource::Mox;
@@ -2670,6 +2678,8 @@ RadioModel::RadioModel(QObject* parent)
         if (m_backend)
             m_backend->setNotchesEnabled(on);
     });
+    // No CWX text while TUNE is active (#5422): the radio keys it at TUNE power.
+    m_cwxModel.setSendAvailability([this] { return m_transmitModel.admitsCwxSend(); });
     connect(&m_cwxModel, &CwxModel::commandReady, this, [this](const QString& cmd){
         // Non-Flex text keyers consume the neutral transmissionRequested /
         // transmissionCancelled signals below. Do not feed their operation
@@ -4992,6 +5002,13 @@ QString RadioModel::audioCompressionParam() const
 void RadioModel::sendCwKey(bool down, const QString& debugSource,
                            quint64 debugTraceId, quint64 debugSourceMs)
 {
+    // No CW key-down while TUNE is active; key-up always passes (#5422).
+    // Backstop for every caller, including the TCI keyer verb.
+    if (!m_transmitModel.admitsCwKeyEdge(down)) {
+        qCWarning(lcCw).noquote() << "CW key-down refused: TUNE is active (#5422) source="
+                                  << (debugSource.isEmpty() ? QStringLiteral("unknown") : debugSource);
+        return;
+    }
     // Send only the key edge — the radio's break-in setting decides whether
     // it transmits.  With break_in=1 (QSK), `cw key 1` triggers TX and
     // break_in_delay holds the relay between elements.  With break_in=0,
@@ -5040,6 +5057,13 @@ void RadioModel::sendCwKeyEdge(bool down, const QString& debugSource,
                                quint64 debugTraceId, quint64 debugSourceMs,
                                std::chrono::steady_clock::time_point scheduledAt)
 {
+    // No CW key-down while TUNE is active; key-up always passes (#5422).
+    // Covers the local iambic keyer's elements when TUNE starts mid-train.
+    if (!m_transmitModel.admitsCwKeyEdge(down)) {
+        qCWarning(lcCw).noquote() << "CW key-down refused: TUNE is active (#5422) source="
+                                  << (debugSource.isEmpty() ? QStringLiteral("unknown") : debugSource);
+        return;
+    }
     if (m_backend && !usesFlexCommandPlane()) {
         // `scheduledAt` stops here on this branch: setCwKeying() carries no
         // timestamp, so a non-Flex backend applies the edge at forward time
@@ -7683,6 +7707,7 @@ void RadioModel::onDisconnected()
 
     m_txRequested = false;
     m_cwKeyActive = false;
+    m_cwPaddleHeld = false;   // a paddle held across a disconnect must not keep TUNE refused (#5422)
     m_cwxActive = false;
     m_cwxDrainArmed = false;
     // Reset the CWX drain watch and bump its epoch so a watch armed mid-macro
