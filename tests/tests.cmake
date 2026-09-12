@@ -3883,6 +3883,13 @@ target_link_libraries(radiomodel_pan_range_null_test PRIVATE aethercore Qt6::Cor
 add_test(NAME radiomodel_pan_range_null_test COMMAND radiomodel_pan_range_null_test)
 
 
+# #5262 M1: family-specific verbs gate on the declared extension namespace, not
+# on the family string. Socket-free.
+add_executable(extension_namespace_gate_test tests/extension_namespace_gate_test.cpp)
+target_include_directories(extension_namespace_gate_test PRIVATE src)
+target_link_libraries(extension_namespace_gate_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME extension_namespace_gate_test COMMAND extension_namespace_gate_test)
+
 add_executable(radiomodel_tnf_removal_status_test tests/radiomodel_tnf_removal_status_test.cpp)
 target_include_directories(radiomodel_tnf_removal_status_test PRIVATE src)
 target_link_libraries(radiomodel_tnf_removal_status_test PRIVATE aethercore Qt6::Core Qt6::Test)
@@ -5283,6 +5290,8 @@ target_link_libraries(CAT_Flex_test PRIVATE Qt6::Core Qt6::Network)
 set(AETHER_SETTINGS_CONSUMERS
     atu_seam_gate_test
     backend_capability_revision_test
+    radio_capacity_declaration_test
+    extension_namespace_gate_test
     tx_operation_integration_test
     backend_slice_lifecycle_test
     client_display_settings_test
