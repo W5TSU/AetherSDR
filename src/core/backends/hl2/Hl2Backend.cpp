@@ -373,6 +373,11 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
     // Link lifecycle: first EP6 -> connected; stop -> disconnected.
     connect(m_metis, &MetisClient::linkUp, this, [this] {
         m_connected = true;
+        // #5594 (M1): seed the announcement baseline at the connect edge. The
+        // connect itself republishes capabilities through connectionStateChanged,
+        // so this value is already described — recording it here is what stops
+        // the first zoom that does NOT move the ceiling from announcing anyway.
+        m_ceilingAnnouncer.seed(receiverCeiling());
         // Started here rather than in connectRadio(): before the first EP6 there
         // is no link to describe, and ticking through the connect attempt would
         // publish a "reported" snapshot of zeros that reads as a dead link
@@ -446,6 +451,7 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
     connect(m_metis, &MetisClient::linkDown, this, [this] {
         if (m_connected) {
             m_connected = false;
+            m_ceilingAnnouncer.reset();   // #5594 (M1): re-seeded on the next connect
             m_linkStatsTimer->stop();
             resetIoBoardSchedule();
             resetBandscopeMirrors();
@@ -464,6 +470,7 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         // destructor also guards against.
         QMetaObject::invokeMethod(m_metis, "stop", Qt::QueuedConnection);
         m_connected = false;
+        m_ceilingAnnouncer.reset();   // #5594 (M1): re-seeded on the next connect
         m_linkStatsTimer->stop();
         resetIoBoardSchedule();
         resetBandscopeMirrors();
@@ -917,6 +924,17 @@ int Hl2Backend::receiverCeiling() const
     p.boardMaxRx = m_boardMaxRx;
     const int board = MetisClient::effectiveNumRx(p);
     return std::min(board, maxReceiversAtRate(m_sampleRateHz, board));
+}
+
+void Hl2Backend::announceReceiverCeilingRevision()
+{
+    // Disconnected, the ceiling reported by capabilities() is not receiverCeiling()
+    // at all (it falls back to the receiver count), and the connect/disconnect
+    // edges already republish capabilities on their own. Nothing to announce.
+    if (!m_connected)
+        return;
+    if (m_ceilingAnnouncer.shouldAnnounce(receiverCeiling()))
+        emit capabilitiesChanged();
 }
 
 bool Hl2Backend::createPanadapter()
@@ -3459,12 +3477,21 @@ void Hl2Backend::finishSpanRebuild(int newRateHz, int previousRateHz,
         // failure permanent across restarts, which is why this is Ok-only.
         m_sampleRateHz = newRateHz;
         Hl2Settings::setSpanMhz(static_cast<double>(newRateHz) / 1.0e6);
+        // #5594 (M1): the rate is committed, so the receiver ceiling this radio
+        // can honestly offer may have moved with it — maxSlices and
+        // maxPanadapters both report it. Guarded: the majority of zooms stay
+        // inside one ceiling and say nothing.
+        announceReceiverCeilingRevision();
         break;
     case SpanRebuildOutcome::RolledBack:
         // m_sampleRateHz was never moved, so it already reads previousRateHz.
         qCWarning(lcHl2) << "HL2: span change to" << newRateHz
                          << "Hz failed — every receiver rolled back to"
                          << previousRateHz << "Hz";
+        // #5594 (M1): the rate went back, so the ceiling may have gone back
+        // with it. Guarded, so a rollback to the rate we already announced
+        // says nothing.
+        announceReceiverCeilingRevision();
         break;
     case SpanRebuildOutcome::Inconsistent:
         qCCritical(lcHl2) << "HL2: span change to" << newRateHz << "Hz failed and"
