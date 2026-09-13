@@ -19,6 +19,7 @@
 
 #include <QCoreApplication>
 #include <QEvent>
+#include <QJsonObject>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -49,6 +50,8 @@ struct Hl2DspReadbackTestAccess {
         // at destruction. A wire transition alone does not reconfigure DSP.
         QMetaObject::invokeMethod(backend.m_metis, "linkUp", Qt::BlockingQueuedConnection);
     }
+    static void pushInitialState(Hl2Backend& backend) { backend.pushInitialState(); }
+    static int micLevel(const Hl2Backend& backend) { return backend.m_micLevel; }
     static void connectFailed(Hl2Backend& backend)
     {
         QMetaObject::invokeMethod(backend.m_metis, "connectFailed", Qt::BlockingQueuedConnection,

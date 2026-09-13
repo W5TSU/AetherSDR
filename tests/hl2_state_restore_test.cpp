@@ -14,7 +14,9 @@
 #include "core/backends/SliceDelta.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QEventLoop>
 #include <QObject>
 #include <QTimer>
