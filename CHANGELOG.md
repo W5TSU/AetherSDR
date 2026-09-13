@@ -8,6 +8,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.8] — 2026-09-13
+
+### Synced with upstream — 32 commits (#23)
+
+Routes ordinary RX slice lifecycle through the backend seam; aetherd local
+slice-frequency and local-connection-control seams; ANAN droop calibration;
+the **Web-888** receiver family; GPU-path FFT trace-width honesty; CSPRNG
+bridge tokens with async-start reconciliation; RTL-SDR identity and
+persistence; a PSK Reporter dark map; Runtime Monitor Overview cards; a
+log-redaction sweep; and a batch of Icom/HL2/FreeDV/RTTY fixes.
+
+### Fork
+
+- **macOS DMG builds no longer hard-fail** when Apple signing/notarization
+  secrets aren't configured (#24) — this fork's release CI now produces an
+  unsigned, un-notarized DMG instead, matching the existing Windows
+  unsigned-build fallback. `docs/VERIFYING-RELEASES.md` updated to match.
+- **CAT ports table's Enabled control is now a clear toggle**, not an
+  easy-to-miss unstyled checkbox (#27); the CAT tab's description explains
+  what's actually needed to get a client (WSJT-X, JS8Call, a logger) to
+  connect; the port-list "Remove selected" button is relabeled "Remove
+  Enabled".
+- **Diagnostic instrumentation for a reported Windows shutdown hang** (#28):
+  a leftover `AetherSDR.exe` process can hold CAT TCP ports open after the
+  window closes, blocking WSJT-X/rigctld clients until it's killed via Task
+  Manager. `RadioSession`'s teardown (the CAT ports and TCI server) is now
+  covered by the existing `ShutdownTrace` logging used elsewhere in the
+  shutdown path, so a future support-log capture can confirm or rule this
+  path out. No behavior change; the underlying hang is not yet fixed.
+
 ## [v26.9.7] — 2026-09-11
 
 ### External control moved to Radio Setup (#17)
