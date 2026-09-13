@@ -118,6 +118,11 @@ void MainWindow::wireStatusBarMessages()
             updateStatusBarMinimumWidth();
         }
     });
+    connect(&m_radioModel.transmitModel(), &TransmitModel::atuTuneFailed,
+            this, [this](ATUStatus, const QString& detail) {
+                statusBar()->showMessage(
+                    tr("ATU Tune Failed - %1").arg(detail), 5000);
+            });
 }
 
 
