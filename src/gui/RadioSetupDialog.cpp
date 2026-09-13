@@ -170,6 +170,27 @@ static const QString kCheckBoxIndicatorReadOnly = kCheckBoxIndicator + QStringLi
     "QCheckBox::indicator:disabled:checked { "
     "border: 2px solid {{color.accent}}; background: {{color.background.2}}; }");
 
+// Toggle button style: green when on, red-tinted neutral when off. Shared by
+// every checkable "Enabled"/"Disabled" QPushButton in this dialog (Radio tab
+// device toggles, CAT ports table) so on/off reads unambiguously at a glance
+// — unlike a bare checkbox, whose unchecked state has no color of its own.
+static const QString kToggleStyle =
+    "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
+    "border-radius: 3px; color: #c8d8e8; font-size: 11px; font-weight: bold; "
+    "padding: 3px 10px; }"
+    "QPushButton:checked { background: #1a5030; color: #00e060; "
+    "border: 1px solid #20a040; }";
+
+// Checkable "Enabled"/"Disabled" QPushButton using kToggleStyle.
+static QPushButton* makeToggleButton(bool checked)
+{
+    auto* btn = new QPushButton(checked ? "Enabled" : "Disabled");
+    btn->setCheckable(true);
+    btn->setChecked(checked);
+    btn->setStyleSheet(kToggleStyle);
+    return btn;
+}
+
 static constexpr int kInfoLeftLabelWidth = 112;
 static constexpr int kInfoRightLabelWidth = 160;
 
@@ -1234,21 +1255,8 @@ QWidget* RadioSetupDialog::buildRadioTab()
     auto* vbox = new QVBoxLayout(page);
     vbox->setSpacing(8);
 
-    // Toggle button style: green when on, red when off
-    static const QString kToggleStyle =
-        "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
-        "border-radius: 3px; color: #c8d8e8; font-size: 11px; font-weight: bold; "
-        "padding: 3px 10px; }"
-        "QPushButton:checked { background: #1a5030; color: #00e060; "
-        "border: 1px solid #20a040; }";
-
-    auto makeToggle = [](bool checked) {
-        auto* btn = new QPushButton(checked ? "Enabled" : "Disabled");
-        btn->setCheckable(true);
-        btn->setChecked(checked);
-        btn->setStyleSheet(kToggleStyle);
-        return btn;
-    };
+    // kToggleStyle / makeToggleButton (file scope, near kCheckBoxIndicator):
+    // green-when-on "Enabled"/"Disabled" toggle shared with the CAT ports table.
 
     // Radio Information group
     {
@@ -1282,7 +1290,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
                                               m_hwVersionLabel),
                         1, 0);
 
-        m_remoteOnBtn = makeToggle(m_model->remoteOnEnabled());
+        m_remoteOnBtn = makeToggleButton(m_model->remoteOnEnabled());
         connect(m_remoteOnBtn, &QPushButton::toggled, this, [this](bool on) {
             m_remoteOnBtn->setText(on ? "Enabled" : "Disabled");
             m_model->setRemoteOnEnabled(on);
@@ -1301,7 +1309,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
         // FlexControl support isn't a user-facing setting — it just reflects
         // whether AetherSDR currently holds control of the radio via the
         // FlexRadio API, so it's a status label (like Region:/HW Version:
-        // above), not a checkable button. It used to be a makeToggle(true)
+        // above), not a checkable button. It used to be a makeToggleButton(true)
         // QPushButton with no toggled handler wired up (hardcoded true, no
         // connection to isConnected() either) — clicking it could visually
         // uncheck to the "off" gray style while the text stayed stuck on
@@ -1326,7 +1334,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
                                                kInfoRightLabelWidth);
         grid->addWidget(m_flexControlInfoField, 2, 1);
 
-        auto* mfBtn = makeToggle(m_model->multiFlexEnabled());
+        auto* mfBtn = makeToggleButton(m_model->multiFlexEnabled());
         connect(mfBtn, &QPushButton::toggled, this, [this, mfBtn](bool on) {
             mfBtn->setText(on ? "Enabled" : "Disabled");
             m_model->setMultiFlexEnabled(on);
@@ -2447,7 +2455,11 @@ QWidget* RadioSetupDialog::buildCatServerTab()
     auto* intro = new QLabel(
         "AetherSDR emulates a rig so WSJT-X, JS8Call, a logger or HamClock can "
         "control it. Each listener is one TCP port (and, on Linux/macOS, a "
-        "virtual serial device) speaking one protocol dialect.");
+        "virtual serial device) speaking one protocol dialect. To connect a "
+        "client: turn on Enable CAT server below, then enable a port row with "
+        "a port number of 1024 or higher and a dialect matching your client, "
+        "and point that client at the port on localhost (or the matching "
+        "virtual serial device on Linux/macOS).");
     intro->setWordWrap(true);
     intro->setStyleSheet(kLabelStyle);
     vbox->addWidget(intro);
@@ -2472,7 +2484,7 @@ QWidget* RadioSetupDialog::buildCatServerTab()
 
     auto* btnRow = new QHBoxLayout;
     m_catAddPortBtn = new QPushButton(QStringLiteral("Add CAT port"));
-    auto* removeBtn = new QPushButton(QStringLiteral("Remove selected"));
+    auto* removeBtn = new QPushButton(QStringLiteral("Remove Enabled"));
     btnRow->addWidget(m_catAddPortBtn);
     btnRow->addWidget(removeBtn);
     btnRow->addStretch(1);
@@ -2526,9 +2538,11 @@ void RadioSetupDialog::reloadCatPortsTable()
     for (int i = 0; i < ports.size(); ++i) {
         const CatPortSpec& spec = ports.at(i);
 
-        auto* enabled = new QCheckBox;
-        enabled->setChecked(spec.enabled);
-        connect(enabled, &QCheckBox::toggled, this, [this] { commitCatPortsTable(); });
+        auto* enabled = makeToggleButton(spec.enabled);
+        connect(enabled, &QPushButton::toggled, this, [this, enabled](bool on) {
+            enabled->setText(on ? "Enabled" : "Disabled");
+            commitCatPortsTable();
+        });
         auto* enWrap = new QWidget;
         auto* enLay = new QHBoxLayout(enWrap);
         enLay->setContentsMargins(0, 0, 0, 0);
@@ -2588,8 +2602,8 @@ void RadioSetupDialog::commitCatPortsTable()
     for (int i = 0; i < m_catPortsTable->rowCount(); ++i) {
         CatPortSpec spec;
         if (auto* wrap = m_catPortsTable->cellWidget(i, 0)) {
-            if (auto* cb = wrap->findChild<QCheckBox*>()) {
-                spec.enabled = cb->isChecked();
+            if (auto* btn = wrap->findChild<QPushButton*>()) {
+                spec.enabled = btn->isChecked();
             }
         }
         if (auto* sb = qobject_cast<QSpinBox*>(m_catPortsTable->cellWidget(i, 1))) {
