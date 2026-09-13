@@ -9,6 +9,8 @@
 #include <QTimer>
 
 #include "core/backends/hl2/AdcOverloadLogGate.h"
+#include "core/backends/hl2/Hl2AdcPairing.h"
+#include "core/backends/hl2/Hl2CapabilityAnnouncer.h"
 #include "core/backends/hl2/Hl2DbReference.h"
 #include "core/backends/hl2/Hl2IoBoardPolicy.h"
 #include "core/backends/hl2/Hl2TelemetryCadence.h"  // Hl2LinkState (#15)
@@ -844,6 +846,12 @@ private:
     bool m_cwAutoKeyed = false;
     QTimer* m_cwHangTimer = nullptr;
     bool m_txMonitor = false;
+    // Both flags above are set SYNCHRONOUSLY while the setAudioMuted they imply
+    // rides a queued connection to the DSP thread, so at key-up they say
+    // "sampling" a block before it is true. This gate holds the moment sampling
+    // was asked to resume and answers from the stamp on the reading instead;
+    // healthSnapshot() feeds its answer to adcPairing(). See SliceSamplingGate.
+    hl2::SliceSamplingGate m_sliceSampling;
     bool m_toneFromTune = false;
     // Last drive the operator asked for through setTxPower(), so TUNE can drop to
     // tune power and put it back on release. Seeded to the same value
