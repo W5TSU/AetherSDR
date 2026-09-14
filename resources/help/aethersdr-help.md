@@ -128,6 +128,19 @@ The floating left-side overlay is a fast operator menu for the currently focused
 
 This overlay is important because it keeps the most common "I need to adjust the picture or slice quickly" controls next to the spectrum instead of burying them in a large dialog.
 
+### RF Gain and the S-meter
+
+The `ANT` panel's RF Gain slider adjusts the receiver's front-end gain — how hard the incoming signal is amplified before it reaches the ADC. It is not a volume control, and moving it will not change how strong a signal reads on the S-meter or panadapter trace.
+
+That's intentional: AetherSDR subtracts the gain you applied from the displayed signal strength, so the S-meter and trace always report what's actually on the air, not an artifact of your gain setting. You may see the meter blip briefly while the new gain takes effect in the hardware, then settle back to the same reading — that's normal, not a fault.
+
+Use RF Gain to manage headroom instead of "volume":
+
+- **Lower it** if you see an ADC overload warning, or on a busy band (medium-wave broadcast is the classic case) where strong signals are clipping or desensing weaker ones nearby.
+- **Raise it** if a weak signal is struggling to rise above the noise floor.
+
+A quick way to confirm the S-meter is reading a real signal rather than an artifact of your radio's own settings: disconnect the antenna. Unlike an RF Gain change, that's a genuine change in what's arriving at the receiver, so the meter should drop noticeably. If it barely moves, whatever you're seeing is being generated locally — in the shack or the radio itself — not arriving via the antenna.
+
 ## VFO and Slice Controls
 
 Each slice has a VFO overlay that acts as a compact operating head.
