@@ -337,6 +337,9 @@ void MeterModel::removeMeter(int index)
         clearCompressionState();
         logCompressionSummary("meter-removed", true);
     }
+    // Presence subscribers query the routing maps synchronously. Notify only
+    // after the withdrawn meter has been removed from every index map.
+    emit meterRemoved(index);
 }
 
 float MeterModel::convertRaw(const MeterDef& def, qint16 raw) const
