@@ -3230,6 +3230,75 @@ set_tests_properties(relay_bar_a11y_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     SKIP_RETURN_CODE 77)
 
+# TGXL front-panel widgets — the presentation TunerApplet switches to when
+# popped out or placed on the canvas. Pins that a missing reading renders as
+# N/A rather than stale, and that RelayDial carries RelayBar's announcement
+# debounce (#4565). ThemeManager is linked for the dial's painted colours.
+add_executable(tgxl_panel_widgets_test
+    tests/tgxl_panel_widgets_test.cpp
+    src/gui/TgxlPanelWidgets.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+)
+target_include_directories(tgxl_panel_widgets_test PRIVATE src)
+target_link_libraries(tgxl_panel_widgets_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets
+)
+set_target_properties(tgxl_panel_widgets_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_panel_widgets_test COMMAND tgxl_panel_widgets_test)
+# Exit 77 == no accessibility backend; see relay_bar_a11y_test above.
+set_tests_properties(tgxl_panel_widgets_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    SKIP_RETURN_CODE 77)
+
+# The TGXL's direct port-9010 protocol — alert frames (`M|<text>`, empty body
+# clears) and the per-port status block — against a stub tuner on loopback.
+# Frames are verbatim from a TunerGeniusDesk capture (fw 1.2.17).
+add_executable(tgxl_direct_protocol_test
+    tests/tgxl_direct_protocol_test.cpp
+    src/core/TgxlConnection.cpp
+    src/models/TunerModel.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(tgxl_direct_protocol_test PRIVATE src)
+target_link_libraries(tgxl_direct_protocol_test PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+set_target_properties(tgxl_direct_protocol_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_direct_protocol_test COMMAND tgxl_direct_protocol_test)
+# Exit 77 == no loopback bind available; see relay_bar_a11y_test above.
+set_tests_properties(tgxl_direct_protocol_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# Docked/expanded parity for the TGXL applet: the split is presentation only,
+# so the rail tile must still gain STOP-while-tuning and the full-width alert
+# banner. What the rail deliberately omits is not asserted.
+add_executable(tgxl_docked_parity_test
+    tests/tgxl_docked_parity_test.cpp
+    src/gui/TunerApplet.cpp
+    src/gui/TgxlPanelWidgets.cpp
+    src/gui/DragValuePopup.cpp
+    src/models/TunerModel.cpp
+    src/models/MeterModel.cpp
+    src/models/BandSettings.cpp
+    src/core/TgxlConnection.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(tgxl_docked_parity_test PRIVATE src)
+target_link_libraries(tgxl_docked_parity_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
+)
+set_target_properties(tgxl_docked_parity_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_docked_parity_test COMMAND tgxl_docked_parity_test)
+set_tests_properties(tgxl_docked_parity_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(fm_tone_presentation_test
     tests/fm_tone_presentation_test.cpp
 )
@@ -5710,6 +5779,9 @@ set(AETHER_SETTINGS_CONSUMERS
     vkamp_connection_test
     system_info_dialog_test
     spectrum_overlay_band_highlight_test
+    tgxl_panel_widgets_test
+    tgxl_direct_protocol_test
+    tgxl_docked_parity_test
 )
 foreach(_settings_consumer IN LISTS AETHER_SETTINGS_CONSUMERS)
     if(TARGET ${_settings_consumer})
