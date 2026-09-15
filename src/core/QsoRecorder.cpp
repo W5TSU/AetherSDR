@@ -10,12 +10,14 @@
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QDir>
+#include <QFileInfo>
 #include <QMediaDevices>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QtEndian>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace AetherSDR {
@@ -292,6 +294,14 @@ void QsoRecorder::setCwOverActive(bool active)
 
 void QsoRecorder::startFile()
 {
+    Q_ASSERT(!m_file);
+    // QDir("") resolves to the working directory. A missing configured path
+    // must fail visibly rather than silently putting recordings there.
+    if (m_recordingDir.isEmpty()) {
+        emit recordingError(QStringLiteral("Cannot create recording directory: path is empty"));
+        return;
+    }
+
     // Capture metadata from active slice at recording start
     if (m_slice) {
         m_freqMhz = m_slice->frequency();
@@ -313,13 +323,46 @@ void QsoRecorder::startFile()
         }
     }
 
-    QString filePath = m_recordingDir + "/" + buildFilename();
+    const QString filename = buildFilename();
+    const QFileInfo filenameInfo(filename);
+    const QString filenameStem = filenameInfo.completeBaseName();
+    const QString filenameSuffix = filenameInfo.suffix();
+    constexpr int kMaxFilenameAttempts = 1000;
 
-    m_file = new QFile(filePath, this);
-    if (!m_file->open(QIODevice::WriteOnly)) {
-        emit recordingError("Cannot create recording file: " + m_file->errorString());
-        delete m_file;
-        m_file = nullptr;
+    QString filePath;
+    QString openError;
+    bool filenameAttemptsExhausted = false;
+    for (int attempt = 0; attempt < kMaxFilenameAttempts; ++attempt) {
+        const QString candidateName = attempt == 0
+            ? filename
+            : filenameStem + QStringLiteral("_") + QString::number(attempt)
+                + QStringLiteral(".") + filenameSuffix;
+        filePath = dir.filePath(candidateName);
+
+        std::unique_ptr<QFile> file = std::make_unique<QFile>(filePath);
+        if (file->open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            file->setParent(this);
+            m_file = file.release();
+            break;
+        }
+
+        openError = file->errorString();
+        // NewOnly makes this check a classification after the atomic create
+        // attempt, never an exists-before-open TOCTOU window. QFileInfo::exists
+        // is false for a dangling link, so preserve it as an occupied name too.
+        const QFileInfo candidateInfo(filePath);
+        if (!candidateInfo.exists() && !candidateInfo.isSymbolicLink()) {
+            break;
+        }
+        filenameAttemptsExhausted = attempt + 1 == kMaxFilenameAttempts;
+    }
+
+    if (!m_file) {
+        const QString suffix = filenameAttemptsExhausted
+            ? QStringLiteral("all %1 filename candidates are occupied")
+                  .arg(kMaxFilenameAttempts)
+            : openError;
+        emit recordingError(QStringLiteral("Cannot create recording file: ") + suffix);
         return;
     }
 
