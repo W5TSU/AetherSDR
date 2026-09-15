@@ -100,6 +100,12 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 - **macOS VirtualAudioBridge audit** ([#2940](https://github.com/aethersdr/AetherSDR/issues/2940))
   — focused security review of the macOS shared-memory audio bridge.
   (The RigctlPty side is resolved — RigctlPty was removed in #3380.)
+- **PureSignal on HL2** — TX predistortion/linearization using an RX
+  feedback path to correct amplifier nonlinearity. Explicitly out of scope
+  for the HL2 "supported" milestone
+  ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md))
+  and not yet designed — needs its own RFC (feedback path, predistortion
+  algorithm, calibration UI) before implementation starts.
 
 ### Larger feature requests (community backlog)
 
