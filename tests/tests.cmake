@@ -66,6 +66,20 @@ unset(_aether_stray_targets)
 unset(_aether_stray_registrations)
 
 
+# CwDecoder public lifecycle/configuration race regression. Generated 24 kHz
+# stereo float CW drives the real worker/GGMorse path; no sockets or radio.
+add_executable(cw_decoder_parameters_test
+    tests/cw_decoder_parameters_test.cpp
+    src/core/CwDecoder.cpp
+    ${GGMORSE_SOURCES}
+)
+target_include_directories(cw_decoder_parameters_test PRIVATE
+    src src/core third_party/ggmorse/include third_party/ggmorse/src)
+target_link_libraries(cw_decoder_parameters_test PRIVATE Qt6::Core)
+add_test(NAME cw_decoder_parameters_test COMMAND cw_decoder_parameters_test)
+set_tests_properties(cw_decoder_parameters_test PROPERTIES TIMEOUT 60)
+
+
 # Pure shared-capture geometry policy: no sockets, settings, DSP or hardware.
 add_executable(shared_capture_policy_test
     tests/shared_capture_policy_test.cpp
