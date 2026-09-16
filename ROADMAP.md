@@ -17,15 +17,15 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   woven through `RadioModel`. FlexBackend owns the Flex wire objects
   and threads, and the Panadapter / Slice / Meter / Transmit / Amp / Tuner
   status+command paths decode behind the seam (RFC steps 2.1–2.4). The seam
-  now carries **four** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, and
-  the synthetic `SimBackend` — which is what took it from a design to a proven
-  interface. Bringing a third vendor up on it in v26.8.2 was also the seam's
-  best audit to date: it surfaced a meter path that ignored its own unit,
-  receive-DSP controls with no verb behind them, and a capability conflating
-  "the host modulates" with "TX audio leaves through the seam". Remaining: the
-  versioned protocol (RFC step 3+) that lets a headless `aetherd` and thin UI
-  clients split apart; UI code still consumes models directly, and that remains
-  correct until it lands.
+  now carries **six** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, the
+  synthetic `SimBackend`, and two RX-only additions from v26.9.4:
+  **AnanBackend** (openHPSDR Protocol 2, ANAN-G2) and **RtlSdrBackend**
+  (`librtlsdr` + `fftw3f`), both carrying the `experimental` notice HL2 wore
+  before its own promotion. v26.9.4 also landed **Stage 3** of the control
+  protocol — a local control server plus wire codec — a further step toward
+  the headless-engine/thin-client split the RFC targets, though not the full
+  split: UI code still consumes models directly, and that remains correct
+  until the versioned protocol (RFC step 3+, ongoing) finishes replacing it.
 - **Icom networked radios — early** — `IcomCIV` speaks CI-V inside the RS-BA1
   UDP transport, brought up in v26.8.2 against a live **IC-705** (RX, scope,
   transmit, and FT8 both decoding and spotting on PSK Reporter) and an
@@ -57,27 +57,6 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   cycle — a cross-top-level reparent is the #2495/#4617/#4319 crash lineage, so
   moves go through one deliberate menu path for now), and field time on real
   stations against the Classic shell.
-- **Hermes-Lite 2 — from experimental to supported** — **done.** The
-  `experimental` label is off; hardware certification on gateware v7.4
-  (`radiocert` tune→rx→tx→meters + a ten-minute four-receiver soak) passed
-  2026-09-01, and `docs/adr/0001-hermes-lite-2-supported.md` is `accepted`.
-  Ships in the next release. The backend
-  arrived experimental in v26.7.4 and grew to parity through v26.8.x (four
-  receivers, the SSB voice chain, decoders, packet, band switching, memory,
-  operating-state restore, NB, a real CW BFO, restart-surviving AGC). This
-  milestone closed the ROADMAP bar: the mode menu is backend-authoritative with
-  real **RTTY** and **DFM** support and no silent fall-through (D-STAR / DRM /
-  FreeDV / RADE are simply not offered); the panadapter reaches Flex parity with
-  **sample / average / peak detector modes** and configurable averaging; the
-  raw-IQ DSP chain is hardened — the notch-filter latency is **opt-in** (paid
-  only while a notch is placed), the ADC-overload log is rate-limited, and the
-  dBFS↔dBm maths is centralised so an LNA change does not slide the trace. The
-  decision and its two accepted costs are recorded in
-  [`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md):
-  a deep 50 Hz notch still trades ~64 ms of RX latency **while placed**, and a
-  span change that crosses a sample-rate boundary still rebuilds every receiver
-  (now behind a "Resampling…" affordance; the off-thread fix is a fast-follow).
-  Span-following FFT bin count is a named fast-follow.
 - **AppSettings nested-JSON refactor** — ~460 flat call sites today;
   the new pattern is one nested-JSON value per feature (Principle V).
   The storage layer moved to SQLite and the scoped feature-document store,
@@ -92,6 +71,11 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
+- **HL2 span-following FFT bin count** — named fast-follow from the
+  Hermes-Lite 2 supported-promotion (`docs/adr/0001-hermes-lite-2-supported.md`,
+  shipped v26.9.2). The other accepted cost from that ADR — the span-change
+  rebuild blocking the GUI thread — is resolved (v26.9.4 moved it to the I/O
+  thread); this one is still open.
 - **KiwiSDR follow-ups** — WebSDR / OpenWebRX support on top of the shipped
   public-receiver browser (per-receiver passwords, idle-release, and
   waterfall polish landed in v26.7.2; warm audio through TX and the
