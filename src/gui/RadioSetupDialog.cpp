@@ -1780,7 +1780,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
                         switch (outcome) {
                         case FirmwareUploader::Outcome::Succeeded:
                             m_fwProgress->setValue(100);
-                            colour = QStringLiteral("#80e080");
+                            colour = QStringLiteral("{{color.accent.success}}");
                             m_fwUploadBtn->setEnabled(false);
                             break;
                         case FirmwareUploader::Outcome::Unconfirmed:
@@ -1794,7 +1794,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
                             break;
                         case FirmwareUploader::Outcome::Failed:
                             m_fwProgress->hide();
-                            colour = QStringLiteral("#e08080");
+                            colour = QStringLiteral("{{color.accent.danger}}");
                             m_fwUploadBtn->setEnabled(true);
                             break;
                         }
@@ -1811,7 +1811,7 @@ QWidget* RadioSetupDialog::buildRadioTab()
             m_fwProgress->setValue(0);
             m_fwUploadBtn->setEnabled(false);
             AetherSDR::ThemeManager::instance().applyStyleSheet(
-                m_fwStatusLabel, QStringLiteral("QLabel { color: #6888a0; font-size: 10px; }"));
+                m_fwStatusLabel, QStringLiteral("QLabel { color: {{color.text.secondary}}; font-size: 10px; }"));
 
             m_uploader->upload(m_fwFilePath);
         });
