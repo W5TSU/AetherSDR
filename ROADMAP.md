@@ -17,15 +17,15 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   woven through `RadioModel`. FlexBackend owns the Flex wire objects
   and threads, and the Panadapter / Slice / Meter / Transmit / Amp / Tuner
   status+command paths decode behind the seam (RFC steps 2.1–2.4). The seam
-  now carries **four** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, and
-  the synthetic `SimBackend` — which is what took it from a design to a proven
-  interface. Bringing a third vendor up on it in v26.8.2 was also the seam's
-  best audit to date: it surfaced a meter path that ignored its own unit,
-  receive-DSP controls with no verb behind them, and a capability conflating
-  "the host modulates" with "TX audio leaves through the seam". Remaining: the
-  versioned protocol (RFC step 3+) that lets a headless `aetherd` and thin UI
-  clients split apart; UI code still consumes models directly, and that remains
-  correct until it lands.
+  now carries **six** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, the
+  synthetic `SimBackend`, and two RX-only additions from v26.9.4:
+  **AnanBackend** (openHPSDR Protocol 2, ANAN-G2) and **RtlSdrBackend**
+  (`librtlsdr` + `fftw3f`), both carrying the `experimental` notice HL2 wore
+  before its own promotion. v26.9.4 also landed **Stage 3** of the control
+  protocol — a local control server plus wire codec — a further step toward
+  the headless-engine/thin-client split the RFC targets, though not the full
+  split: UI code still consumes models directly, and that remains correct
+  until the versioned protocol (RFC step 3+, ongoing) finishes replacing it.
 - **Icom networked radios — early** — `IcomCIV` speaks CI-V inside the RS-BA1
   UDP transport, brought up in v26.8.2 against a live **IC-705** (RX, scope,
   transmit, and FT8 both decoding and spotting on PSK Reporter) and an
@@ -57,27 +57,6 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   cycle — a cross-top-level reparent is the #2495/#4617/#4319 crash lineage, so
   moves go through one deliberate menu path for now), and field time on real
   stations against the Classic shell.
-- **Hermes-Lite 2 — from experimental to supported** — **done.** The
-  `experimental` label is off; hardware certification on gateware v7.4
-  (`radiocert` tune→rx→tx→meters + a ten-minute four-receiver soak) passed
-  2026-09-01, and `docs/adr/0001-hermes-lite-2-supported.md` is `accepted`.
-  Ships in the next release. The backend
-  arrived experimental in v26.7.4 and grew to parity through v26.8.x (four
-  receivers, the SSB voice chain, decoders, packet, band switching, memory,
-  operating-state restore, NB, a real CW BFO, restart-surviving AGC). This
-  milestone closed the ROADMAP bar: the mode menu is backend-authoritative with
-  real **RTTY** and **DFM** support and no silent fall-through (D-STAR / DRM /
-  FreeDV / RADE are simply not offered); the panadapter reaches Flex parity with
-  **sample / average / peak detector modes** and configurable averaging; the
-  raw-IQ DSP chain is hardened — the notch-filter latency is **opt-in** (paid
-  only while a notch is placed), the ADC-overload log is rate-limited, and the
-  dBFS↔dBm maths is centralised so an LNA change does not slide the trace. The
-  decision and its two accepted costs are recorded in
-  [`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md):
-  a deep 50 Hz notch still trades ~64 ms of RX latency **while placed**, and a
-  span change that crosses a sample-rate boundary still rebuilds every receiver
-  (now behind a "Resampling…" affordance; the off-thread fix is a fast-follow).
-  Span-following FFT bin count is a named fast-follow.
 - **AppSettings nested-JSON refactor** — ~460 flat call sites today;
   the new pattern is one nested-JSON value per feature (Principle V).
   The storage layer moved to SQLite and the scoped feature-document store,
@@ -92,6 +71,28 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
+- **HackRF backend — highly experimental** — a new `HackRfBackend` behind
+  `IRadioBackend`: full RX+TX over a single HackRF One (FM/CW TX only for
+  v1), multi-slice receive across its wide capture. Driving goal is FM
+  amateur-satellite work (SO-50, AO-91, ISS), operated PTT-style. Design
+  reuses `Hl2Backend`'s host-side WDSP TX modulator (`hostModulates` +
+  `takesTxAudioOverSeam`) and `RtlSdrBackend`'s worker-thread/DDC shape for
+  RX; the one new piece is an RX↔TX arbitration state machine, since
+  libhackrf's USB transport is genuinely half-duplex (unlike HL2's
+  concurrent-IQ Ethernet link). No software-enforced TX power cap or
+  acknowledgment flow — matches how Anan/RtlSdr's `experimental` label
+  already works; the operator is trusted with their own filtering, same as
+  any other radio. **Explicitly out of scope:** SSB TX, and full-duplex
+  split operation for linear-transponder satellites (AO-7, FO-29-class —
+  needs simultaneous RX+TX to self-monitor through the transponder, which
+  one HackRF cannot do alone and AetherSDR has no existing split-operation
+  concept for). Fork-only — not intended for upstream. Full design:
+  [`docs/superpowers/specs/2026-09-16-hackrf-backend-design.md`](docs/superpowers/specs/2026-09-16-hackrf-backend-design.md).
+- **HL2 span-following FFT bin count** — named fast-follow from the
+  Hermes-Lite 2 supported-promotion (`docs/adr/0001-hermes-lite-2-supported.md`,
+  shipped v26.9.2). The other accepted cost from that ADR — the span-change
+  rebuild blocking the GUI thread — is resolved (v26.9.4 moved it to the I/O
+  thread); this one is still open.
 - **KiwiSDR follow-ups** — WebSDR / OpenWebRX support on top of the shipped
   public-receiver browser (per-receiver passwords, idle-release, and
   waterfall polish landed in v26.7.2; warm audio through TX and the
@@ -106,6 +107,34 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md))
   and not yet designed — needs its own RFC (feedback path, predistortion
   algorithm, calibration UI) before implementation starts.
+- **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`
+  already take plain PCM (`QByteArray`), but the integration wiring in
+  `MainWindow_DigitalModes.cpp` sources that PCM exclusively from Flex's
+  DAX: RX via `PanadapterStream::daxAudioReady` filtered by DAX channel,
+  TX via `ensureDaxTxStream()`. A guard (lines 298–338) refuses to enable
+  RADE at all without DAX, with a user-facing message naming FlexRadio
+  explicitly. This is a codec-version-independent prerequisite for RADE on
+  any non-Flex backend (Hermes-Lite 2 included) — RADE V1 and V2 both just
+  need PCM, wherever it comes from. **RTTY and AX.25/AetherModem packet
+  already prove the pattern**: both decode off the backend-agnostic
+  `PanadapterStream::audioDataReady` / generic `feedAudio()` path instead
+  of DAX, which is why they already work on HL2. Scope: give RADE the same
+  generic audio source (RX and TX) as an alternative to DAX, gated on
+  backend capability rather than a hardcoded Flex check.
+- **RADE V2 on the main backend** — the vendored codec
+  (`third_party/radae`, pinned at upstream commit `4da110a`) is V1-only and
+  ~65 commits / 4+ months behind
+  [W5TSU/rade_c](https://github.com/W5TSU/rade_c); upstream's `main` has
+  since grown a full V2 encoder/decoder, OFDM demod, AGC and BPF behind
+  `RADE_MODE_V2`. Scope: bump the vendored snapshot, add a V2 mode to
+  `RADEEngine` (`src/core/RADEEngine.{h,cpp}`) alongside V1 rather than
+  replacing it, and expose the mode choice through `RadeApplet`. Two V1-path
+  drift fixes upstream (`a2d77e8`/`5cb2436`, phase renormalization) are a
+  smaller, lower-risk item that can land first and independently. Land and
+  prove out on the main backend before any Hermes-Lite 2 rollout — HL2
+  doesn't offer FreeDV/RADE at all today, and, independent of the DAX
+  decoupling above, debugging a new codec generation and a new backend's
+  audio path at the same time gives no known-good reference point.
 
 ### Larger feature requests (community backlog)
 

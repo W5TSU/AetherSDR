@@ -1925,6 +1925,15 @@ target_include_directories(waveform_upload_state_test PRIVATE src)
 target_link_libraries(waveform_upload_state_test PRIVATE Qt6::Core)
 add_test(NAME waveform_upload_state_test COMMAND waveform_upload_state_test)
 
+# #5572 — socket-free firmware upload lifecycle. The injected writer exercises
+# production queue accounting and terminal handlers without a radio peer.
+add_executable(firmware_uploader_test
+    tests/firmware_uploader_test.cpp
+)
+target_include_directories(firmware_uploader_test PRIVATE src)
+target_link_libraries(firmware_uploader_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME firmware_uploader_test COMMAND firmware_uploader_test)
+
 add_executable(zip_archive_test
     tests/zip_archive_test.cpp
     src/core/ZipArchive.cpp
@@ -2135,6 +2144,15 @@ add_executable(fft_line_width_test tests/fft_line_width_test.cpp)
 target_include_directories(fft_line_width_test PRIVATE src)
 add_test(NAME fft_line_width_test COMMAND fft_line_width_test)
 
+# Transient menu/dialog ownership under nested event-loop teardown (#5566).
+# Socket-free; also runs in the unfiltered full-suite and sanitizer lanes.
+add_executable(scoped_child_widget_test tests/scoped_child_widget_test.cpp)
+target_include_directories(scoped_child_widget_test PRIVATE src)
+target_link_libraries(scoped_child_widget_test PRIVATE Qt6::Widgets)
+add_test(NAME scoped_child_widget_test COMMAND scoped_child_widget_test)
+set_tests_properties(scoped_child_widget_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(spectrum_preview_logic_test
     tests/spectrum_preview_logic_test.cpp
 )
@@ -2319,6 +2337,17 @@ target_include_directories(spot_auto_scroll_test PRIVATE src)
 target_link_libraries(spot_auto_scroll_test PRIVATE Qt6::Core)
 add_test(NAME spot_auto_scroll_test COMMAND spot_auto_scroll_test)
 
+# SpotHub WSJT-X feed: per-instance dial frequency for Decode placement
+# (#3595). Header-only and Qt-Core-only so it runs without WsjtxClient's
+# QUdpSocket / LogManager dependency graph. Socket-free by design — the UDP
+# framing is unchanged by the fix.
+add_executable(wsjtx_dial_tracker_test
+    tests/wsjtx_dial_tracker_test.cpp
+)
+target_include_directories(wsjtx_dial_tracker_test PRIVATE src)
+target_link_libraries(wsjtx_dial_tracker_test PRIVATE Qt6::Core)
+add_test(NAME wsjtx_dial_tracker_test COMMAND wsjtx_dial_tracker_test)
+
 add_executable(n1mm_spot_client_test
     tests/n1mm_spot_client_test.cpp
     src/core/N1MMSpotParser.cpp
@@ -2357,6 +2386,12 @@ add_executable(waveform_install_gate_test
 target_include_directories(waveform_install_gate_test PRIVATE src)
 target_link_libraries(waveform_install_gate_test PRIVATE Qt6::Core)
 add_test(NAME waveform_install_gate_test COMMAND waveform_install_gate_test)
+
+# D-STAR capability/build visibility and delayed-start admission. Pure policy:
+# no QApplication, settings, helper process, serial device, or sockets.
+add_executable(dstar_availability_gate_test tests/dstar_availability_gate_test.cpp)
+target_include_directories(dstar_availability_gate_test PRIVATE src)
+add_test(NAME dstar_availability_gate_test COMMAND dstar_availability_gate_test)
 
 # DVK indicator availability — TX-slice mode + the radio's DVK entitlement.
 # Header-only, pure logic.
@@ -3617,6 +3652,14 @@ add_executable(hl2_tx_gate_test tests/hl2_tx_gate_test.cpp)
 target_include_directories(hl2_tx_gate_test PRIVATE src)
 target_link_libraries(hl2_tx_gate_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_gate_test COMMAND hl2_tx_gate_test)
+
+# HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
+# packet builder. A band change must not leave two disagreeing config banks in
+# one frame (#4579).
+add_executable(hl2_band_filter_frame_test tests/hl2_band_filter_frame_test.cpp)
+target_include_directories(hl2_band_filter_frame_test PRIVATE src)
+target_link_libraries(hl2_band_filter_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_band_filter_frame_test COMMAND hl2_band_filter_frame_test)
 
 add_executable(hl2_dbref_test tests/hl2_dbref_test.cpp)
 target_include_directories(hl2_dbref_test PRIVATE src)
