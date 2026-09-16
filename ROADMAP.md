@@ -106,6 +106,34 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md))
   and not yet designed — needs its own RFC (feedback path, predistortion
   algorithm, calibration UI) before implementation starts.
+- **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`
+  already take plain PCM (`QByteArray`), but the integration wiring in
+  `MainWindow_DigitalModes.cpp` sources that PCM exclusively from Flex's
+  DAX: RX via `PanadapterStream::daxAudioReady` filtered by DAX channel,
+  TX via `ensureDaxTxStream()`. A guard (lines 298–338) refuses to enable
+  RADE at all without DAX, with a user-facing message naming FlexRadio
+  explicitly. This is a codec-version-independent prerequisite for RADE on
+  any non-Flex backend (Hermes-Lite 2 included) — RADE V1 and V2 both just
+  need PCM, wherever it comes from. **RTTY and AX.25/AetherModem packet
+  already prove the pattern**: both decode off the backend-agnostic
+  `PanadapterStream::audioDataReady` / generic `feedAudio()` path instead
+  of DAX, which is why they already work on HL2. Scope: give RADE the same
+  generic audio source (RX and TX) as an alternative to DAX, gated on
+  backend capability rather than a hardcoded Flex check.
+- **RADE V2 on the main backend** — the vendored codec
+  (`third_party/radae`, pinned at upstream commit `4da110a`) is V1-only and
+  ~65 commits / 4+ months behind
+  [W5TSU/rade_c](https://github.com/W5TSU/rade_c); upstream's `main` has
+  since grown a full V2 encoder/decoder, OFDM demod, AGC and BPF behind
+  `RADE_MODE_V2`. Scope: bump the vendored snapshot, add a V2 mode to
+  `RADEEngine` (`src/core/RADEEngine.{h,cpp}`) alongside V1 rather than
+  replacing it, and expose the mode choice through `RadeApplet`. Two V1-path
+  drift fixes upstream (`a2d77e8`/`5cb2436`, phase renormalization) are a
+  smaller, lower-risk item that can land first and independently. Land and
+  prove out on the main backend before any Hermes-Lite 2 rollout — HL2
+  doesn't offer FreeDV/RADE at all today, and, independent of the DAX
+  decoupling above, debugging a new codec generation and a new backend's
+  audio path at the same time gives no known-good reference point.
 
 ### Larger feature requests (community backlog)
 
