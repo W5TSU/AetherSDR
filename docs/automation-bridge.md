@@ -1392,8 +1392,8 @@ inside AetherSDR on the host, not in radio firmware (#5401).
        {"chain":"hl2-tx","level":"dsp-config",
         "inputRateHz":48000,"outputRateHz":48000,"dspBlockSize":512,
         "filterLowHz":300,"filterHighHz":2700,
-        "alcEnabled":true,"alcTargetPeak":0.9,"alcMaxGainDb":20,
-        "alcAttackSec":0.005,"alcReleaseSec":0.25,"alcHoldBelowDbfs":-45,
+        "alcEnabled":true,"alcTargetPeak":0.9,
+        "alcReleaseSec":0.25,
         "micGainLinear":1}]}}}
 ```
 
@@ -3322,7 +3322,7 @@ or a regression test. Read-only: it keys nothing and sets nothing.
      {"key":"micLevel","section":"Transmit voice chain",
       "label":"Mic slider (0-100, 50 = unity)","value":80},
      {"key":"micGainAppliedLinear",
-      "label":"Mic gain at the modulator (linear)","value":3.98},
+      "label":"Mic gain at the modulator (linear)","value":15.849},
      {"key":"rfPowerPercent","label":"Drive requested (0-100)","value":60},
      {"key":"txDriveRegister","label":"Drive written (raw 0-255)","value":153},
      {"key":"txDriveGated","label":"Drive held at 0 by the TX gate","value":false},
