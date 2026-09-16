@@ -71,6 +71,23 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
+- **HackRF backend — highly experimental** — a new `HackRfBackend` behind
+  `IRadioBackend`: full RX+TX over a single HackRF One (FM/CW TX only for
+  v1), multi-slice receive across its wide capture. Driving goal is FM
+  amateur-satellite work (SO-50, AO-91, ISS), operated PTT-style. Design
+  reuses `Hl2Backend`'s host-side WDSP TX modulator (`hostModulates` +
+  `takesTxAudioOverSeam`) and `RtlSdrBackend`'s worker-thread/DDC shape for
+  RX; the one new piece is an RX↔TX arbitration state machine, since
+  libhackrf's USB transport is genuinely half-duplex (unlike HL2's
+  concurrent-IQ Ethernet link). No software-enforced TX power cap or
+  acknowledgment flow — matches how Anan/RtlSdr's `experimental` label
+  already works; the operator is trusted with their own filtering, same as
+  any other radio. **Explicitly out of scope:** SSB TX, and full-duplex
+  split operation for linear-transponder satellites (AO-7, FO-29-class —
+  needs simultaneous RX+TX to self-monitor through the transponder, which
+  one HackRF cannot do alone and AetherSDR has no existing split-operation
+  concept for). Fork-only — not intended for upstream. Full design:
+  [`docs/superpowers/specs/2026-09-16-hackrf-backend-design.md`](docs/superpowers/specs/2026-09-16-hackrf-backend-design.md).
 - **HL2 span-following FFT bin count** — named fast-follow from the
   Hermes-Lite 2 supported-promotion (`docs/adr/0001-hermes-lite-2-supported.md`,
   shipped v26.9.2). The other accepted cost from that ADR — the span-change
