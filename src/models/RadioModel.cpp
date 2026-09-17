@@ -545,6 +545,21 @@ void RadioModel::flushPendingOperatingState()
     persistOperatingState(true);
 }
 
+bool RadioModel::backendDeclaresExtension(const QString& ns) const
+{
+    // extensionNamespaces is the backend's declaration of which verb families it
+    // answers, and IRadioBackend.h states the contract normatively: "Clients
+    // discover available namespaces via capabilities().extensionNamespaces."
+    //
+    // M0 (#5263) gave the field its first production readers in MainWindow's
+    // `sim` gate, so M1's "a declared handshake nobody reads" was already not
+    // quite literal. The precise claim it leaves true is the one this fixes: no
+    // invokeExtension PRE-CHECK read it — every one asked the family string
+    // instead, which is a subtly different question and excludes any future
+    // backend that answers the same verbs without carrying that family name.
+    return m_backend && m_backend->capabilities().extensionNamespaces.contains(ns);
+}
+
 void RadioModel::invokeBackendExtension(const QString& ns, const QString& verb,
                                         quint64 requestId, const QVariant& arg)
 {
@@ -556,7 +571,15 @@ void RadioModel::invokeBackendExtension(const QString& ns, const QString& verb,
 
 void RadioModel::setPcAudioEnabled(bool on)
 {
-    if (!m_backend || m_backend->capabilities().family != QLatin1String("icom")) {
+    // Gated on the DECLARED NAMESPACE, not on the family string (#5262 M1).
+    // The question this asks is "will this backend answer the icom namespace?",
+    // and extensionNamespaces is the handshake that states it — a backend
+    // pre-checks it before issuing invokeExtension(). Keying off family instead
+    // is the trap docs/architecture/radio-capabilities-map.md names: a gate that
+    // "looks identical to one that works" while asking a different question.
+    // It also silently excludes anything that speaks the icom verbs without
+    // being family "icom" — a gateway, or an Icom variant backend.
+    if (!backendDeclaresExtension(QStringLiteral("icom"))) {
         return;
     }
     m_backend->invokeExtension(QStringLiteral("icom"),
@@ -565,7 +588,8 @@ void RadioModel::setPcAudioEnabled(bool on)
 
 void RadioModel::notePcAudioEnabled(bool on)
 {
-    if (!m_backend || m_backend->capabilities().family != QLatin1String("icom")) {
+    // Same rule as setPcAudioEnabled above: the namespace is the contract.
+    if (!backendDeclaresExtension(QStringLiteral("icom"))) {
         return;
     }
     m_backend->invokeExtension(QStringLiteral("icom"),
@@ -1100,12 +1124,24 @@ void RadioModel::setupBackend(const QString& family)
     // capability flag, which is right: a Flex forbids mic-input selection too
     // and still publishes MICPEAK, so only the meter's absence means the face
     // can never move. But applyCapabilitiesToUi() runs on capabilitiesChanged,
-    // and FlexBackend never emits it — of the four backends only Sim and Icom
-    // do (#5262 M1 makes emission a contract and retires this compensation).
-    // So on a Flex the gate ran exactly once, at connect, while
-    // m_micPeakIdx was still -1, and hid a gauge that was about to start
-    // working. Its visibility then depended on whether an unrelated oscillator
-    // or GPS status message happened to land afterwards.
+    // so on a Flex the gate ran exactly once, at connect, while m_micPeakIdx was
+    // still -1, and hid a gauge that was about to start working. Its visibility
+    // then depended on whether an unrelated oscillator or GPS status message
+    // happened to land afterwards.
+    //
+    // THIS COMPENSATION STAYS. #5262 M1 assumed backend emission would retire
+    // it; #5594 item 5 checked that assumption and it does not hold. M1 makes
+    // every backend announce revisions of its RadioCapabilities (FlexBackend
+    // now emits on the model-name status, Hl2Backend on a receiver-ceiling
+    // move), but hasMicPeakMeter() is a fact about the METER CATALOGUE, not a
+    // RadioCapabilities field — publishCapabilities() below copies capability
+    // fields only and never reads MeterModel. So a capability announcement does
+    // not cover a meter-list edge, and nothing else re-runs the gate when the
+    // MICPEAK or supply-voltage meter appears or disappears.
+    //
+    // Retiring it properly means making the meter catalogue a capability input,
+    // which is a separate change with its own wire consequences under the
+    // aetherd control protocol (#3849). Not folded in here.
     connect(m_backend.get(), &IRadioBackend::meterDefined, this,
             [this](const MeterDef& def) {
         const bool hadMicPeak = m_meterModel.hasMicPeakMeter();
@@ -3934,8 +3970,10 @@ void RadioModel::finishRadioWake(const QString& message, bool success)
 
 bool RadioModel::wakeIcomRadio(int modelId, int address, QString* error)
 {
-    if (m_radioWakeActive || m_family != QLatin1String("icom") || !isConnected()
-        || !m_backend || m_lastInfo.address.isNull()) {
+    // Namespace, not family (#5262 M1): this reaches for the icom `power.wake`
+    // verb, so the question is whether the backend answers that namespace.
+    if (m_radioWakeActive || !backendDeclaresExtension(QStringLiteral("icom"))
+        || !isConnected() || m_lastInfo.address.isNull()) {
         if (error) { *error = tr("Connect to the Icom network first, and finish any active wake."); }
         return false;
     }

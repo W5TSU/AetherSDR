@@ -712,6 +712,7 @@ set(CORE_SOURCES
     src/core/backends/sim/NoiseMixer.cpp                 # demo mode — audio engine (RFC #4288 Phase 2b)
     src/core/backends/hl2/MetisProtocol.cpp  # aetherd HL2 Phase 1a (HPSDR Protocol 1)
     src/core/backends/hl2/MetisClient.cpp    # aetherd HL2 Phase 1a (UDP wire + RX ingest)
+    src/core/backends/hl2/Hl2ControlRequest.cpp # RQST/ACK: one outstanding, echo-matched (§13 item 13)
     src/core/backends/hl2/Hl2EmergencyStop.cpp # release the radio from a signal handler
     src/core/backends/hl2/Hl2Receivers.cpp   # per-receiver index-space map (docs/HERMES.md §12.5)
     src/core/backends/hl2/Hl2Spectrum.cpp    # aetherd HL2 Phase 1a (FFT panadapter, FFTW)
@@ -719,6 +720,8 @@ set(CORE_SOURCES
     src/core/backends/hl2/Hl2TxDsp.cpp       # SSB transmit chain (TX audio -> baseband IQ)
     src/core/backends/hl2/Hl2Backend.cpp     # aetherd HL2 Phase 1b (IRadioBackend impl)
     src/core/backends/hl2/Hl2Discovery.cpp   # aetherd HL2 Phase 1c (HPSDR discovery -> picker)
+    src/core/backends/hl2/Hl2TelemetryPoller.cpp # stream-free telemetry on port 1025 (#15)
+    src/core/backends/hl2/Hl2TelemetryService.cpp # owns the poller ABOVE the backend (#15)
     src/core/backends/hl2/Hl2Settings.cpp    # owned config object, "Hl2" root key (Principle V)
     src/core/backends/hl2/Hl2MiscOptionsSettings.cpp # "HermesLiteOptions" root key (Principle V)
     src/core/backends/hl2/Hl2FilterBoardSettings.cpp # "Hl2FilterBoard" root key (Principle V)

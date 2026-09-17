@@ -175,6 +175,14 @@ target_compile_definitions(control_connection_test PRIVATE AETHERSDR_VERSION="${
 target_link_libraries(control_connection_test PRIVATE Qt6::Core Qt6::Network)
 add_test(NAME control_connection_test COMMAND control_connection_test)
 
+# #5594 (M1): backends announce capability revisions. Socket-free — FlexBackend's
+# radio-status decode is driven directly, and the RTL case asserts the opposite
+# claim (a declaration that is fixed per session emits nothing).
+add_executable(backend_capability_revision_test tests/backend_capability_revision_test.cpp)
+target_include_directories(backend_capability_revision_test PRIVATE src tests)
+target_link_libraries(backend_capability_revision_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME backend_capability_revision_test COMMAND backend_capability_revision_test)
+
 # ATU start on the IRadioBackend seam passes the TX gate (#5558): injected
 # backend records setAtu(); no sockets, no radio.
 add_executable(atu_seam_gate_test tests/atu_seam_gate_test.cpp)
@@ -590,6 +598,16 @@ add_executable(hl2_settings_persistence_test tests/hl2_settings_persistence_test
 target_include_directories(hl2_settings_persistence_test PRIVATE src tests)
 target_link_libraries(hl2_settings_persistence_test PRIVATE aethercore Qt6::Core)
 add_test(NAME hl2_settings_persistence_test COMMAND hl2_settings_persistence_test)
+
+# HL2 wideband bandscope (EP4) parser — the 12-bit ADC codes, the 20-bit
+# sequence counter and its forward-gap guard. Same shape as the target above:
+# compiles MetisProtocol.cpp directly, no Qt, no aethercore, no socket. Its
+# sequence expectations replay tests/Hl2Ep4ArrivalsD94.h, a recorded bench leg.
+add_executable(hl2_ep4_bandscope_test
+    tests/hl2_ep4_bandscope_test.cpp
+    src/core/backends/hl2/MetisProtocol.cpp)
+target_include_directories(hl2_ep4_bandscope_test PRIVATE src tests)
+add_test(NAME hl2_ep4_bandscope_test COMMAND hl2_ep4_bandscope_test)
 
 # HL2 IO-board push scheduling — pure policy, standalone (no Qt, no radio).
 add_executable(hl2_io_board_policy_test
@@ -3499,6 +3517,20 @@ endif()
 set_target_properties(meter_model_test PROPERTIES AUTOMOC ON)
 add_test(NAME meter_model_test COMMAND meter_model_test)
 
+# The meter join: kMeterSurfaces against kMeterTable, and the HL2 wiring that
+# has to exist for a surface row to be true. Header-only on the consumer side
+# and text on the producer side, so it links neither RadioCertification nor the
+# backend — see the file's own header for why that is the only way the two
+# tables can be compared at all.
+add_executable(meter_surfaces_test
+    tests/meter_surfaces_test.cpp
+)
+target_include_directories(meter_surfaces_test PRIVATE src)
+target_compile_definitions(meter_surfaces_test PRIVATE
+    AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(meter_surfaces_test PRIVATE Qt6::Core)
+add_test(NAME meter_surfaces_test COMMAND meter_surfaces_test)
+
 add_executable(health_applet_test
     tests/health_applet_test.cpp
     src/gui/HealthApplet.cpp
@@ -3774,6 +3806,22 @@ target_include_directories(hl2_tx_gate_test PRIVATE src)
 target_link_libraries(hl2_tx_gate_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_gate_test COMMAND hl2_tx_gate_test)
 
+# HL2 RQST/ACK state machine (docs/HERMES.md §13 item 13, oracle §5) — pure
+# policy, standalone (no Qt, no socket, no radio). The clock is EP6 frames.
+add_executable(hl2_rqst_ack_test
+    tests/hl2_rqst_ack_test.cpp
+    src/core/backends/hl2/Hl2ControlRequest.cpp
+    src/core/backends/hl2/MetisProtocol.cpp)
+target_include_directories(hl2_rqst_ack_test PRIVATE src)
+add_test(NAME hl2_rqst_ack_test COMMAND hl2_rqst_ack_test)
+
+# RQST/ACK where it meets the wire — socket-free, on MetisClient's own packet
+# builder and its EP6 response path.
+add_executable(hl2_rqst_ack_client_test tests/hl2_rqst_ack_client_test.cpp)
+target_include_directories(hl2_rqst_ack_client_test PRIVATE src)
+target_link_libraries(hl2_rqst_ack_client_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_rqst_ack_client_test COMMAND hl2_rqst_ack_client_test)
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
@@ -3781,6 +3829,30 @@ add_executable(hl2_band_filter_frame_test tests/hl2_band_filter_frame_test.cpp)
 target_include_directories(hl2_band_filter_frame_test PRIVATE src)
 target_link_libraries(hl2_band_filter_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_band_filter_frame_test COMMAND hl2_band_filter_frame_test)
+
+# HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
+# socket. Binds nothing: recorded datagrams go straight into MetisClient's
+# drain path through the MetisClientTestAccess friend seam.
+# Its section 8 carries the same claim up to the IRadioBackend seam — the
+# health rows and the bandscope.enable verb on a default-constructed
+# Hl2Backend, which needs no socket because m_connected is the only thing a
+# peer buys. The positive path is certified against hardware, not faked here.
+# That section lives in this target and not in tests/hl2_backend_test.cpp,
+# which the retired-fixtures block below leaves with no target at all.
+add_executable(hl2_ep4_ingest_test tests/hl2_ep4_ingest_test.cpp)
+target_include_directories(hl2_ep4_ingest_test PRIVATE src tests)
+target_link_libraries(hl2_ep4_ingest_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ep4_ingest_test COMMAND hl2_ep4_ingest_test)
+
+# HL2 wideband bandscope duty-cycle gate — the four-state machine, its guard
+# timer and the transmit interlocks. Socket-free and event-loop-free: recorded
+# enable/disable cycles go in through the same MetisClientTestAccess seam and
+# both timers are fired by hand. Qt6::Test is for QSignalSpy, which is how
+# "one block per arming cycle, never one per packet" is asserted.
+add_executable(hl2_ep4_gate_test tests/hl2_ep4_gate_test.cpp)
+target_include_directories(hl2_ep4_gate_test PRIVATE src tests)
+target_link_libraries(hl2_ep4_gate_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME hl2_ep4_gate_test COMMAND hl2_ep4_gate_test)
 
 add_executable(hl2_dbref_test tests/hl2_dbref_test.cpp)
 target_include_directories(hl2_dbref_test PRIVATE src)
@@ -3810,6 +3882,13 @@ target_include_directories(radiomodel_pan_range_null_test PRIVATE src)
 target_link_libraries(radiomodel_pan_range_null_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME radiomodel_pan_range_null_test COMMAND radiomodel_pan_range_null_test)
 
+
+# #5262 M1: family-specific verbs gate on the declared extension namespace, not
+# on the family string. Socket-free.
+add_executable(extension_namespace_gate_test tests/extension_namespace_gate_test.cpp)
+target_include_directories(extension_namespace_gate_test PRIVATE src)
+target_link_libraries(extension_namespace_gate_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME extension_namespace_gate_test COMMAND extension_namespace_gate_test)
 
 add_executable(radiomodel_tnf_removal_status_test tests/radiomodel_tnf_removal_status_test.cpp)
 target_include_directories(radiomodel_tnf_removal_status_test PRIVATE src)
@@ -4689,6 +4768,28 @@ add_executable(hl2_overload_policy_test
 )
 target_include_directories(hl2_overload_policy_test PRIVATE src)
 add_test(NAME hl2_overload_policy_test COMMAND hl2_overload_policy_test)
+# HERMES.md §13 item 16: the pre-DDC overload flag paired with WDSP's post-DDC
+# RXA_ADC_PK. Header-only and Qt-free, like the overload policy above and for
+# the same reason — the interesting branches need a saturated converter, which
+# no test can arrange.
+add_executable(hl2_adc_pairing_test
+    tests/hl2_adc_pairing_test.cpp
+)
+target_include_directories(hl2_adc_pairing_test PRIVATE src)
+add_test(NAME hl2_adc_pairing_test COMMAND hl2_adc_pairing_test)
+
+# The same pairing, at the seam rather than as a table. adcPairing() is pure and
+# hl2_adc_pairing_test covers it exhaustively; what that cannot cover is WHEN
+# Hl2Backend's sampling argument changes relative to when Hl2RxDsp actually
+# stops and starts sampling, because the flags are set synchronously and the
+# mute they imply rides a queued connection. This drives a real Hl2RxDsp across
+# that window, so it needs the core library and an event loop.
+add_executable(hl2_adc_sampling_seam_test
+    tests/hl2_adc_sampling_seam_test.cpp
+)
+target_include_directories(hl2_adc_sampling_seam_test PRIVATE src)
+target_link_libraries(hl2_adc_sampling_seam_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME hl2_adc_sampling_seam_test COMMAND hl2_adc_sampling_seam_test)
 add_executable(hl2_dsp_setup_policy_test
     tests/hl2_dsp_setup_policy_test.cpp
 )
@@ -4742,6 +4843,58 @@ add_executable(hl2_band_memory_test
 )
 target_include_directories(hl2_band_memory_test PRIVATE src)
 add_test(NAME hl2_band_memory_test COMMAND hl2_band_memory_test)
+# HL2 stream-free telemetry poll cadence -- pure header policy, no Qt, no socket.
+# The rule is the only part of the poller with a judgement in it; see
+# docs/architecture/hl2-stream-free-telemetry.md section 3 for the derivation.
+add_executable(hl2_telemetry_cadence_test
+    tests/hl2_telemetry_cadence_test.cpp
+)
+target_include_directories(hl2_telemetry_cadence_test PRIVATE src)
+add_test(NAME hl2_telemetry_cadence_test COMMAND hl2_telemetry_cadence_test)
+
+# The tick/mirror ALIASING the cadence rule cannot catch on its own: a counter
+# mirrored at 1 Hz, sampled by a 1 Hz tick, reports a healthy stream as stalled.
+# Pure, no Qt -- it replays a publish/tick trace, and keeps the OLD predicate as
+# a negative control so the trace is proved to discriminate rather than assumed
+# to.
+add_executable(hl2_link_state_alias_test
+    tests/hl2_link_state_alias_test.cpp
+)
+target_include_directories(hl2_link_state_alias_test PRIVATE src)
+add_test(NAME hl2_link_state_alias_test COMMAND hl2_link_state_alias_test)
+
+# telemetrySource policy + the health-snapshot merge, as pure functions both
+# call sites use. Truth table rather than a scenario: the row exists to tell two
+# states apart, so a test seeing only one answer proves nothing.
+add_executable(hl2_telemetry_source_test tests/hl2_telemetry_source_test.cpp)
+target_include_directories(hl2_telemetry_source_test PRIVATE src)
+target_link_libraries(hl2_telemetry_source_test PRIVATE Qt6::Core)
+add_test(NAME hl2_telemetry_source_test COMMAND hl2_telemetry_source_test)
+
+# The WIRE between the cadence rule and the backend that must ask it. Links
+# aethercore because it constructs a real Hl2Backend -- the point is that the
+# BACKEND drives the service, which no service-level test can check.
+add_executable(hl2_telemetry_wire_test tests/hl2_telemetry_wire_test.cpp)
+target_include_directories(hl2_telemetry_wire_test PRIVATE src tests)
+target_link_libraries(hl2_telemetry_wire_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME hl2_telemetry_wire_test COMMAND hl2_telemetry_wire_test)
+
+# HL2 stream-free telemetry SERVICE -- must answer with no backend and no
+# connection, which is the state the whole feature exists for. Needs Qt (timer)
+# but no aethercore and no radio.
+#
+# SOCKET-FREE, and by construction rather than by care: it never gives the
+# service a target, and with no target and the broadcast fallback off the
+# poller sends nothing. Nothing is bound, nothing is sent, and no peer exists.
+add_executable(hl2_telemetry_service_test
+    tests/hl2_telemetry_service_test.cpp
+    src/core/backends/hl2/Hl2TelemetryService.cpp
+    src/core/backends/hl2/Hl2TelemetryPoller.cpp
+    src/core/backends/hl2/MetisProtocol.cpp
+)
+target_include_directories(hl2_telemetry_service_test PRIVATE src)
+target_link_libraries(hl2_telemetry_service_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME hl2_telemetry_service_test COMMAND hl2_telemetry_service_test)
 add_executable(slice_link_policy_test
     tests/slice_link_policy_test.cpp
 )
@@ -5136,6 +5289,10 @@ target_link_libraries(CAT_Flex_test PRIVATE Qt6::Core Qt6::Network)
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
     atu_seam_gate_test
+    backend_capability_revision_test
+    radio_capacity_declaration_test
+    extension_namespace_gate_test
+    tx_operation_integration_test
     backend_slice_lifecycle_test
     client_display_settings_test
     gui_nested_lifetime_test
