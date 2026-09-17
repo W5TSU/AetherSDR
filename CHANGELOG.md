@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.9] — 2026-09-17
+
+### Synced with upstream — 37 commits (#33, #34, #35, #36)
+
+Nested-dialog lifetime crashes, a WSJT-X band-leak fix, spectrum/VFO and
+macOS GPU-spectrum crash fixes, firmware-upload byte accounting, D-STAR
+waveform gating, recorder filename-collision and incomplete-write handling,
+CW decoder thread races, and settings-database preservation on init
+failures. **WDSP refreshed to 2.10** with an upstream use-after-free fix,
+alongside the **RTL receiver lifecycle foundation** (RFC #5468). A dense
+**Hermes-Lite 2 cluster**: AGC ceiling referred to the LNA dB reference with
+a real upper clamp, a general-purpose register RQST/ACK mechanism alongside
+the existing I2C one, **wideband bandscope (EP4) decode**
+(automation-bridge-only, no UI), ADC overload/peak diagnostic pairing,
+capability-revision announcements, reduction-only ALC with a
+widened/migrated mic-gain curve, and extension-namespace-based verb gating.
+
 ## [v26.9.8] — 2026-09-13
 
 ### Synced with upstream — 32 commits (#23)
