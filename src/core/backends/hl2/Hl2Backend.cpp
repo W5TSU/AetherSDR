@@ -8,6 +8,7 @@
 
 #include "core/backends/hl2/Hl2ModeTable.h"
 #include "core/backends/hl2/Hl2RxDsp.h"
+#include "core/dsp/WdspProcessTally.h"
 #include "core/backends/hl2/Hl2TxDsp.h"
 #include "core/backends/hl2/Hl2AdcPairing.h"
 #include "core/backends/hl2/Hl2BandMemoryPolicy.h"
@@ -5511,6 +5512,104 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     //
     // And per IRadioBackend.h: "Purely for display — nothing in the app makes a
     // decision from it." Nothing reads these rows back.
+    // ---- what WDSP did with the IQ, per receiver ----
+    //
+    // THE DSP-SIDE TWIN OF "Dropped EP6 packets" ABOVE. That row counts
+    // samples the WIRE lost; these count blocks the DSP refused to turn into
+    // audio. Both end as "the audio sounds wrong", and until now only one of
+    // them was answerable: every non-`Ok` WdspChannel::ProcessResult was a
+    // bare `continue` in Hl2RxDsp::processIqBlock, so a chain that had
+    // produced no audio for a minute because WDSP was returning EngineError
+    // on every block was indistinguishable from one whose pipeline was
+    // filling normally.
+    //
+    // UNDERRUNS GET THEIR OWN ROW and are not added to the fault row, because
+    // they are NORMAL: fexchange2 returns -2 whenever the asynchronous output
+    // side has nothing ready, which is every block of a fresh connect and a
+    // routine occurrence thereafter. A reader who sees a four-figure
+    // "underruns" folded into "faults" on a perfectly healthy radio learns to
+    // ignore the row, which is this instrument failing at its own purpose.
+    //
+    // ABSENT UNTIL A BLOCK HAS BEEN PROCESSED, per put()'s contract: a
+    // receiver between rebuilds, or one that has never seen IQ, reports "not
+    // reported" rather than a row of confident zeros. Zero faults out of zero
+    // blocks is not a clean bill of health.
+    //
+    // DISPLAY ONLY, like every other row here -- nothing in the app makes a
+    // decision from these. The machine-readable form is
+    // Hl2RxDsp::processTally(), which returns the six counts as integers.
+    bool dspSectionOpen = false;
+    for (const auto& ids : m_ids.all()) {
+        const Receiver* r = rx(ids.ddcIndex);
+        // Heading attached to the FIRST key actually emitted, not to a
+        // guessed "dspBlocks0": with no receivers this loop emits nothing,
+        // and a heading keyed to a row that was never put() is a section
+        // title with no section under it.
+        if (!dspSectionOpen) {
+            section(QStringLiteral("dspBlocks%1").arg(ids.uiNumber).toUtf8().constData(),
+                    QStringLiteral("Receive DSP"));
+            dspSectionOpen = true;
+        }
+        const QString suffix = m_ids.size() > 1
+                                   ? QStringLiteral(" (RX%1)").arg(ids.uiNumber + 1)
+                                   : QString();
+        const WdspProcessTally::Counts tally =
+            r && r->dsp ? r->dsp->processTally() : WdspProcessTally::Counts{};
+        const bool seen = tally.blocks() > 0;
+        put(QStringLiteral("dspBlocks%1").arg(ids.uiNumber).toUtf8().constData(),
+            QStringLiteral("DSP blocks processed") + suffix,
+            seen ? QVariant(static_cast<qulonglong>(tally.blocks())) : QVariant());
+        put(QStringLiteral("dspUnderruns%1").arg(ids.uiNumber).toUtf8().constData(),
+            QStringLiteral("DSP pipeline underruns (normal)") + suffix,
+            seen ? QVariant(static_cast<qulonglong>(tally.underrun)) : QVariant());
+        // ONE ROW, NAMING THE KINDS, rather than four rows of mostly zeros.
+        // Which kind it is changes the diagnosis completely -- an allocation
+        // on the real-time path is a code defect, a `Busy` is a lost control
+        // race, an engine error is WDSP refusing the data -- so the kinds
+        // cannot be summed away; but three of the four are zero on every
+        // radio that has ever worked, and four permanently-zero rows per
+        // receiver is how a dialog stops being read.
+        QString faults;
+        if (tally.faults() == 0) {
+            faults = QStringLiteral("none");
+        } else {
+            QStringList parts;
+            if (tally.allocationViolation)
+                parts << QStringLiteral("allocation on the real-time path %1")
+                             .arg(tally.allocationViolation);
+            if (tally.engineError)
+                parts << QStringLiteral("WDSP engine error %1").arg(tally.engineError);
+            if (tally.invalidBuffer)
+                parts << QStringLiteral("invalid buffer geometry %1")
+                             .arg(tally.invalidBuffer);
+            if (tally.busy)
+                parts << QStringLiteral("busy %1").arg(tally.busy);
+            faults = QStringLiteral("%1 - %2")
+                         .arg(tally.faults())
+                         .arg(parts.join(QStringLiteral(", ")));
+        }
+        put(QStringLiteral("dspProcessFaults%1").arg(ids.uiNumber).toUtf8().constData(),
+            QStringLiteral("DSP processing faults") + suffix,
+            seen ? QVariant(faults) : QVariant());
+        // THE SAME FACT AS A NUMBER, because the row above is the only form a
+        // SCRIPT can see and it is prose. healthSnapshot() feeds the automation
+        // bridge's `health` verb, which exists -- in its own documentation's
+        // words -- because these rows "until now reached nothing else and so
+        // were unavailable to a script or a regression test". Leaving the count
+        // only inside "3 - WDSP engine error 3" makes a soak test's best
+        // available assertion `!= "none"`, and makes that QString format a
+        // contract by accident. Hl2RxDsp::processTally() is the machine-readable
+        // form, but nothing on the bridge can reach it.
+        //
+        // ONE row, not four. The per-kind split stays prose for the reason
+        // given above -- three of the four kinds are zero on every radio that
+        // has ever worked. What a script actually needs is a threshold on the
+        // total, and that is what this is. Caught by aethersdr-agent on #5738.
+        put(QStringLiteral("dspFaultCount%1").arg(ids.uiNumber).toUtf8().constData(),
+            QStringLiteral("DSP processing faults (count)") + suffix,
+            seen ? QVariant(static_cast<qulonglong>(tally.faults())) : QVariant());
+    }
+
     // WITH the clip flag, not with the link counters. These are the AD9866's
     // own scale and their entire justification is that they are commensurable
     // with adcOverload, which sits under "Converter" — reporting them under
