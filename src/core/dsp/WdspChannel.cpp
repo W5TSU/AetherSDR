@@ -13,6 +13,7 @@
 #include <new>
 #include <string>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #include <process.h>
@@ -40,8 +41,11 @@ std::mutex g_channelMutex;
 std::mutex g_setupMutex;
 std::array<bool, kWdspChannelCount> g_channelsInUse {};
 
-// WDSP builds its FFTs with FFTW_PATIENT (35 plans per channel), which re-runs
-// exhaustive measurement on every OpenChannel — ~a minute per channel open.
+// WDSP builds its FFTs with FFTW_PATIENT — ~220 planner calls per RX channel
+// open, over 11 distinct (transform kind, size) pairs — which re-runs exhaustive
+// measurement on every OpenChannel: ~a minute per channel open. It is the
+// distinct set that wisdom covers, so the repeats are already free; WDSP 2.10
+// added 3 calls and 2 of those pairs (NNR's 512-point r2c/c2r).
 // FFTW wisdom is global: prime it once from a persisted cache so those plans are
 // imported instantly. First run still measures (and caches); later runs import.
 // Called under g_setupMutex, so this global FFTW-planner I/O never races a
@@ -208,18 +212,6 @@ void armWisdomExportOnce()
     std::call_once(flag, [] { std::atexit([] { exportWisdomNow(); }); });
 }
 
-int acquireChannelId()
-{
-    const std::scoped_lock lock(g_channelMutex);
-    for (int channel = 0; channel < kWdspChannelCount; ++channel) {
-        if (!g_channelsInUse[static_cast<std::size_t>(channel)]) {
-            g_channelsInUse[static_cast<std::size_t>(channel)] = true;
-            return channel;
-        }
-    }
-    return -1;
-}
-
 void releaseChannelId(int channel)
 {
     if (channel < 0 || channel >= kWdspChannelCount) {
@@ -289,25 +281,92 @@ std::unique_ptr<WdspChannel> WdspChannel::create(const Config& config,
     if (!validateConfig(config, error)) {
         return nullptr;
     }
-    if (GetWDSPVersion() != 200) {
-        setError(error, "The linked WDSP library is not version 2.00");
+    if (GetWDSPVersion() != 210) {
+        setError(error, "The linked WDSP library is not version 2.10");
         return nullptr;
     }
-
-    const int channelId = acquireChannelId();
-    if (channelId < 0) {
+    std::optional<Reservation> reservation = reserveChannels(1);
+    if (!reservation) {
         setError(error, "All WDSP channel slots are in use");
         return nullptr;
     }
+    return create(config, *reservation, error);
+}
+
+std::unique_ptr<WdspChannel> WdspChannel::create(const Config& config,
+    Reservation& reservation, std::string* error) noexcept
+{
+    if (!validateConfig(config, error)) {
+        return nullptr;
+    }
+    if (GetWDSPVersion() != 210) {
+        setError(error, "The linked WDSP library is not version 2.10");
+        return nullptr;
+    }
+    if (reservation.m_count == 0) {
+        setError(error, "No reserved WDSP channel slots remain");
+        return nullptr;
+    }
+    const int channelId = reservation.m_ids[reservation.m_count - 1];
 
     std::unique_ptr<WdspChannel> channel(new (std::nothrow) WdspChannel(channelId, config));
     if (!channel) {
-        releaseChannelId(channelId);
         setError(error, "Could not allocate the WDSP channel owner");
         return nullptr;
     }
+    --reservation.m_count;
     channel->open();
     return channel;
+}
+
+std::optional<WdspChannel::Reservation> WdspChannel::reserveChannels(std::size_t count)
+{
+    if (count == 0 || count > kWdspChannelCount) {
+        return std::nullopt;
+    }
+    Reservation reservation;
+    const std::scoped_lock lock(g_channelMutex);
+    for (int id = 0; id < kWdspChannelCount && reservation.m_count < count; ++id) {
+        if (!g_channelsInUse[static_cast<std::size_t>(id)]) {
+            reservation.m_ids[reservation.m_count++] = id;
+        }
+    }
+    if (reservation.m_count != count) {
+        // Nothing was acquired: failed batches cannot consume a partial pool.
+        reservation.m_count = 0;
+        return std::nullopt;
+    }
+    for (std::size_t index = 0; index < count; ++index) {
+        g_channelsInUse[static_cast<std::size_t>(reservation.m_ids[index])] = true;
+    }
+    return reservation;
+}
+
+WdspChannel::Reservation::Reservation(Reservation&& other) noexcept
+    : m_ids(other.m_ids), m_count(std::exchange(other.m_count, 0))
+{
+}
+
+WdspChannel::Reservation& WdspChannel::Reservation::operator=(Reservation&& other) noexcept
+{
+    if (this != &other) {
+        release();
+        m_ids = other.m_ids;
+        m_count = std::exchange(other.m_count, 0);
+    }
+    return *this;
+}
+
+WdspChannel::Reservation::~Reservation()
+{
+    release();
+}
+
+void WdspChannel::Reservation::release() noexcept
+{
+    while (m_count != 0) {
+        releaseChannelId(m_ids[--m_count]);
+    }
 }
 
 WdspChannel::WdspChannel(int channelId, const Config& config) noexcept
