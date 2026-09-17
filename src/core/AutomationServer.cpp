@@ -8037,12 +8037,16 @@ QJsonObject AutomationServer::doBandscope(const QString& action)
     const quint64 rid = ++m_extensionRequestId;
     auto okConn = connect(backend, &IRadioBackend::extensionResult, this,
                           [&](quint64 id, const QVariant&) {
-        if (id != rid) return;
+        if (id != rid) {
+            return;
+        }
         answered = true;
     }, Qt::DirectConnection);
     auto errConn = connect(backend, &IRadioBackend::extensionError, this,
                            [&](quint64 id, const QString& msg) {
-        if (id != rid) return;
+        if (id != rid) {
+            return;
+        }
         answered = true;
         failed = true;
         failure = msg;
