@@ -245,8 +245,10 @@ void Hl2TxDsp::processAudioBlock(const std::vector<float>& mono,
     // Below alcTargetPeak the ceiling binds, the gain sits at exactly 1.0, and
     // output is proportional to input over the whole reported range — the
     // property hl2_txdsp_test now asserts directly, as 20 dB in arriving as
-    // 20 dB out. Above the target the loop reduces on its 5 ms attack, so the
-    // response degrades to smooth limiting instead of clipping.
+    // 20 dB out. Above the target the loop takes the reduction IMMEDIATELY —
+    // see the note at the assignment below for why the 5 ms attack constant
+    // this sentence used to name was deleted in 5607b565 (#5646) rather than
+    // shortened.
     //
     // `clientLeveled` no longer reaches this loop. It selected the ceiling and
     // qualified the hold, and both are gone; see the note on the declaration in

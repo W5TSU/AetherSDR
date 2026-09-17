@@ -91,10 +91,25 @@ namespace AetherSDR::hl2 {
 // asserts it over the WHOLE run rather than the settled tail, because the
 // settled tail is precisely the half that cannot see this.
 //
-// At 0 nothing transmits, as a plain 0.0x multiply on every path. That is the honest
-// reading of a slider at the bottom of its travel on a host modulator — there
-// is one modulator and it is off — but it is worth knowing before parking the
-// control at 0 between voice sessions.
+// This paragraph described the key-on seed until `5607b565` (#5646) replaced
+// it. The seed is gone, `Config::alcAttackSec` with it, and Hl2TxDsp.cpp's own
+// comment records why it was rejected.
+//
+// IT DOES NOT REACH ENGINE-GENERATED AUDIO, SO 0 DOES NOT SILENCE A BEACON.
+// Hl2TxDsp::processAudioBlock substitutes 1.0 for this multiplier when the
+// source is TxAudioSource::EngineGenerated — the WSPR pump, and nothing else —
+// so a beacon goes out at the level its generator chose and this slider does not
+// move it, at 0 or anywhere else.
+//
+// That is deliberate: a microphone control has no business moving, or muting,
+// an unattended transmission, and yoking a beacon to the level an operator
+// picked for their voice was the defect. But it retires a claim this comment
+// used to make — "at 0 nothing transmits, as a plain 0.0x multiply on every
+// path" — and that claim was a safety property an operator could have leaned
+// on. IT IS NO LONGER TRUE. Parking this control at 0 between voice sessions
+// silences the microphone and the TCI/DAX path; it does not silence the
+// transmitter. Whatever is generating an unattended transmission is what stops
+// it — the beacon's own control, not this one.
 [[nodiscard]] inline double micSliderToLinear(int level) noexcept
 {
     if (level <= 0)
