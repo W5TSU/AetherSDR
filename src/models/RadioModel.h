@@ -81,7 +81,6 @@ class RadioModel : public QObject {
     Q_PROPERTY(QString model       READ model       NOTIFY infoChanged)
     Q_PROPERTY(QString version     READ version     NOTIFY infoChanged)
     Q_PROPERTY(bool    connected   READ isConnected NOTIFY connectionStateChanged)
-    Q_PROPERTY(float   paTemp      READ paTemp      NOTIFY metersChanged)
     Q_PROPERTY(float   txPower     READ txPower     NOTIFY metersChanged)
 
 public:
@@ -118,6 +117,7 @@ public:
 
     // Sub-models owned by RadioModel (main thread). (#502)
     MeterModel&       meterModel()       { return m_meterModel; }
+    const MeterModel& meterModel() const { return m_meterModel; }
 
     // PROOF OF LIFE, per data class, in milliseconds since the last arrival.
     //
@@ -200,7 +200,6 @@ public:
     void setFullDuplex(bool on) { m_fullDuplex = on; emit infoChanged(); }
     bool transmitFrequencyCheck() const { return m_transmitFrequencyCheck; }
     void setTransmitFrequencyCheck(bool on);
-    float paTemp()    const { return m_paTemp; }
     float txPower()   const { return m_txPower; }
     bool  isRadioTransmitting() const { return m_radioTransmitting; }
     // True when the interlock's tx_client_handle is this client (or has
@@ -1835,7 +1834,6 @@ private:
     QString     m_version;          // software version from discovery (e.g. "4.1.5")
     QString     m_versionLabel;     // display-only word for it (Gateware on an HL2)
     QString     m_protocolVersion;  // protocol version from V line (e.g. "1.4.0.0")
-    float       m_paTemp{0.0f};
     float       m_txPower{0.0f};
     QString     m_chassisSerial;
     QString     m_callsign;
