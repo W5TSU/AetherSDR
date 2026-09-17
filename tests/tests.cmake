@@ -66,6 +66,20 @@ unset(_aether_stray_targets)
 unset(_aether_stray_registrations)
 
 
+# CwDecoder public lifecycle/configuration race regression. Generated 24 kHz
+# stereo float CW drives the real worker/GGMorse path; no sockets or radio.
+add_executable(cw_decoder_parameters_test
+    tests/cw_decoder_parameters_test.cpp
+    src/core/CwDecoder.cpp
+    ${GGMORSE_SOURCES}
+)
+target_include_directories(cw_decoder_parameters_test PRIVATE
+    src src/core third_party/ggmorse/include third_party/ggmorse/src)
+target_link_libraries(cw_decoder_parameters_test PRIVATE Qt6::Core)
+add_test(NAME cw_decoder_parameters_test COMMAND cw_decoder_parameters_test)
+set_tests_properties(cw_decoder_parameters_test PROPERTIES TIMEOUT 60)
+
+
 # Pure shared-capture geometry policy: no sockets, settings, DSP or hardware.
 add_executable(shared_capture_policy_test
     tests/shared_capture_policy_test.cpp
@@ -1212,6 +1226,13 @@ foreach(APP_SETTINGS_SCENARIO
         corrupt-db-restore-backup
         corrupt-db-reimport-xml
         locked-db-fails-closed
+        readonly-db-fails-closed
+        readonly-db-with-backup-fails-closed
+        unavailable-integrity-check
+        filesystem-failure-fails-closed
+        integrity-report-restores-backup
+        preserve-keeps-bytes-and-mode
+        reopen-does-not-write
         newer-schema-readonly
         dirty-row-save
         display-slice-depth-default
@@ -1222,6 +1243,11 @@ foreach(APP_SETTINGS_SCENARIO
         NAME app_settings_safety_${APP_SETTINGS_SCENARIO}
         COMMAND app_settings_safety_test ${APP_SETTINGS_SCENARIO})
 endforeach()
+set_tests_properties(
+    app_settings_safety_readonly-db-fails-closed
+    app_settings_safety_readonly-db-with-backup-fails-closed
+    app_settings_safety_preserve-keeps-bytes-and-mode
+    PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(nr2_settings_model_test
     tests/nr2_settings_model_test.cpp
@@ -1232,6 +1258,17 @@ target_include_directories(nr2_settings_model_test PRIVATE src tests)
 target_link_libraries(nr2_settings_model_test PRIVATE Qt6::Core Qt6::Test)
 set_target_properties(nr2_settings_model_test PROPERTIES AUTOMOC ON)
 add_test(NAME nr2_settings_model_test COMMAND nr2_settings_model_test)
+
+# #3821: a focused replacement for the retired spectral_nr_test coverage.
+# The pure DSP rows prove a warm reset retains the converged noise estimate,
+# flushes stale overlap-add audio, and bounds a post-TX AGC level step. The
+# AudioEngine row drives the production raw-interlock edge and verifies through
+# bridge-visible diagnostics that it performs only the warm reset. Socket-free:
+# no audio device, radio transport, listener, peer process, or transmission.
+add_executable(nr2_tx_rx_reset_test tests/nr2_tx_rx_reset_test.cpp)
+target_include_directories(nr2_tx_rx_reset_test PRIVATE src tests)
+target_link_libraries(nr2_tx_rx_reset_test PRIVATE aethercore Qt6::Core)
+add_test(NAME nr2_tx_rx_reset_test COMMAND nr2_tx_rx_reset_test)
 
 add_executable(rn2_settings_model_test
     tests/rn2_settings_model_test.cpp
@@ -1870,6 +1907,27 @@ target_include_directories(tx_capture_health_test PRIVATE src)
 target_link_libraries(tx_capture_health_test PRIVATE Qt6::Core)
 add_test(NAME tx_capture_health_test COMMAND tx_capture_health_test)
 
+# #5648 — post-open QFile failures are finalized on the recorder owner thread;
+# no socket, device, or radio is involved.
+add_executable(qso_recorder_write_error_test
+    tests/qso_recorder_write_error_test.cpp
+    src/core/QsoRecorder.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/AudioDeviceNegotiator.cpp
+    src/core/AudioFormatNegotiator.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    src/core/Resampler.cpp
+    src/models/SliceModel.cpp
+    src/core/DigitalVoiceModeRegistry.cpp
+)
+target_include_directories(qso_recorder_write_error_test PRIVATE
+    src
+    ${CMAKE_SOURCE_DIR}/third_party/r8brain
+)
+target_link_libraries(qso_recorder_write_error_test PRIVATE Qt6::Core Qt6::Multimedia)
+add_test(NAME qso_recorder_write_error_test COMMAND qso_recorder_write_error_test)
+
 # Regression test for #4003 — QsoRecorder must not dereference a SliceModel that
 # was freed (reconnect prune) before recording starts. QPointer auto-nulls the
 # reference; the test deletes the slice and asserts the metadata is cleared.
@@ -1922,12 +1980,63 @@ target_include_directories(qso_recorder_pc_audio_guard_test PRIVATE
 target_link_libraries(qso_recorder_pc_audio_guard_test PRIVATE Qt6::Core Qt6::Multimedia)
 add_test(NAME qso_recorder_pc_audio_guard_test COMMAND qso_recorder_pc_audio_guard_test)
 
+# #5634 — delayed profile-transfer callbacks must retain their operation,
+# request, and socket identity without using a firmware peer or listener.
+add_executable(profile_transfer_generation_test
+    tests/profile_transfer_generation_test.cpp
+)
+target_include_directories(profile_transfer_generation_test PRIVATE src)
+target_link_libraries(profile_transfer_generation_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME profile_transfer_generation_test COMMAND profile_transfer_generation_test)
+set_tests_properties(profile_transfer_generation_test PROPERTIES TIMEOUT 120)
+
+# #5634 (sibling) — the same guarantee for DvkWavTransfer's delayed callbacks.
+# Binds no socket and opens no listener: the download success path, the only
+# one that calls listen(), is deliberately not exercised.
+add_executable(dvk_wav_transfer_generation_test
+    tests/dvk_wav_transfer_generation_test.cpp
+)
+target_include_directories(dvk_wav_transfer_generation_test PRIVATE src)
+target_link_libraries(dvk_wav_transfer_generation_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME dvk_wav_transfer_generation_test COMMAND dvk_wav_transfer_generation_test)
+set_tests_properties(dvk_wav_transfer_generation_test PROPERTIES TIMEOUT 120)
+
+# #5640 — QsoRecorder claims filename candidates atomically so a same-second
+# recording cannot truncate a populated WAV or a concurrently-created file.
+add_executable(qso_recorder_filename_collision_test
+    tests/qso_recorder_filename_collision_test.cpp
+    src/core/QsoRecorder.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/AudioDeviceNegotiator.cpp
+    src/core/AudioFormatNegotiator.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    src/core/Resampler.cpp
+    src/models/SliceModel.cpp
+    src/core/DigitalVoiceModeRegistry.cpp
+)
+target_include_directories(qso_recorder_filename_collision_test PRIVATE
+    src
+    ${CMAKE_SOURCE_DIR}/third_party/r8brain
+)
+target_link_libraries(qso_recorder_filename_collision_test PRIVATE Qt6::Core Qt6::Multimedia)
+add_test(NAME qso_recorder_filename_collision_test COMMAND qso_recorder_filename_collision_test)
+
 add_executable(profile_transfer_test
     tests/profile_transfer_test.cpp
 )
 target_include_directories(profile_transfer_test PRIVATE src)
 target_link_libraries(profile_transfer_test PRIVATE Qt6::Core)
 add_test(NAME profile_transfer_test COMMAND profile_transfer_test)
+
+# #5612 — aborting an in-progress upload during cleanup or socket replacement
+# must not let a synchronous disconnect re-enter ProfileTransfer.
+add_executable(profile_transfer_cleanup_test
+    tests/profile_transfer_cleanup_test.cpp
+)
+target_include_directories(profile_transfer_cleanup_test PRIVATE src)
+target_link_libraries(profile_transfer_cleanup_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME profile_transfer_cleanup_test COMMAND profile_transfer_cleanup_test)
 
 add_executable(waveform_upload_state_test
     tests/waveform_upload_state_test.cpp
@@ -4826,6 +4935,35 @@ add_test(NAME rx_applet_squelch_reconciliation_test
 set_tests_properties(rx_applet_squelch_reconciliation_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Socket-free production-widget lifetime regression coverage (#5568).
+add_executable(gui_nested_lifetime_test
+    tests/gui_nested_lifetime_test.cpp
+    src/gui/RxApplet.cpp
+    src/gui/VfoWidget.cpp
+    src/gui/FrequencyEntryParser.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/FilterPassbandWidget.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/SliceLabel.cpp
+    src/gui/PhaseKnob.cpp
+    src/gui/SmartMtrWidget.cpp
+    src/gui/SmartMtrConfig.cpp
+    src/gui/MeterViewController.cpp
+    src/gui/AdaptiveFilterControls.cpp
+    src/gui/GuardedSlider.h
+    src/gui/NetSchedulerDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+)
+target_include_directories(gui_nested_lifetime_test PRIVATE src tests)
+target_link_libraries(gui_nested_lifetime_test PRIVATE
+    aethercore Qt6::Widgets Qt6::Test
+)
+add_test(NAME gui_nested_lifetime_test COMMAND gui_nested_lifetime_test)
+set_tests_properties(gui_nested_lifetime_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(tx_applet_power_reconciliation_test
     tests/tx_applet_power_reconciliation_test.cpp
     src/gui/TxApplet.cpp
@@ -5000,6 +5138,7 @@ set(AETHER_SETTINGS_CONSUMERS
     atu_seam_gate_test
     backend_slice_lifecycle_test
     client_display_settings_test
+    gui_nested_lifetime_test
     rx_applet_squelch_reconciliation_test
     rtl_slice_settings_test
     weather_radar_loading_test
@@ -5017,10 +5156,13 @@ set(AETHER_SETTINGS_CONSUMERS
     panadapter_message_overlay_test
     app_settings_safety_test
     nr2_settings_model_test
+    nr2_tx_rx_reset_test
     rn2_settings_model_test
     panadapter_model_rx_antenna_test
+    qso_recorder_write_error_test
     qso_recorder_slice_lifetime_test
     qso_recorder_pc_audio_guard_test
+    qso_recorder_filename_collision_test
     band_plan_license_filter_test
     kiwisdr_dx_spots_test
     passive_spots_policy_test
