@@ -911,6 +911,7 @@ private:
     void showMqttSettingsDialog();
     void publishCwDecodeMqtt(const QString& text, float cost, bool rx);
     void publishRadioStateMqtt();
+    void refreshRadioStateDriveAuthority();
 #endif
     void applyPanLayout(const QString& layoutId);
     void startCanvasPanLayoutSettle(const QString& layoutId, int expectedPanCount);
@@ -1152,6 +1153,11 @@ private:
     QMetaObject::Connection m_radioStateFreqConn;
     QMetaObject::Connection m_radioStateModeConn;
     QTimer                  m_radioStateCoalesceTimer;
+    // Cached RadioCapabilities::transmitDriveControl authority == Radio, refreshed
+    // on the connect and backend-rebuild edges. publishRadioStateMqtt() runs on
+    // every PTT transition and backendCapabilities() builds the whole struct by
+    // value, so reading it per publish allocated a band table per CW element.
+    bool                    m_radioStateDriveIsReadback = false;
     QMetaObject::Connection m_cwStatsConn;
     QMetaObject::Connection m_cwxSpeedRestoreConn;
     int               m_cwxSavedWpm{0};
