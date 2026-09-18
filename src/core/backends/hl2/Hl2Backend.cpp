@@ -847,10 +847,17 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
             [this, ui](const std::vector<float>& bins) {
         if (!m_ids.byUi(ui))
             return;
-        // dBFS -> dBm through the one object that owns the reference. With
-        // an uncalibrated fullScaleDbm this is a pure -lnaGain shift, which
-        // is the part that is exactly right: it holds the trace still across
-        // a gain change instead of letting the whole display jump.
+        // dBFS -> dBm through the one object that owns the reference. Two
+        // terms now: the DERIVED full-scale figure, and -lnaGain. The second
+        // is the part that is exactly right whatever the first is worth --
+        // it holds the trace still across a gain change instead of letting
+        // the whole display jump. The first moves the floor once, to a
+        // figure that can be checked, and never again.
+        //
+        // WHICH IS WHY THE off == 0.0 FAST PATH NOW RARELY FIRES: at the
+        // default 0 dB of gain the offset is the constant +3, not zero. The
+        // branch stays because an operator at +3 dB of LNA gain still hits
+        // it, and because it is the same test either way.
         //
         // The reference is SHARED because the LNA it describes is shared —
         // one AD9866 behind every DDC — so a gain change moves all four
@@ -5047,8 +5054,9 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // NEITHER IS CALIBRATED, and they do not even share a scale: the slice
     // figure is dB relative to WIRE full scale, the DDC between the two
     // measurement points carries an unquantified processing gain, and
-    // Hl2DbReference::fullScaleDbm is 0.0 with isCalibrated() false, so nothing
-    // here is antenna-referred. The labels say "uncalibrated" because that is
+    // Hl2DbReference::isCalibrated() is false -- its fullScaleDbm is DERIVED
+    // rather than measured, and it refers the DISPLAY path in any case, not
+    // these two readings -- so nothing here is antenna-referred. The labels say "uncalibrated" because that is
     // the whole of what can be claimed. What survives the missing calibration
     // is the PAIRING itself — the pairing row below states a relationship, and
     // a relationship needs no absolute reference.
