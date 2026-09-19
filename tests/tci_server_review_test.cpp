@@ -16,6 +16,8 @@
 #include <QHostAddress>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
@@ -31,10 +33,17 @@ namespace AetherSDR
 namespace
 {
 
+// Qt's message handler fires on whichever thread calls qDebug/qWarning —
+// including DaxIqModel's worker thread — so every access to g_logSink
+// (append here, read/clear in ScopedCommandLog/captureCatLog) must go
+// through g_logSinkMutex. Without it, a background-thread log line racing
+// the main thread's QStringList append is a TSan data race (issue #26).
+QMutex       g_logSinkMutex;
 QStringList* g_logSink = nullptr;
 
 void captureLogHandler(QtMsgType, const QMessageLogContext&, const QString& msg)
 {
+    QMutexLocker locker(&g_logSinkMutex);
     if (g_logSink) {
         *g_logSink << msg;
     }
@@ -50,7 +59,9 @@ class ScopedCommandLog
 public:
     ScopedCommandLog()
     {
+        QMutexLocker locker(&g_logSinkMutex);
         g_logSink = &m_lines;
+        locker.unlock();
         m_previous = qInstallMessageHandler(captureLogHandler);
         QLoggingCategory::setFilterRules(QStringLiteral("aether.protocol.debug=true"));
     }
@@ -58,6 +69,7 @@ public:
     {
         QLoggingCategory::setFilterRules(QString());
         qInstallMessageHandler(m_previous);
+        QMutexLocker locker(&g_logSinkMutex);
         g_logSink = nullptr;
     }
     ScopedCommandLog(const ScopedCommandLog&) = delete;
@@ -65,6 +77,7 @@ public:
 
     bool contains(const QString& fragment) const
     {
+        QMutexLocker locker(&g_logSinkMutex);
         for (const QString& line : m_lines) {
             if (line.contains(fragment)) {
                 return true;
@@ -72,7 +85,11 @@ public:
         }
         return false;
     }
-    void clear() { m_lines.clear(); }
+    void clear()
+    {
+        QMutexLocker locker(&g_logSinkMutex);
+        m_lines.clear();
+    }
 
 private:
     QStringList      m_lines;
@@ -86,7 +103,10 @@ template <typename Body>
 QStringList captureCatLog(Body body)
 {
     QStringList captured;
-    g_logSink = &captured;
+    {
+        QMutexLocker locker(&g_logSinkMutex);
+        g_logSink = &captured;
+    }
     const QtMessageHandler previous = qInstallMessageHandler(captureLogHandler);
     QLoggingCategory::setFilterRules(QStringLiteral("aether.cat.info=true"));
 
@@ -94,7 +114,10 @@ QStringList captureCatLog(Body body)
 
     QLoggingCategory::setFilterRules(QString());
     qInstallMessageHandler(previous);
-    g_logSink = nullptr;
+    {
+        QMutexLocker locker(&g_logSinkMutex);
+        g_logSink = nullptr;
+    }
     return captured;
 }
 
