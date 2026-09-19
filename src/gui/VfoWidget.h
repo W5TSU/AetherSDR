@@ -452,6 +452,13 @@ private:
     int            m_angleAccum{0};     // mouse wheel angle accumulator
     qint64         m_lastWheelMs{0};    // debounce: timestamp of last accepted wheel step
     QPointer<QLabel> m_collapsedFreqLabel;
+    // Identity-only shadow of m_collapsedFreqLabel for eventFilter()'s `obj ==`
+    // checks. QPointer<QLabel>'s implicit conversion to QLabel* is a downcast;
+    // during the label's own teardown (it's a sibling widget, not our child,
+    // so Qt can destroy it while delivering it an event through our filter)
+    // its dynamic type has already regressed past QLabel, and that downcast
+    // is UB (UBSan issue #25). QPointer<QObject> needs no downcast to compare.
+    QPointer<QObject> m_collapsedFreqLabelIdentity;
 
     // Accessibility: debounced frequency announcement (300 ms settle before speaking)
     QTimer   m_accessibleFrequencyTimer;

@@ -994,6 +994,7 @@ void VfoWidget::buildUI()
 
     // ── Collapsed-mode frequency label (child of parent like close/lock) ───
     m_collapsedFreqLabel = new QLabel(btnParent);
+    m_collapsedFreqLabelIdentity = m_collapsedFreqLabel;
     AetherSDR::ThemeManager::instance().applyStyleSheet(m_collapsedFreqLabel, "QLabel { background: rgba(10,10,20,220); border: 1px solid rgba(255,255,255,60);"
         " border-radius: 3px; color: {{color.text.primary}}; font-size: 14px; font-weight: bold;"
         " padding: 1px 4px; }");
@@ -6716,7 +6717,7 @@ bool VfoWidget::eventFilter(QObject* obj, QEvent* event)
     // deliberately not mirrored here: m_freqStack (which holds the edit
     // box) is hidden/mouse-transparent while collapsed and would need
     // real repositioning work to become usable — left as a follow-up.
-    if ((obj == m_freqLabel || obj == m_collapsedFreqLabel) && event->type() == QEvent::MouseButtonPress) {
+    if ((obj == m_freqLabel || obj == m_collapsedFreqLabelIdentity) && event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
         if (me->button() == Qt::RightButton && m_slice) {
             ScopedChildWidget<QMenu> menuOwner(this);
