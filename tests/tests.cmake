@@ -3475,6 +3475,16 @@ add_test(NAME automation_json_id_test COMMAND automation_json_id_test)
 # Read-only external-device diagnostic registry and provider dispatch. The
 # platform-specific Ulanzi HID snapshot is supplied by MainWindow on macOS;
 # this test pins the bridge contract without requiring physical hardware.
+add_executable(automation_gauge_verb_test
+    tests/automation_gauge_verb_test.cpp
+    # HGauge.h's hover popup is header-inline and calls into this.
+    src/gui/DragValuePopup.cpp
+)
+target_include_directories(automation_gauge_verb_test PRIVATE src)
+target_link_libraries(automation_gauge_verb_test PRIVATE aethercore Qt6::Widgets)
+add_test(NAME automation_gauge_verb_test COMMAND automation_gauge_verb_test)
+set_tests_properties(automation_gauge_verb_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(automation_device_diagnostics_test
     tests/automation_device_diagnostics_test.cpp
 )
@@ -5908,6 +5918,9 @@ endforeach()
 # leave these harnesses with unresolved bridge symbols.
 set(AETHER_AUTOMATION_SERVER_TESTS
     automation_audio_analyze_test   # fork-only; not in upstream's list
+
+    automation_cell_test
+    automation_gauge_verb_test
 
     automation_persist_diagnostics_test
 
