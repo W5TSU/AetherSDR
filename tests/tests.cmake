@@ -5818,7 +5818,6 @@ set(AETHER_SETTINGS_CONSUMERS
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test
-    tx_operation_integration_test
     backend_slice_lifecycle_test
     waterfall_time_marker_settings_test
     extended_tnf_settings_test
@@ -5918,8 +5917,6 @@ endforeach()
 # leave these harnesses with unresolved bridge symbols.
 set(AETHER_AUTOMATION_SERVER_TESTS
     automation_audio_analyze_test   # fork-only; not in upstream's list
-
-    automation_cell_test
     automation_gauge_verb_test
 
     automation_persist_diagnostics_test
