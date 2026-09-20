@@ -2160,6 +2160,27 @@ set_tests_properties(firmware_close_dialog_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
 
+# #5507: the production Radio Setup dialog against a backend that reports no
+# region, driven by RadioDelta over the real IRadioBackend::radioChanged route.
+# Same target shape as flex_control_visibility_test above — no sockets, no peers.
+add_executable(radio_setup_region_field_test
+    tests/radio_setup_region_field_test.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/RadioSetupDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/KiwiPublicReceiverPicker.cpp
+    src/gui/GuardedSlider.h
+)
+target_include_directories(radio_setup_region_field_test PRIVATE src tests)
+target_link_libraries(radio_setup_region_field_test PRIVATE
+    aetherdesktop_support Qt6::Widgets Qt6::Test)
+add_test(NAME radio_setup_region_field_test COMMAND radio_setup_region_field_test)
+set_tests_properties(radio_setup_region_field_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 add_executable(zip_archive_test
     tests/zip_archive_test.cpp
     src/core/ZipArchive.cpp
@@ -5544,6 +5565,9 @@ target_link_libraries(CAT_Flex_test PRIVATE Qt6::Core Qt6::Network)
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
     firmware_close_dialog_test
+    flex_control_visibility_test
+    radio_setup_region_field_test
+
     atu_seam_gate_test
     backend_capability_revision_test
     radio_capacity_declaration_test
