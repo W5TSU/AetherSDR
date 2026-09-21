@@ -326,6 +326,7 @@ DxClusterDialog::DxClusterDialog(DxClusterClient* clusterClient, DxClusterClient
                                    WsjtxClient* wsjtxClient, SpotCollectorClient* spotCollectorClient,
                                    PotaClient* potaClient, EibiClient* eibiClient,
                                    N1MMSpotClient* n1mmSpotClient,
+                                   Js8CallClient* js8CallClient,
 #ifdef HAVE_WEBSOCKETS
                                    FreeDvClient* freedvClient,
 #endif
@@ -336,7 +337,7 @@ DxClusterDialog::DxClusterDialog(DxClusterClient* clusterClient, DxClusterClient
       m_client(clusterClient), m_rbnClient(rbnClient),
       m_wsjtxClient(wsjtxClient), m_spotCollectorClient(spotCollectorClient),
       m_potaClient(potaClient), m_eibiClient(eibiClient),
-      m_n1mmSpotClient(n1mmSpotClient),
+      m_n1mmSpotClient(n1mmSpotClient), m_js8CallClient(js8CallClient),
 #ifdef HAVE_WEBSOCKETS
       m_freedvClient(freedvClient),
 #endif
@@ -358,6 +359,7 @@ DxClusterDialog::DxClusterDialog(DxClusterClient* clusterClient, DxClusterClient
     m_potaLogPath    = potaClient->logFilePath();
     m_scLogPath      = spotCollectorClient->logFilePath();
     m_n1mmLogPath    = n1mmSpotClient->logFilePath();
+    m_js8CallLogPath = js8CallClient->logFilePath();
 #ifdef HAVE_WEBSOCKETS
     m_freedvLogPath  = freedvClient->logFilePath();
 #endif
@@ -379,6 +381,7 @@ DxClusterDialog::DxClusterDialog(DxClusterClient* clusterClient, DxClusterClient
     buildPotaTab(tabs);
     buildEiBiTab(tabs);
     buildN1mmTab(tabs);
+    buildJs8CallTab(tabs);
 #ifdef HAVE_WEBSOCKETS
     buildFreeDvTab(tabs);
 #endif
@@ -684,6 +687,38 @@ DxClusterDialog::DxClusterDialog(DxClusterClient* clusterClient, DxClusterClient
         m_n1mmStartBtn->setText("Start");
         m_n1mmConsole->appendPlainText(
             QString("--- Bind failed on port %1: %2 ---").arg(m_n1mmSpotClient->port()).arg(err));
+    });
+
+    // ── Live updates from JS8Call client (#21) ────────────────────────
+    connect(js8CallClient, &Js8CallClient::rawLineReceived, this, [this, isAtBottom](const QString& line) {
+        bool follow = isAtBottom(m_js8CallConsole);
+        m_js8CallConsole->appendPlainText(line);
+        if (follow) {
+            auto* sb = m_js8CallConsole->verticalScrollBar();
+            sb->setValue(sb->maximum());
+        }
+    });
+
+    connect(js8CallClient, &Js8CallClient::spotReceived, this, [this](DxSpot spot) {
+        m_spotBatch.append(spot);
+    });
+
+    connect(js8CallClient, &Js8CallClient::connected, this, [this] {
+        m_js8CallStatusLabel->setText("Connected");
+        AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallStatusLabel, "QLabel { color: {{color.accent}}; font-size: 11px; }");
+        m_js8CallConnectBtn->setText("Disconnect");
+        m_js8CallConsole->appendPlainText("--- Connected ---");
+    });
+    connect(js8CallClient, &Js8CallClient::disconnected, this, [this] {
+        m_js8CallStatusLabel->setText("Disconnected");
+        AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallStatusLabel, "QLabel { color: {{color.text.label}}; font-size: 11px; }");
+        m_js8CallConnectBtn->setText("Connect");
+        m_js8CallConsole->appendPlainText("--- Disconnected ---");
+    });
+    connect(js8CallClient, &Js8CallClient::connectionError, this, [this](const QString& err) {
+        m_js8CallStatusLabel->setText("Error: " + err);
+        AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallStatusLabel, "QLabel { color: {{color.accent.danger}}; font-size: 11px; }");
+        m_js8CallConsole->appendPlainText("--- Error: " + err + " ---");
     });
 
 #ifdef HAVE_WEBSOCKETS
@@ -2106,6 +2141,168 @@ void DxClusterDialog::buildN1mmTab(QTabWidget* tabs)
     }
 
     tabs->addTab(page, "N1MM");
+}
+
+void DxClusterDialog::buildJs8CallTab(QTabWidget* tabs)
+{
+    auto* page = new QWidget;
+    auto* layout = new QVBoxLayout(page);
+    layout->setSpacing(8);
+
+    auto& s = AppSettings::instance();
+
+    // ── Connection settings ─────────────────────────────────────────────
+    auto* connGroup = new QGroupBox("JS8Call TCP JSON API");
+    auto* connLayout = new QVBoxLayout(connGroup);
+    connLayout->setSpacing(4);
+
+    auto* grid = new QGridLayout;
+    grid->setColumnStretch(1, 1);
+    int row = 0;
+
+    grid->addWidget(new QLabel("Host:"), row, 0);
+    m_js8CallHostEdit = new QLineEdit(s.value("Js8CallHost", "127.0.0.1").toString());
+    m_js8CallHostEdit->setPlaceholderText("127.0.0.1");
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallHostEdit, "QLineEdit { background: {{color.background.0}}; color: {{color.text.primary}}; border: 1px solid {{color.background.1}}; padding: 3px; }");
+    grid->addWidget(m_js8CallHostEdit, row, 1);
+    row++;
+
+    grid->addWidget(new QLabel("Port:"), row, 0);
+    m_js8CallPortSpin = new QSpinBox;
+    m_js8CallPortSpin->setRange(1, 65535);
+    m_js8CallPortSpin->setValue(s.value("Js8CallPort", 2442).toInt());
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallPortSpin, "QSpinBox { background: {{color.background.0}}; color: {{color.text.primary}}; border: 1px solid {{color.background.1}}; padding: 3px; }");
+    grid->addWidget(m_js8CallPortSpin, row, 1);
+    row++;
+
+    // JS8Call decode cadence is minutes-scale like WSJT-X/FreeDV, not the DX
+    // cluster's hours-scale bandmap — seconds, same default as those two.
+    grid->addWidget(new QLabel("Spot Lifetime:"), row, 0);
+    m_js8CallLifetimeSpin = new QSpinBox;
+    m_js8CallLifetimeSpin->setRange(10, 3600);
+    m_js8CallLifetimeSpin->setValue(s.value("Js8CallSpotLifetime", 120).toInt());
+    m_js8CallLifetimeSpin->setSuffix(" sec");
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallLifetimeSpin, "QSpinBox { background: {{color.background.0}}; color: {{color.text.primary}}; border: 1px solid {{color.background.1}}; padding: 3px; }");
+    connect(m_js8CallLifetimeSpin, &QSpinBox::valueChanged, this, [](int seconds) {
+        auto& s = AppSettings::instance();
+        s.setValue("Js8CallSpotLifetime", seconds);
+        s.save();
+    });
+    grid->addWidget(m_js8CallLifetimeSpin, row, 1);
+
+    connLayout->addLayout(grid);
+
+    auto* helpLabel = new QLabel(
+        "Connects to JS8Call's TCP JSON API (Settings -> Reporting -> enable\n"
+        "\"TCP Server\" — same host/port as configured there, default\n"
+        "127.0.0.1:2442) and ingests RX.SPOT / RX.DIRECTED as panadapter\n"
+        "spots. Receive-only: AetherSDR does not send messages or control\n"
+        "JS8Call's frequency over this connection.");
+    helpLabel->setWordWrap(true);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(helpLabel, "QLabel { color: {{color.text.secondary}}; font-size: 11px; }");
+    connLayout->addWidget(helpLabel);
+
+    // Button row
+    auto* btnRow = new QHBoxLayout;
+    m_js8CallAutoStartBtn = new QPushButton(
+        s.value("Js8CallAutoStart", "False").toString() == "True" ? "Auto-Start: ON" : "Auto-Start: OFF");
+    m_js8CallAutoStartBtn->setCheckable(true);
+    m_js8CallAutoStartBtn->setChecked(s.value("Js8CallAutoStart", "False").toString() == "True");
+    ThemeManager::instance().applyStyleSheet(m_js8CallAutoStartBtn, kSpotHubToggle);
+    connect(m_js8CallAutoStartBtn, &QPushButton::toggled, this, [this](bool on) {
+        m_js8CallAutoStartBtn->setText(on ? "Auto-Start: ON" : "Auto-Start: OFF");
+        auto& s = AppSettings::instance();
+        s.setValue("Js8CallAutoStart", on ? "True" : "False");
+        s.save();
+    });
+    btnRow->addWidget(m_js8CallAutoStartBtn);
+    btnRow->addStretch();
+
+    m_js8CallStatusLabel = new QLabel(m_js8CallClient->isConnected() ? "Connected" : "Disconnected");
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallStatusLabel, "QLabel { color: {{color.text.label}}; font-size: 11px; }");
+    btnRow->addWidget(m_js8CallStatusLabel);
+    btnRow->addStretch();
+
+    m_js8CallConnectBtn = new QPushButton(m_js8CallClient->isConnected() ? "Disconnect" : "Connect");
+    m_js8CallConnectBtn->setFixedWidth(100);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallConnectBtn, "QPushButton { background: {{color.accent}}; color: {{color.background.0}}; font-weight: bold; "
+        "border: 1px solid {{color.accent.dim}}; padding: 4px; border-radius: 3px; }"
+        "QPushButton:hover { background: {{color.accent.bright}}; }"
+        "QPushButton:disabled { background: {{color.background.2}}; color: {{color.text.label}}; }");
+    connect(m_js8CallConnectBtn, &QPushButton::clicked, this, [this] {
+        if (m_js8CallClient->isConnected()) {
+            emit js8CallDisconnectRequested();
+            return;
+        }
+        const QString host = m_js8CallHostEdit->text().trimmed();
+        const quint16 port = static_cast<quint16>(m_js8CallPortSpin->value());
+        if (host.isEmpty()) {
+            m_js8CallStatusLabel->setText("Host is required");
+            AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallStatusLabel, "QLabel { color: {{color.accent.danger}}; font-size: 11px; }");
+            return;
+        }
+        auto& s = AppSettings::instance();
+        s.setValue("Js8CallHost", host);
+        s.setValue("Js8CallPort", port);
+        s.save();
+        emit js8CallConnectRequested(host, port);
+    });
+    btnRow->addWidget(m_js8CallConnectBtn);
+    connLayout->addLayout(btnRow);
+
+    layout->addWidget(connGroup);
+
+    // ── Console output ──────────────────────────────────────────────────
+    auto* consoleRow = new QHBoxLayout;
+    auto* consoleLabel = new QLabel("JS8Call Spots");
+    AetherSDR::ThemeManager::instance().applyStyleSheet(consoleLabel, "QLabel { color: {{color.accent}}; font-weight: bold; }");
+    consoleRow->addWidget(consoleLabel);
+    consoleRow->addStretch();
+
+    auto* js8ColorLabel = new QLabel("Spot Color:");
+    AetherSDR::ThemeManager::instance().applyStyleSheet(js8ColorLabel, "QLabel { color: {{color.text.label}}; font-size: 12px; }");
+    consoleRow->addWidget(js8ColorLabel);
+
+    const QString swatchTemplate =
+        "QPushButton { background: %1; border: 2px solid {{color.background.2}};"
+        " border-radius: 3px; }"
+        "QPushButton:hover { border-color: {{color.text.primary}}; }";
+    QColor js8Color(s.value("Js8CallSpotColor", "#C060FF").toString());
+    auto* js8ColorBtn = new QPushButton;
+    js8ColorBtn->setFixedSize(18, 18);
+    ThemeManager::instance().applyStyleSheet(js8ColorBtn, swatchTemplate.arg(js8Color.name()));
+    connect(js8ColorBtn, &QPushButton::clicked, this, [this, js8ColorBtn, swatchTemplate] {
+        QColor c = getColorForLiveParent(
+            QColor(AppSettings::instance().value("Js8CallSpotColor", "#C060FF").toString()),
+            this, "JS8Call Spot Color");
+        if (c.isValid()) {
+            ThemeManager::instance().applyStyleSheet(js8ColorBtn, swatchTemplate.arg(c.name()));
+            AppSettings::instance().setValue("Js8CallSpotColor", c.name());
+            AppSettings::instance().save();
+        }
+    });
+    consoleRow->addWidget(js8ColorBtn);
+    layout->addLayout(consoleRow);
+
+    m_js8CallConsole = new QPlainTextEdit;
+    m_js8CallConsole->setReadOnly(true);
+    m_js8CallConsole->setMaximumBlockCount(2000);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(m_js8CallConsole, "QPlainTextEdit {"
+        "  background: {{color.background.0}};"
+        "  color: {{color.text.secondary}};"
+        "  font-family: monospace;"
+        "  font-size: 11px;"
+        "  border: 1px solid {{color.background.1}};"
+        "  padding: 4px;"
+        "}");
+    layout->addWidget(m_js8CallConsole, 1);
+
+    auto* js8BtnRow = new QHBoxLayout;
+    js8BtnRow->addStretch();
+    js8BtnRow->addWidget(makeConsoleClearButton(m_js8CallConsole, &m_js8CallLogPath, "js8CallClearBtn"));
+    layout->addLayout(js8BtnRow);
+
+    tabs->addTab(page, "JS8Call");
 }
 
 #ifdef HAVE_WEBSOCKETS

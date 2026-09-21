@@ -14,6 +14,7 @@
 #include "core/PotaClient.h"
 #include "core/EibiClient.h"
 #include "core/N1MMSpotClient.h"
+#include "core/Js8CallClient.h"
 #ifdef HAVE_WEBSOCKETS
 #include "core/FreeDvClient.h"
 #endif
@@ -89,6 +90,7 @@ public:
                              WsjtxClient* wsjtxClient, SpotCollectorClient* spotCollectorClient,
                              PotaClient* potaClient, EibiClient* eibiClient,
                              N1MMSpotClient* n1mmSpotClient,
+                             Js8CallClient* js8CallClient,
 #ifdef HAVE_WEBSOCKETS
                              FreeDvClient* freedvClient,
 #endif
@@ -123,6 +125,8 @@ signals:
     void eibiUpdateNowRequested();
     void n1mmStartRequested(quint16 port);
     void n1mmStopRequested();
+    void js8CallConnectRequested(const QString& host, quint16 port);
+    void js8CallDisconnectRequested();
 #ifdef HAVE_WEBSOCKETS
     void freedvStartRequested();
     void freedvStopRequested();
@@ -155,6 +159,7 @@ private:
     void buildEiBiTab(QTabWidget* tabs);
     void updateEibiTimestamps();
     void buildN1mmTab(QTabWidget* tabs);
+    void buildJs8CallTab(QTabWidget* tabs);
 #ifdef HAVE_WEBSOCKETS
     void buildFreeDvTab(QTabWidget* tabs);
 #endif
@@ -184,6 +189,7 @@ private:
     QString m_freedvLogPath;
     QString m_scLogPath;
     QString m_n1mmLogPath;
+    QString m_js8CallLogPath;
 
     DxClusterClient*      m_client;
     DxClusterClient*      m_rbnClient;
@@ -192,6 +198,7 @@ private:
     PotaClient*           m_potaClient;
     EibiClient*           m_eibiClient;
     N1MMSpotClient*       m_n1mmSpotClient;
+    Js8CallClient*        m_js8CallClient;
 #ifdef HAVE_WEBSOCKETS
     FreeDvClient*    m_freedvClient;
 #endif
@@ -263,6 +270,15 @@ private:
     // spotKey() -> last status logged to the Spot List, so a re-broadcast that
     // changed nothing doesn't add another row for the same station (#2906).
     QHash<QString, QString> m_n1mmLastLoggedStatus;
+
+    // JS8Call tab (#21)
+    QLineEdit*      m_js8CallHostEdit{nullptr};
+    QSpinBox*       m_js8CallPortSpin{nullptr};
+    QSpinBox*       m_js8CallLifetimeSpin{nullptr};
+    QPushButton*    m_js8CallConnectBtn{nullptr};
+    QPushButton*    m_js8CallAutoStartBtn{nullptr};
+    QLabel*         m_js8CallStatusLabel{nullptr};
+    QPlainTextEdit* m_js8CallConsole{nullptr};
 
 #ifdef HAVE_WEBSOCKETS
     // FreeDV tab — connection controls

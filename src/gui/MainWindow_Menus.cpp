@@ -379,6 +379,7 @@ void MainWindow::buildMenuBar()
         const bool wasFresh = !m_spotHubDialog;
         showOrRaisePersistent(m_spotHubDialog, m_dxCluster, m_rbnClient, m_wsjtxClient,
                               m_spotCollectorClient, m_potaClient, m_eibiClient, m_n1mmSpotClient,
+                              m_js8CallClient,
 #ifdef HAVE_WEBSOCKETS
                               m_freedvClient,
 #endif
@@ -502,6 +503,12 @@ void MainWindow::buildMenuBar()
         });
         connect(dlg, &DxClusterDialog::n1mmStopRequested,
                 this, [this] { QMetaObject::invokeMethod(m_n1mmSpotClient, [=, this] { m_n1mmSpotClient->stopListening(); }); });
+        connect(dlg, &DxClusterDialog::js8CallConnectRequested,
+                this, [this](const QString& host, quint16 port) {
+            QMetaObject::invokeMethod(m_js8CallClient, [=, this] { m_js8CallClient->connectToJs8Call(host, port); });
+        });
+        connect(dlg, &DxClusterDialog::js8CallDisconnectRequested,
+                this, [this] { QMetaObject::invokeMethod(m_js8CallClient, [=, this] { m_js8CallClient->disconnectFromJs8Call(); }); });
 #ifdef HAVE_WEBSOCKETS
         connect(dlg, &DxClusterDialog::freedvStartRequested,
                 this, [this] { QMetaObject::invokeMethod(m_freedvClient, [this] { m_freedvClient->startConnection(); }); });

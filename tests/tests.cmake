@@ -2496,6 +2496,16 @@ target_include_directories(n1mm_spot_client_test PRIVATE src)
 target_link_libraries(n1mm_spot_client_test PRIVATE Qt6::Core)
 add_test(NAME n1mm_spot_client_test COMMAND n1mm_spot_client_test)
 
+# Header-only DxSpot dependency (from DxClusterClient.h) plus the pure
+# parser — no socket/thread infrastructure, same shape as n1mm_spot_client_test.
+add_executable(js8call_client_test
+    tests/js8call_client_test.cpp
+    src/core/Js8CallParser.cpp
+)
+target_include_directories(js8call_client_test PRIVATE src)
+target_link_libraries(js8call_client_test PRIVATE Qt6::Core)
+add_test(NAME js8call_client_test COMMAND js8call_client_test)
+
 add_executable(eibi_client_test
     tests/eibi_client_test.cpp
 )

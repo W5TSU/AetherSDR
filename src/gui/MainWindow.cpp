@@ -4152,6 +4152,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
             PotaClient* potaClient = m_potaClient;
             EibiClient* eibiClient = m_eibiClient;
             N1MMSpotClient* n1mmSpotClient = m_n1mmSpotClient;
+            Js8CallClient* js8CallClient = m_js8CallClient;
 #ifdef HAVE_WEBSOCKETS
             FreeDvClient* freedvClient = m_freedvClient;
 #endif
@@ -4213,6 +4214,15 @@ void MainWindow::closeEvent(QCloseEvent* event)
                 },
                                           Qt::BlockingQueuedConnection);
             }
+            {
+                ShutdownTrace trace("spots.js8call.stop");
+                QMetaObject::invokeMethod(js8CallClient,
+                                          [js8CallClient] {
+                    ShutdownTrace workerTrace("spots.js8call.stop.worker");
+                    js8CallClient->disconnectFromJs8Call();
+                },
+                                          Qt::BlockingQueuedConnection);
+            }
 #ifdef HAVE_WEBSOCKETS
             {
                 ShutdownTrace trace("spots.freedv.stop");
@@ -4231,6 +4241,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
             potaClient->deleteLater();
             eibiClient->deleteLater();
             n1mmSpotClient->deleteLater();
+            js8CallClient->deleteLater();
 #ifdef HAVE_WEBSOCKETS
             freedvClient->deleteLater();
 #endif
@@ -4248,6 +4259,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
             delete m_potaClient;
             delete m_eibiClient;
             delete m_n1mmSpotClient;
+            delete m_js8CallClient;
 #ifdef HAVE_WEBSOCKETS
             delete m_freedvClient;
 #endif
@@ -4259,6 +4271,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         m_potaClient = nullptr;
         m_eibiClient = nullptr;
         m_n1mmSpotClient = nullptr;
+        m_js8CallClient = nullptr;
 #ifdef HAVE_WEBSOCKETS
         m_freedvClient = nullptr;
 #endif
@@ -6413,6 +6426,13 @@ void MainWindow::onConnectionStateChanged(bool connected)
                 quint16 nPort = static_cast<quint16>(cs.value("N1MMSpotPort", 12060).toInt());
                 if (!m_n1mmSpotClient->isListening())
                     QMetaObject::invokeMethod(m_n1mmSpotClient, [=, this] { m_n1mmSpotClient->startListening(nPort); });
+            }
+            // Auto-connect JS8Call TCP JSON API if enabled (#21)
+            if (cs.value("Js8CallAutoStart", "False").toString() == "True") {
+                QString jHost = cs.value("Js8CallHost", "127.0.0.1").toString();
+                quint16 jPort = static_cast<quint16>(cs.value("Js8CallPort", 2442).toInt());
+                if (!m_js8CallClient->isConnected())
+                    QMetaObject::invokeMethod(m_js8CallClient, [=, this] { m_js8CallClient->connectToJs8Call(jHost, jPort); });
             }
 #ifdef HAVE_WEBSOCKETS
             // Auto-start FreeDV Reporter if enabled

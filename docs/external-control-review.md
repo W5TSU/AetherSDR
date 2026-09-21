@@ -31,9 +31,9 @@ Columns: transport & port · direction · data · already covered · gap · effo
 - **Transport/port:** same CAT + audio model as WSJT-X, **plus** its own line-delimited TCP JSON API, dflt port **2442**.
 - **Direction:** CAT both; audio both; TCP API both (RX.DIRECTED / RX.SPOT / RX.ACTIVITY out; TX.SEND_MESSAGE / RIG.SET_FREQ / STATION.GET_* in).
 - **Data:** freq/mode/PTT; audio; directed messages, spots (SNR, grid, callsign), station status.
-- **Covered:** rigctld + DAX (CAT + audio work today).
-- **Gap:** **no JS8Call TCP JSON API client** — cannot ingest JS8 spots/messages into SpotHub or send messages.
-- **Effort:** medium — one client class modeled on `N1MMSpotClient`. **Priority:** **HIGH** — spots→SpotHub matches existing architecture.
+- **Covered:** rigctld + DAX (CAT + audio); **and, as of #21, the TCP JSON API's receive side** — `Js8CallClient` (`src/core/Js8CallClient.*`, `src/core/Js8CallParser.*`) connects to JS8Call's line-delimited JSON socket (default 127.0.0.1:2442) and ingests `RX.SPOT` / `RX.DIRECTED` into SpotHub, modeled on `DxClusterClient`'s TCP + line-buffer + exponential-backoff reconnect shape (JS8Call has no add/delete on the wire, so a heard station is re-spotted and aged out like WSJT-X/FreeDV rather than tracked by identity like N1MM). Configured on SpotHub's JS8Call tab.
+- **Gap:** `RX.ACTIVITY` is deliberately not ingested — it carries no callsign field, only a frequency and a raw decode fragment, so there's no identity to key a marker on (still surfaces on the tab's console once per non-spot message type seen). `TX.SEND_MESSAGE` / `RIG.SET_FREQ` (sending messages, remote-tuning JS8Call) remain unimplemented — every existing SpotHub client is receive-only, so this stayed out of #21's scope; a natural follow-up if wanted.
+- **Effort:** done (receive path). Send path: medium — follow-up issue. **Priority:** n/a (shipped).
 
 ### fldigi
 - **Transport/port:** CAT via rigctld or fldigi XML-RPC (dflt 7362); soundcard audio; fldigi XML-RPC server for text/macros.
@@ -107,16 +107,15 @@ Columns: transport & port · direction · data · already covered · gap · effo
 
 ## 3. Ranked recommendations (next-integration candidates)
 
-1. **JS8Call TCP JSON API client** — fits the spot-ingest pattern; clear high-value gap. ~1 client class.
-2. **Read-only HTTP/JSON state endpoint** (`GET /state` → `{freq,mode,tx,slices}`) — smallest; cross-platform; no per-app coupling; unlocks HamClock-style dashboards, Cloudlog/Wavelog push via a small script, home automation. Ages best.
+1. ~~**JS8Call TCP JSON API client**~~ — **done (#21)**: receive side (`RX.SPOT` / `RX.DIRECTED` → SpotHub) shipped; see §2 above.
+2. **Read-only HTTP/JSON state endpoint** (`GET /state` → `{freq,mode,tx,slices}`) — smallest; cross-platform; no per-app coupling; unlocks HamClock-style dashboards, Cloudlog/Wavelog push via a small script, home automation. Ages best. **Now the front-runner for the next integration PR** — it'd be the first HTTP server in this codebase (no `QHttpServer`/HTTP component linked today), but the payload logic already exists in `MainWindow::publishRadioStateMqtt`.
 3. **FlRig XML-RPC dialect for CatPort** — one addition covers several "and others".
 4. **Outbound WSJT-X UDP** — click-to-reply / Halt Tx from the panadapter; read path already exists.
 5. **N1MM RadioInfo UDP emitter** — low effort, modest value.
 6. **Satellite / Doppler CAT validation pass** — mostly testing.
+7. **JS8Call TX.SEND_MESSAGE / RIG.SET_FREQ (send path)** — follow-up to #21's receive-only client, if wanted; every existing SpotHub client is receive-only today, so this would be the first to send.
 
 **Not recommended:** GridTracker (no gap without native FT8), fldigi XML-RPC (CAT + audio suffice), HRD / DXLab / MacLoggerDX (covered — doc only), Log4OM (TCI already bridges).
-
-Front-runners #1 and #2 should be treated as co-equal; pick when that PR is planned.
 
 ## 4. Documentation follow-ups (separate work)
 

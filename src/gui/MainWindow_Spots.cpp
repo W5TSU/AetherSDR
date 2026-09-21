@@ -19,6 +19,7 @@
 #include "SpectrumWidget.h"
 #include "core/N1MMSpotClient.h"
 #include "core/N1MMSpotParser.h"
+#include "core/Js8CallClient.h"
 #include "core/SpotCommandPolicy.h"
 #ifdef HAVE_MQTT
 #include "MqttApplet.h"
@@ -61,6 +62,7 @@ void MainWindow::wireSpotSubsystem()
     m_potaClient = new PotaClient;
     m_eibiClient = new EibiClient;
     m_n1mmSpotClient = new N1MMSpotClient;
+    m_js8CallClient = new Js8CallClient;
 #ifdef HAVE_WEBSOCKETS
     m_freedvClient = new FreeDvClient;
 #endif
@@ -244,6 +246,7 @@ void MainWindow::wireSpotSubsystem()
     m_potaClient->moveToThread(m_spotThread);
     m_eibiClient->moveToThread(m_spotThread);
     m_n1mmSpotClient->moveToThread(m_spotThread);
+    m_js8CallClient->moveToThread(m_spotThread);
 #ifdef HAVE_WEBSOCKETS
     m_freedvClient->moveToThread(m_spotThread);
 #endif
@@ -320,6 +323,8 @@ void MainWindow::wireSpotSubsystem()
                               Qt::QueuedConnection);
     QMetaObject::invokeMethod(m_n1mmSpotClient, &N1MMSpotClient::initialize,
                               Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_js8CallClient, &Js8CallClient::initialize,
+                              Qt::QueuedConnection);
 #ifdef HAVE_WEBSOCKETS
     QMetaObject::invokeMethod(m_freedvClient, &FreeDvClient::initialize,
                               Qt::QueuedConnection);
@@ -352,6 +357,8 @@ void MainWindow::wireSpotSubsystem()
             lifetimeMs = as.value("WsjtxSpotLifetime", 120).toInt() * 1000;
         else if (spot.source == "FreeDV")
             lifetimeMs = as.value("FreeDvSpotLifetime", 120).toInt() * 1000;  // HAVE_WEBSOCKETS
+        else if (spot.source == "JS8Call")
+            lifetimeMs = as.value("Js8CallSpotLifetime", 120).toInt() * 1000;
         else
         {
             int sec = as.value("DxClusterSpotLifetimeSec", 0).toInt();
@@ -378,6 +385,8 @@ void MainWindow::wireSpotSubsystem()
             return as.value("WsjtxSpotLifetime", 120).toInt();
         if (source == "FreeDV")
             return as.value("FreeDvSpotLifetime", 120).toInt();
+        if (source == "JS8Call")
+            return as.value("Js8CallSpotLifetime", 120).toInt();
 
         int sec = as.value("DxClusterSpotLifetimeSec", 0).toInt();
         if (sec <= 0)
@@ -397,6 +406,8 @@ void MainWindow::wireSpotSubsystem()
                 spotColor = as.value("SpotCollectorSpotColor", "#FFD700").toString();
             else if (source == "FreeDV")
                 spotColor = as.value("FreeDvSpotColor", "#FF8C00").toString();  // HAVE_WEBSOCKETS
+            else if (source == "JS8Call")
+                spotColor = as.value("Js8CallSpotColor", "#C060FF").toString();
         }
         if (spotColor.length() == 7)
             spotColor = "#FF" + spotColor.mid(1);
@@ -632,6 +643,16 @@ void MainWindow::wireSpotSubsystem()
             m_radioModel.spotModel().removeSpot(it.value());
         }
         m_n1mmSpotIdByKey.clear();
+    });
+
+    // ── JS8Call TCP JSON API (#21) ────────────────────────────────────────
+    // No add/delete semantics on the wire (unlike N1MM above) — a heard
+    // station is just re-spotted on every decode, aged out by the shared
+    // lifetime/dedup path exactly like WSJT-X and FreeDV, so this goes
+    // through the same queueSpotCmd() every other passive source uses.
+    connect(m_js8CallClient, &Js8CallClient::spotReceived,
+            this, [queueSpotCmd](const DxSpot& spot) {
+        queueSpotCmd(spot, "JS8Call");
     });
 
     connect(m_dxCluster, &DxClusterClient::spotReceived,
