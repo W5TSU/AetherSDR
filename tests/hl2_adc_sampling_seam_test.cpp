@@ -137,8 +137,6 @@ int main(int argc, char** argv)
     // Deliver it. From here the stamp must freeze.
     app.processEvents();
     const std::int64_t frozen = dsp.adcPeakObservedAtNs();
-    check(!feedUntilNewPeak(dsp, phase, frozen),
-          "a muted chain holds its peak and its stamp for as long as it is fed");
 
     // ── Key up, short. THE BUG. ──────────────────────────────────────────
     //
@@ -167,6 +165,18 @@ int main(int argc, char** argv)
                      /*sampling=*/gate.applied(dsp.adcPeakObservedAtNs()), true, true)
               == AdcPairing::Unknown,
           "gated: Unknown until the chain has actually resumed");
+
+    // The chain never produced a new peak through this whole window — checked
+    // here, AFTER the age-gate assertions above rather than before, because
+    // feeding kMaxBlocksForOneSample blocks through the full WDSP RX chain is
+    // real CPU work. Doing it between freezing the stamp and measuring `ago`
+    // let that processing time count against the 150 ms budget: harmless
+    // natively, but under a sanitizer's instrumentation overhead it could push
+    // `ago` past kSliceStaleMs even though the chain was muted throughout,
+    // failing this test for a reason that has nothing to do with the gate
+    // (issue #39).
+    check(!feedUntilNewPeak(dsp, phase, frozen),
+          "a muted chain holds its peak and its stamp for as long as it is fed");
 
     // ── The unmute lands. One block later the pairing is a sentence again. ─
     app.processEvents();
