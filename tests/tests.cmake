@@ -896,6 +896,21 @@ target_include_directories(hl2_rxdsp_test PRIVATE src)
 target_link_libraries(hl2_rxdsp_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME hl2_rxdsp_test COMMAND hl2_rxdsp_test)
 
+# #5498 — how many milliseconds of PRE-MUTE content persist across the mute edge,
+# and how much of the live input DURING the over leaks out? Two in-passband tone
+# markers and a matched filter, in place of a listening judgement. Note what this
+# is NOT: #5498 also asks how long receive audio is lost and how abruptly it
+# returns, and neither is measurable here — nothing new is fed after the unmute,
+# by design, so there is no absence to time. The AGC is switched off in the
+# fixture so the decay shape is the RX filter's. Asserts its detector controls
+# and that live input stays below -20 dB during mute. The measured durations
+# are reported, never compared to a retyped copy of kRxFilterTaps. Qt6::Test is
+# deliberately not linked — this fixture uses no QTest.
+add_executable(hl2_rxdsp_unmute_staleness_test tests/hl2_rxdsp_unmute_staleness_test.cpp)
+target_include_directories(hl2_rxdsp_unmute_staleness_test PRIVATE src)
+target_link_libraries(hl2_rxdsp_unmute_staleness_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_rxdsp_unmute_staleness_test COMMAND hl2_rxdsp_unmute_staleness_test)
+
 # The host-side impulse noise blanker (WDSP ANB) ahead of the demodulator. The
 # HL2 runs no firmware DSP, so this stage is the only noise blanker the radio
 # has and there is no wire traffic to assert against — the test measures the
