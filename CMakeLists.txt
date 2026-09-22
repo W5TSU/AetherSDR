@@ -140,6 +140,12 @@ if(NOT AETHERSDR_SANITIZER STREQUAL "none")
     unset(_aether_san_list)
 endif()
 option(ENABLE_RTL "Enable the experimental receive-only RTL-SDR backend" ON)
+# HackRfBackend itself doesn't exist yet (#42) — this option only gates the
+# libhackrf detection below for now. A later PR adding HackRfWorker/
+# HackRfDdc/HackRfBackend will add the target_compile_definitions/
+# target_sources block the RTL-SDR section below has, once there's
+# something to compile.
+option(ENABLE_HACKRF "Enable the experimental HackRF backend (RX+TX)" ON)
 option(MQTT_TLS "Enable MQTT TLS via OpenSSL (disable for AppImage)" ON)
 option(LOWER_CASE_BINARY_NAME "Make the output binary lower case. Only affects Linux" OFF)
 if(WIN32)
@@ -2493,6 +2499,50 @@ elseif(RTLSDR_FOUND AND NOT RTL_FFTW3F_FOUND)
     message(STATUS "RTL-SDR ... disabled — librtlsdr found but fftw3f missing. Install fftw3f (e.g. libfftw3-dev), or configure with -DENABLE_RTL=OFF.")
 else()
     message(STATUS "RTL-SDR ... disabled — librtlsdr not found")
+endif()
+
+# HackRF backend (#42) — detection, plus HackRfIq/HackRfWorker (the pure IQ
+# helpers and the hackrf_device* owner). HackRfBackend/HackRfDdc (the
+# IRadioBackend implementor and the per-slice DDC) don't exist yet, so there
+# is no AETHER_BACKEND_HACKRF compile definition yet — nothing consumes it
+# until a backend registers against IRadioBackend. Follows the RTL-SDR block
+# above's exact template.
+if(PkgConfig_FOUND)
+    pkg_check_modules(HACKRF IMPORTED_TARGET libhackrf)
+endif()
+
+# vcpkg / Homebrew / hand-built installs ship no .pc file (or, like this
+# dev machine's libhackrf.pc, one with an empty Version: field — harmless
+# for pkg_check_modules but worth a fallback path regardless). hackrf.h
+# installs nested under an includedir/libhackrf/ subdirectory rather than
+# directly in an include root (unlike rtl-sdr.h), hence PATH_SUFFIXES.
+if(ENABLE_HACKRF AND NOT HACKRF_FOUND)
+    find_path(HACKRF_INCLUDE_DIR hackrf.h PATH_SUFFIXES libhackrf)
+    find_library(HACKRF_LIBRARY NAMES hackrf libhackrf)
+    if(HACKRF_INCLUDE_DIR AND HACKRF_LIBRARY)
+        add_library(HackRf::HackRf UNKNOWN IMPORTED)
+        set_target_properties(HackRf::HackRf PROPERTIES
+            IMPORTED_LOCATION "${HACKRF_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${HACKRF_INCLUDE_DIR}")
+        set(HACKRF_FOUND TRUE)
+        set(HACKRF_TARGET HackRf::HackRf)
+    endif()
+else()
+    set(HACKRF_TARGET PkgConfig::HACKRF)
+endif()
+
+if(NOT ENABLE_HACKRF)
+    message(STATUS "HackRF ... disabled by ENABLE_HACKRF=OFF")
+elseif(HACKRF_FOUND)
+    message(STATUS "HackRF ... libhackrf found — HackRfWorker enabled (no IRadioBackend yet — #42)")
+    target_link_libraries(aethercore PRIVATE ${HACKRF_TARGET})
+    target_sources(aethercore PRIVATE
+        src/core/backends/hackrf/HackRfIq.cpp
+        src/core/backends/hackrf/HackRfIq.h
+        src/core/backends/hackrf/HackRfWorker.cpp
+        src/core/backends/hackrf/HackRfWorker.h)
+else()
+    message(STATUS "HackRF ... disabled — libhackrf not found")
 endif()
 
 # Ulanzi Dial backend — one per platform.  All three implementations
