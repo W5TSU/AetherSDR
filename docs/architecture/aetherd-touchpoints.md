@@ -4,7 +4,7 @@
 
 Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine-design.md) §2, §10). One row per engine header the UI includes; converting a touchpoint means the UI reaches that surface through the versioned protocol instead of the header.
 
-**Totals:** 222 touchpoint headers (191 core, 31 models) — 222/222 tagged, 0/222 converted.
+**Totals:** 223 touchpoint headers (192 core, 31 models) — 223/223 tagged, 0/223 converted.
 
 | Header | Includers | Tag | Status |
 |---|---:|---|---|
@@ -73,6 +73,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/IConnectionAutomation.h` | 1 | ui-support — Gui-free connect/disconnect/dialog hook the automation bridge drives; bridge plumbing, not radio state. | unconverted |
 | `core/IambicKeyer.h` | 3 | universal — Radio-agnostic software iambic state machine for local sidetone + CW paddle/keying intent; no vendor coupling. | unconverted |
 | `core/IssueReport.h` | 1 | ui-support — Renders a pre-filled GitHub issue body from a SupportBundle snapshot, with PII redaction applied at the render boundary (GHSA-ccrg-j8cp-qhc4). Support and diagnostics tooling; not radio state. | unconverted |
+| `core/Js8CallClient.h` | 3 | ui-support — TCP listener for the local JS8Call app's JSON API (#21); desktop-side integration feeding the universal spot surface, same category as WsjtxClient.h. | unconverted |
 | `core/KiwiPublicDirectory.h` | 1 | vendor(kiwi) — Fetches/parses AetherSDR's kiwi.json mirror of the kiwisdr.com/public directory + per-sysop ext_api policy; KiwiSDR ecosystem discovery only. | unconverted |
 | `core/KiwiSdrClient.h` | 2 | vendor(kiwi) — KiwiSDR WebSocket protocol client (SND/WF streams, ADPCM, camp/monitor states) — the kiwi backend itself; also serves the Web-888 fork as a receiver family (docs/web888-cleanroom-design.md) | unconverted |
 | `core/KiwiSdrManager.h` | 8 | vendor(kiwi) — KiwiSDR connection/profile manager: Kiwi protocol state, telemetry, waterfall/audio streams; vendor extension. Profiles carry a receiver family (KiwiSDR or Web-888). | unconverted |

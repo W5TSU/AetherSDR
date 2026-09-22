@@ -406,8 +406,18 @@ void MainWindow::wireSpotSubsystem()
                 spotColor = as.value("SpotCollectorSpotColor", "#FFD700").toString();
             else if (source == "FreeDV")
                 spotColor = as.value("FreeDvSpotColor", "#FF8C00").toString();  // HAVE_WEBSOCKETS
-            else if (source == "JS8Call")
-                spotColor = as.value("Js8CallSpotColor", "#C060FF").toString();
+            else if (source == "JS8Call") {
+                // No hardcoded hex default here (unlike the sources above) —
+                // the theme has no purple/violet token to hand-pick, and this
+                // repo's colour-ratchet CI check fails any PR that mints a
+                // never-before-seen hex literal. Falls back to a theme token
+                // instead, same as N1MMSpotParser::kStatusColorSpecs's
+                // per-flag themeToken fallback.
+                const QString stored = as.value("Js8CallSpotColor", "").toString();
+                spotColor = stored.isEmpty()
+                          ? ThemeManager::instance().color(QLatin1String("color.accent.bright")).name()
+                          : stored;
+            }
         }
         if (spotColor.length() == 7)
             spotColor = "#FF" + spotColor.mid(1);

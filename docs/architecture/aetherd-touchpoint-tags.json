@@ -1372,5 +1372,11 @@
   "note": "Capability-gated client for the ANAN calibration extension. Uses only IRadioBackend requests and replies; concrete calibration ownership, rate control and DSP stay below the backend seam.",
   "split": "Client protocol adapter only; no vendor implementation dependency.",
   "confidence": "high"
+ },
+ "core/Js8CallClient.h": {
+  "tag": "ui-support",
+  "note": "TCP listener for the local JS8Call app's JSON API (#21); desktop-side integration feeding the universal spot surface, same category as WsjtxClient.h.",
+  "split": "",
+  "confidence": "high"
  }
 }

@@ -2267,14 +2267,22 @@ void DxClusterDialog::buildJs8CallTab(QTabWidget* tabs)
         "QPushButton { background: %1; border: 2px solid {{color.background.2}};"
         " border-radius: 3px; }"
         "QPushButton:hover { border-color: {{color.text.primary}}; }";
-    QColor js8Color(s.value("Js8CallSpotColor", "#C060FF").toString());
+    // No hardcoded hex default (unlike the DX Cluster/N1MM swatches above) —
+    // falls back to a theme token instead, same reasoning as the
+    // spotColorForSource default in MainWindow_Spots.cpp.
+    auto js8DefaultColor = [] {
+        return ThemeManager::instance().color(QLatin1String("color.accent.bright"));
+    };
+    auto js8StoredColor = [js8DefaultColor] {
+        const QString stored = AppSettings::instance().value("Js8CallSpotColor", "").toString();
+        return stored.isEmpty() ? js8DefaultColor() : QColor(stored);
+    };
+    QColor js8Color = js8StoredColor();
     auto* js8ColorBtn = new QPushButton;
     js8ColorBtn->setFixedSize(18, 18);
     ThemeManager::instance().applyStyleSheet(js8ColorBtn, swatchTemplate.arg(js8Color.name()));
-    connect(js8ColorBtn, &QPushButton::clicked, this, [this, js8ColorBtn, swatchTemplate] {
-        QColor c = getColorForLiveParent(
-            QColor(AppSettings::instance().value("Js8CallSpotColor", "#C060FF").toString()),
-            this, "JS8Call Spot Color");
+    connect(js8ColorBtn, &QPushButton::clicked, this, [this, js8ColorBtn, swatchTemplate, js8StoredColor] {
+        QColor c = getColorForLiveParent(js8StoredColor(), this, "JS8Call Spot Color");
         if (c.isValid()) {
             ThemeManager::instance().applyStyleSheet(js8ColorBtn, swatchTemplate.arg(c.name()));
             AppSettings::instance().setValue("Js8CallSpotColor", c.name());
