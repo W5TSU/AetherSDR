@@ -165,15 +165,27 @@ state is required, not optional.
 
 ## Build & vendoring
 
-Follow `ENABLE_RTL`'s exact template (`CMakeLists.txt:142`):
-- New `option(ENABLE_HACKRF "Enable the experimental HackRF backend" ON)`.
-- `pkg_check_modules` for `libhackrf`, with a `find_library`/`find_path`
+Follow `ENABLE_RTL`'s exact template (`CMakeLists.txt:142`) — **landed** (#42):
+- `option(ENABLE_HACKRF "Enable the experimental HackRF backend (RX+TX)" ON)`.
+- `pkg_check_modules` for `libhackrf`, with a `find_path`/`find_library`
   fallback, gracefully disabled with a status message if not found —
-  matching the `RTLSDR_FOUND` pattern (`CMakeLists.txt:2435-2478`).
+  matching the `RTLSDR_FOUND` pattern.
 - Linux/macOS use the system package (`apt install libhackrf-dev` /
   `brew install hackrf`).
-- Windows needs a new `scripts/setup/setup-hackrf.ps1` fetching a prebuilt
-  DLL, matching `setup-fftw.ps1`/`setup-opus.ps1`.
+- **Windows: no setup script, matching RTL-SDR's actual precedent, not the
+  original plan here.** This section originally called for a
+  `scripts/setup/setup-hackrf.ps1` "fetching a prebuilt DLL, matching
+  `setup-fftw.ps1`/`setup-opus.ps1`" — checked while implementing #42 and
+  that assumption doesn't hold: HackRF's GitHub releases ship source
+  tarballs only, no Windows binary asset, and there's no vcpkg port either.
+  More to the point, RTL-SDR — the actually-comparable case (another USB SDR
+  peripheral depending on libusb) — isn't set up on Windows CI at all today;
+  `librtlsdr-dev` is installed via `apt`/`brew` on Linux/macOS jobs only, and
+  Windows just hits the graceful "not found, disabled" branch. HackRF now
+  does the same. Building `libhackrf` from source on Windows (hidapi-style)
+  would also mean solving `libusb-1.0` for Windows first — a new dependency
+  chain, not yet used on Windows in this repo, and a separately-scoped task
+  if Windows support is ever wanted.
 - Licensing: `libhackrf` is GPL-2.0; AetherSDR is GPLv3. No new concern —
   RtlSdr already established a GPL SDR driver library links cleanly here.
 
