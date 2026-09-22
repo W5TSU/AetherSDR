@@ -2501,12 +2501,12 @@ else()
     message(STATUS "RTL-SDR ... disabled — librtlsdr not found")
 endif()
 
-# HackRF backend (#42) — detection only for now; HackRfBackend/HackRfWorker/
-# HackRfDdc don't exist yet, so there is nothing to add to aethercore's
-# sources or compile definitions below. Follows the RTL-SDR block above's
-# exact template so the follow-up PR that adds the backend files only needs
-# to append a target_compile_definitions/target_sources block, not design
-# the detection from scratch.
+# HackRF backend (#42) — detection, plus HackRfIq/HackRfWorker (the pure IQ
+# helpers and the hackrf_device* owner). HackRfBackend/HackRfDdc (the
+# IRadioBackend implementor and the per-slice DDC) don't exist yet, so there
+# is no AETHER_BACKEND_HACKRF compile definition yet — nothing consumes it
+# until a backend registers against IRadioBackend. Follows the RTL-SDR block
+# above's exact template.
 if(PkgConfig_FOUND)
     pkg_check_modules(HACKRF IMPORTED_TARGET libhackrf)
 endif()
@@ -2534,7 +2534,13 @@ endif()
 if(NOT ENABLE_HACKRF)
     message(STATUS "HackRF ... disabled by ENABLE_HACKRF=OFF")
 elseif(HACKRF_FOUND)
-    message(STATUS "HackRF ... libhackrf found (backend not implemented yet — #42)")
+    message(STATUS "HackRF ... libhackrf found — HackRfWorker enabled (no IRadioBackend yet — #42)")
+    target_link_libraries(aethercore PRIVATE ${HACKRF_TARGET})
+    target_sources(aethercore PRIVATE
+        src/core/backends/hackrf/HackRfIq.cpp
+        src/core/backends/hackrf/HackRfIq.h
+        src/core/backends/hackrf/HackRfWorker.cpp
+        src/core/backends/hackrf/HackRfWorker.h)
 else()
     message(STATUS "HackRF ... disabled — libhackrf not found")
 endif()

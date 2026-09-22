@@ -2487,6 +2487,17 @@ target_include_directories(wsjtx_dial_tracker_test PRIVATE src)
 target_link_libraries(wsjtx_dial_tracker_test PRIVATE Qt6::Core)
 add_test(NAME wsjtx_dial_tracker_test COMMAND wsjtx_dial_tracker_test)
 
+# HackRF backend (#42): pure IQ format conversion + gain-range clamping,
+# split out of HackRfWorker so it's testable without linking libhackrf.
+# No Qt dependency at all (std::complex/std::vector only) — plainer even
+# than wsjtx_dial_tracker_test above.
+add_executable(hackrf_iq_test
+    tests/hackrf_iq_test.cpp
+    src/core/backends/hackrf/HackRfIq.cpp
+)
+target_include_directories(hackrf_iq_test PRIVATE src)
+add_test(NAME hackrf_iq_test COMMAND hackrf_iq_test)
+
 add_executable(n1mm_spot_client_test
     tests/n1mm_spot_client_test.cpp
     src/core/N1MMSpotParser.cpp
