@@ -389,9 +389,17 @@ DAX drivers on Windows.
 2. The **CAT Control** tile shows `4532  Rigctld  1 client`.
 3. Tuning in JS8Call moves the AetherSDR slice.
 
-> JS8Call also has its own TCP JSON API (default port 2442) for messages and
-> spot automation. That is unrelated to the radio connection above and is not
-> needed to operate.
+**Optional — JS8 spots on the panadapter**
+
+JS8Call also has its own TCP JSON API (default port 2442), unrelated to the
+CAT/audio connection above and not needed to operate. AetherSDR can connect
+to it as a receive-only spot source: **Settings ▸ SpotHub… ▸ JS8Call** tab,
+confirm the **Host**/**Port** match JS8Call's own **Settings ▸ Reporting ▸
+TCP Server** page (default `127.0.0.1:2442`, which JS8Call must have enabled
+for anything to connect), then **Connect** (or turn on **Auto-Start** to
+connect every session). Stations JS8Call decodes and identifies appear as
+panadapter spots, same as a DX cluster or WSJT-X feed. AetherSDR never sends
+messages or frequency changes over this connection.
 
 ---
 
@@ -560,8 +568,8 @@ logger also runs a digital-mode engine.
 - Log4OM v2 can alternatively connect as a **TCI client** — enable the TCI
   server instead and point Log4OM at `localhost:50001`.
 
-Spot ingestion (DX Cluster, RBN, WSJT-X, N1MM bandmap) is a separate feature —
-see **Settings ▸ SpotHub…**.
+Spot ingestion (DX Cluster, RBN, WSJT-X, N1MM bandmap, JS8Call) is a separate
+feature — see **Settings ▸ SpotHub…**.
 
 ---
 

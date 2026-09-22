@@ -830,6 +830,8 @@ set(CORE_SOURCES
     src/core/EibiCodeMaps.cpp
     src/core/N1MMSpotClient.cpp
     src/core/N1MMSpotParser.cpp
+    src/core/Js8CallClient.cpp
+    src/core/Js8CallParser.cpp
     src/core/PropForecastClient.cpp
     src/core/PskReporterClient.cpp
     src/core/LocationAddressResolver.cpp
