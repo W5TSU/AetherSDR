@@ -17,6 +17,9 @@
 #ifdef AETHER_BACKEND_RTL
 #include "core/backends/rtl/RtlSdrBackend.h"    // RTL-SDR backend (family "rtl")
 #endif
+#ifdef AETHER_BACKEND_HACKRF
+#include "core/backends/hackrf/HackRfBackend.h"  // HackRF backend, experimental (family "hackrf")
+#endif
 #include "core/AppSettings.h"
 #include "core/TciSettings.h"
 #include "core/RadioStateMemory.h"  // RFC #4603 typed restore handoff
@@ -789,6 +792,18 @@ std::unique_ptr<IRadioBackend> RadioModel::makeBackend(const QString& family)
         return std::make_unique<rtl::RtlSdrBackend>();
 #else
         qWarning() << "RadioModel: RTL-SDR backend requested but RTL support is disabled";
+        return nullptr;
+#endif
+    }
+    // HackRF — highly experimental (#42): RX+TX arbitration is real, but TX
+    // audio and multi-slice RX aren't wired yet (see HackRfBackend's own
+    // class comment). Selectable like any other family regardless — the
+    // same "experimental" label RTL/ANAN wear, not a hidden feature.
+    if (family.compare(QLatin1String("hackrf"), Qt::CaseInsensitive) == 0) {
+#ifdef AETHER_BACKEND_HACKRF
+        return std::make_unique<hackrf::HackRfBackend>();
+#else
+        qWarning() << "RadioModel: HackRF backend requested but HackRF support is disabled";
         return nullptr;
 #endif
     }
@@ -3621,10 +3636,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // family for the whole process. Same-family reconnects rebuild nothing.
     const QString wantFamily = info.family.isEmpty() ? QStringLiteral("flex")
                                                      : info.family.toLower();
-    // RTL has no persistent radio memory. Finish its old session before the
-    // discovery identity or preconnect restore is replaced, including swaps
-    // within the same family. Its disconnect flush still sees the old scope.
-    if (m_family == QLatin1String("rtl") && m_backend && isConnected()) {
+    // RTL and HackRF have no persistent radio memory. Finish the old session
+    // before the discovery identity or preconnect restore is replaced,
+    // including swaps within the same family. The disconnect flush still
+    // sees the old scope.
+    if ((m_family == QLatin1String("rtl") || m_family == QLatin1String("hackrf"))
+        && m_backend && isConnected()) {
         flushPendingOperatingState();
         m_backend->disconnectRadio();
     }

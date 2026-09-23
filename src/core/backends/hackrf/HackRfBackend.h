@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/backends/hackrf/HackRfDdc.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
 #include "core/backends/IRadioBackend.h"
 #include "core/backends/RestoredRadioState.h"
@@ -41,9 +42,15 @@ class HackRfWorker;
 //     is its own scope, tracked as a remaining #42 item, and a backend that
 //     silently claimed to transmit audio it doesn't produce would be a
 //     worse failure than one that plainly does nothing yet.
-//   - RX AUDIO/SPECTRUM ARE NOT WIRED for the same reason as multi-slice:
-//     no HackRfDdc, no demodulator, so HackRfWorker::rxIqReady currently has
-//     nothing consuming it into audio or a panadapter frame.
+//   - RX AUDIO/SPECTRUM ARE STILL NOT WIRED, though HackRfDdc now exists and
+//     IS fed real wideband samples (HackRfWorker::rxIqReady -> HackRfDdc::
+//     process(), tuned so center == the single slice frequency): there is
+//     no WDSP RXA channel yet to turn HackRfDdc's correctly-tuned,
+//     correctly-decimated 48 kHz IQ into demodulated audio or a spectrum
+//     frame, so decimatedIqReady() currently has no consumer inside this
+//     class. ddc() is exposed for exactly the same reason RtlSdrBackend
+//     exposes its own ddc() accessor — real-hardware verification without
+//     a full WDSP integration to build first.
 //
 // None of the above blocks correctness of what IS implemented: capabilities
 // declaration, connect/disconnect lifecycle, frequency/gain control, and the
@@ -95,6 +102,11 @@ public:
 
     static QString familyName() { return QStringLiteral("hackrf"); }
 
+    // Single-slice DDC, exposed for real-hardware verification (mirrors
+    // RtlSdrBackend::ddc()) — see the class comment on why nothing inside
+    // this class consumes decimatedIqReady() yet.
+    HackRfDdc* ddc() const { return m_ddc.get(); }
+
 private slots:
     void onArbiterWantRxStart();
     void onArbiterWantRxStop();
@@ -103,6 +115,7 @@ private slots:
     void onArbiterTimedOut(HackRfTxRxArbiter::State pendingState);
     void onArbiterTick();
     void onWorkerStreamStopped(bool wasRx, const QString& reason);
+    void onWorkerRxIqReady(QVector<std::complex<float>> iq);
 
 private:
     void emitInitialState();
@@ -122,6 +135,7 @@ private:
     bool m_ampEnabled{false};
 
     std::unique_ptr<HackRfWorker> m_worker;
+    std::unique_ptr<HackRfDdc> m_ddc;
     std::unique_ptr<HackRfTxRxArbiter> m_arbiter;
     QElapsedTimer m_clock;   // monotonic ms source for the arbiter — started on connect
     QTimer m_arbiterTickTimer;  // polls HackRfTxRxArbiter::tick() for timeout recovery

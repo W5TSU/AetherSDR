@@ -17,14 +17,16 @@ constexpr const char* kPanId = "0xh1000000";
 HackRfBackend::HackRfBackend(QObject* parent)
     : IRadioBackend(parent)
     , m_worker(std::make_unique<HackRfWorker>())
+    , m_ddc(std::make_unique<HackRfDdc>())
 {
     // m_arbiter itself is (re)created fresh in connectRadio() — a stale
     // pending/timed-out state from a previous session must not leak into
     // the next one if this backend object is reused for another connect.
     // Its signals are connected there, once per instance; nothing to wire
-    // here. m_worker is never replaced, so its connection lives for the
-    // whole backend lifetime.
+    // here. m_worker/m_ddc are never replaced, so their connections live
+    // for the whole backend lifetime.
     connect(m_worker.get(), &HackRfWorker::streamStopped, this, &HackRfBackend::onWorkerStreamStopped);
+    connect(m_worker.get(), &HackRfWorker::rxIqReady, this, &HackRfBackend::onWorkerRxIqReady);
 
     // Polls HackRfTxRxArbiter::tick() for timeout recovery. HackRfWorker's
     // start/stop calls are synchronous (see its own header comment on why
@@ -163,7 +165,28 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     if (m_connected) disconnectRadio();
 
     m_serial = request.serial.trimmed();
-    if (!m_worker->open(m_serial)) {
+
+    // HackRfDiscovery's index-based fallback identity ("hackrf:<index>"),
+    // used when a device's USB serial was empty or duplicated — mirrors
+    // RtlSdrBackend::connectRadio()'s own "rtl:<index>" parsing for the
+    // identical reason. A real serial (the common case) skips this and
+    // opens by serial below.
+    bool opened = false;
+    if (m_serial.startsWith(QLatin1String("hackrf:"))
+        && (request.serialIdentity.indexLocator
+            || request.serialIdentity.reportedSerial.isEmpty())) {
+        bool ok = false;
+        const int idx = m_serial.mid(7).toInt(&ok);
+        if (!ok || idx < 0 || !m_worker->openByIndex(idx)) {
+            emit connectionError(tr("HackRF at index %1 not found — the device list may "
+                                     "have changed since it was discovered").arg(idx));
+            return;
+        }
+        opened = true;
+    } else {
+        opened = m_worker->open(m_serial);
+    }
+    if (!opened) {
         emit connectionError(tr("Could not open HackRF device"
                                  "%1").arg(m_serial.isEmpty() ? QString() : QStringLiteral(" (serial %1)").arg(m_serial)));
         return;
@@ -178,6 +201,17 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         m_worker->close();
         return;
     }
+
+    // Single-slice: the DDC's "wideband center" and "slice target" are the
+    // same frequency for now (HackRfWorker tunes directly to the requested
+    // frequency; there's no wider-than-the-slice capture actually being
+    // exploited yet). NCO shift is a no-op today — this sets up the shape
+    // multi-slice will need (a wideband-tuned center with per-slice
+    // offsets) without claiming multi-slice works before HackRfBackend
+    // actually owns more than one HackRfDdc instance.
+    m_ddc->setInputSampleRateHz(m_sampleRateHz);
+    m_ddc->setCenterFrequencyHz(m_sliceFreqHz);
+    m_ddc->setSliceFrequencyHz(m_sliceFreqHz);
 
     m_connected = true;
     m_clock.start();
@@ -214,6 +248,8 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     if (!m_connected) return;
     m_sliceFreqHz = hz;
     m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
+    m_ddc->setCenterFrequencyHz(hz);
+    m_ddc->setSliceFrequencyHz(hz);
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -266,6 +302,8 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     if (!m_connected) return;
     m_sliceFreqHz = hz;
     m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
+    m_ddc->setCenterFrequencyHz(hz);
+    m_ddc->setSliceFrequencyHz(hz);
     emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6, m_sampleRateHz / 1e6);
 }
 
@@ -393,6 +431,15 @@ void HackRfBackend::onWorkerStreamStopped(bool wasRx, const QString& reason)
     // rather than guess.
     disconnectRadio();
     emit connectionError(tr("HackRF stream stopped unexpectedly: %1").arg(reason));
+}
+
+void HackRfBackend::onWorkerRxIqReady(QVector<std::complex<float>> iq)
+{
+    // No WDSP RXA channel exists yet to consume HackRfDdc's output (see the
+    // class comment) — this just runs the real DDC on real samples so the
+    // decimation/tuning math is exercised end to end. decimatedIqReady()
+    // is observable via ddc() for verification until a real consumer exists.
+    m_ddc->process(iq);
 }
 
 void HackRfBackend::emitInitialState()

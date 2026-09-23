@@ -301,6 +301,21 @@ void MainWindow::wireDiscovery()
     if (RtlSdrDiscovery::isAvailable()) {
         m_rtlDiscovery.start();
     }
+
+    // HackRF — highly experimental (#42). No auto-connect wiring, same as
+    // RTL above and deliberately unlike Flex/HL2/ANAN: a USB SDR appearing
+    // in the list is not the operator asking to connect to it, and HackRF
+    // can transmit, so the bar for "connect without being asked" is higher
+    // here than for a receive-only dongle, not lower.
+    connect(&m_hackRfDiscovery, &HackRfDiscovery::radioDiscovered,
+            m_connPanel, &ConnectionPanel::onRadioDiscovered);
+    connect(&m_hackRfDiscovery, &HackRfDiscovery::radioUpdated,
+            m_connPanel, &ConnectionPanel::onRadioUpdated);
+    connect(&m_hackRfDiscovery, &HackRfDiscovery::radioLost,
+            m_connPanel, &ConnectionPanel::onRadioLost);
+    if (HackRfDiscovery::isAvailable()) {
+        m_hackRfDiscovery.start();
+    }
     connect(&m_discovery, &RadioDiscovery::radioUpdated,
             m_connPanel, &ConnectionPanel::onRadioUpdated);
     connect(&m_discovery, &RadioDiscovery::radioUpdated,
@@ -325,15 +340,20 @@ void MainWindow::wireDiscovery()
                     m_autoConnectSerial.clear();
             });
     connect(m_connPanel, &ConnectionPanel::retryDiscoveryRequested, this, [this] {
-        m_connPanel->setStatusText(RtlSdrDiscovery::isAvailable()
-                                       ? "Searching local network & USB devices…"
-                                       : "Searching your local network…");
+        m_connPanel->setStatusText(
+            (RtlSdrDiscovery::isAvailable() || HackRfDiscovery::isAvailable())
+                ? "Searching local network & USB devices…"
+                : "Searching your local network…");
         if (m_titleBar) m_titleBar->setDiscovering(true);
         m_discovery.stopListening();
         m_discovery.startListening();
         if (RtlSdrDiscovery::isAvailable()) {
             m_rtlDiscovery.stop();
             m_rtlDiscovery.start();
+        }
+        if (HackRfDiscovery::isAvailable()) {
+            m_hackRfDiscovery.stop();
+            m_hackRfDiscovery.start();
         }
     });
     connect(m_connPanel, &ConnectionPanel::networkDiagnosticsRequested,
