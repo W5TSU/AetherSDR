@@ -2,6 +2,7 @@
 
 #include "core/backends/hackrf/HackRfDdc.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
+#include "core/backends/hl2/Hl2Spectrum.h"
 #include "core/backends/IRadioBackend.h"
 #include "core/backends/RestoredRadioState.h"
 
@@ -11,6 +12,7 @@
 #include <QTimer>
 
 #include <memory>
+#include <vector>
 
 namespace AetherSDR::hackrf {
 
@@ -42,15 +44,22 @@ class HackRfWorker;
 //     is its own scope, tracked as a remaining #42 item, and a backend that
 //     silently claimed to transmit audio it doesn't produce would be a
 //     worse failure than one that plainly does nothing yet.
-//   - RX AUDIO/SPECTRUM ARE STILL NOT WIRED, though HackRfDdc now exists and
-//     IS fed real wideband samples (HackRfWorker::rxIqReady -> HackRfDdc::
-//     process(), tuned so center == the single slice frequency): there is
-//     no WDSP RXA channel yet to turn HackRfDdc's correctly-tuned,
-//     correctly-decimated 48 kHz IQ into demodulated audio or a spectrum
-//     frame, so decimatedIqReady() currently has no consumer inside this
-//     class. ddc() is exposed for exactly the same reason RtlSdrBackend
-//     exposes its own ddc() accessor — real-hardware verification without
-//     a full WDSP integration to build first.
+//   - RX AUDIO IS STILL NOT WIRED: there is no WDSP RXA channel yet to turn
+//     HackRfDdc's correctly-tuned, correctly-decimated 48 kHz IQ into
+//     demodulated audio, so decimatedIqReady() currently has no consumer
+//     inside this class. ddc() is exposed for exactly the same reason
+//     RtlSdrBackend exposes its own ddc() accessor — real-hardware
+//     verification without a full WDSP integration to build first.
+//   - RX SPECTRUM/WATERFALL ARE WIRED, though: hl2::Hl2Spectrum (a raw-IQ
+//     panadapter FFT engine that is completely radio-family-agnostic
+//     despite its namespace — see its own header comment, "a raw-IQ
+//     backend that streams its own spectra runs it here instead," which is
+//     precisely this backend's situation) computes ONE wideband spectrum
+//     per backend from HackRfWorker::rxIqReady directly, independent of
+//     HackRfDdc's per-slice narrowband decimation. Rate-gated the same way
+//     Hl2RxDsp gates it: skip the whole FFT (not just the emit) when a
+//     frame isn't due, but keep the accumulator fed so the next due frame
+//     completes from contiguous recent samples.
 //
 // None of the above blocks correctness of what IS implemented: capabilities
 // declaration, connect/disconnect lifecycle, frequency/gain control, and the
@@ -81,6 +90,7 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     void setPanCenter(const QString& panId, double hz, PanCenterIntent intent) override;
+    void setPanFrameRate(const QString& panId, int fps) override;
 
     // VGA (baseband) gain, 0-62dB/2dB steps — the continuous slider. LNA and
     // the front-end AMP map to setPanPreamp() below; there is no third
@@ -120,6 +130,13 @@ private slots:
 private:
     void emitInitialState();
     qint64 nowMs() const { return m_clock.elapsed(); }
+    // Gates the wideband spectrum FFT the same way Hl2RxDsp::spectrumFrameDue()
+    // does — see the class comment.
+    bool spectrumFrameDue() const
+    {
+        return m_spectrumIntervalMs <= 0
+            || (nowMs() - m_lastSpectrumMs) >= m_spectrumIntervalMs;
+    }
 
     bool m_connected{false};
     QString m_serial;
@@ -136,8 +153,12 @@ private:
 
     std::unique_ptr<HackRfWorker> m_worker;
     std::unique_ptr<HackRfDdc> m_ddc;
+    std::unique_ptr<hl2::Hl2Spectrum> m_spectrum;
+    std::vector<float> m_specBins;   // reused output buffer for m_spectrum->process()
+    int m_spectrumIntervalMs{33};    // ~30 fps default, matches RtlSdrDdc's own default
+    qint64 m_lastSpectrumMs{0};
     std::unique_ptr<HackRfTxRxArbiter> m_arbiter;
-    QElapsedTimer m_clock;   // monotonic ms source for the arbiter — started on connect
+    QElapsedTimer m_clock;   // monotonic ms source for the arbiter AND the spectrum gate — started on connect
     QTimer m_arbiterTickTimer;  // polls HackRfTxRxArbiter::tick() for timeout recovery
 };
 

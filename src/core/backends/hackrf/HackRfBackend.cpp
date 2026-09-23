@@ -5,6 +5,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <span>
 
 Q_DECLARE_LOGGING_CATEGORY(lcHackRf)  // defined in HackRfWorker.cpp
 
@@ -12,12 +13,17 @@ namespace AetherSDR::hackrf {
 
 namespace {
 constexpr const char* kPanId = "0xh1000000";
+// FFT size for the wideband panadapter spectrum — matches RtlSdrDdc's own
+// choice for the same "USB SDR wideband capture" category of source; twice
+// Hl2RxDsp's default (1024) since HL2's span is narrower to begin with.
+constexpr int kSpectrumFftSize = 2048;
 }
 
 HackRfBackend::HackRfBackend(QObject* parent)
     : IRadioBackend(parent)
     , m_worker(std::make_unique<HackRfWorker>())
     , m_ddc(std::make_unique<HackRfDdc>())
+    , m_spectrum(std::make_unique<hl2::Hl2Spectrum>(kSpectrumFftSize))
 {
     // m_arbiter itself is (re)created fresh in connectRadio() — a stale
     // pending/timed-out state from a previous session must not leak into
@@ -307,6 +313,13 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6, m_sampleRateHz / 1e6);
 }
 
+void HackRfBackend::setPanFrameRate(const QString& panId, int fps)
+{
+    Q_UNUSED(panId);
+    // Same formula as Hl2RxDsp::setSpectrumRateFps: 0 = uncapped.
+    m_spectrumIntervalMs = fps > 0 ? (1000 / fps) : 0;
+}
+
 void HackRfBackend::setPanRfGain(const QString& panId, int gainDb)
 {
     Q_UNUSED(panId);
@@ -440,6 +453,26 @@ void HackRfBackend::onWorkerRxIqReady(QVector<std::complex<float>> iq)
     // decimation/tuning math is exercised end to end. decimatedIqReady()
     // is observable via ddc() for verification until a real consumer exists.
     m_ddc->process(iq);
+
+    // Wideband panadapter spectrum — computed once per backend from the raw
+    // capture, independent of the per-slice DDC above (see the class
+    // comment on why these are separate). QVector's storage is contiguous
+    // for a trivial element type, so this is a view, not a copy.
+    const std::span<const std::complex<float>> wideband(iq.constData(),
+                                                         static_cast<std::size_t>(iq.size()));
+    if (spectrumFrameDue()) {
+        if (m_spectrum->process(wideband, m_specBins) > 0) {
+            QByteArray frame(reinterpret_cast<const char*>(m_specBins.data()),
+                             static_cast<int>(m_specBins.size() * sizeof(float)));
+            emit spectrumFrameReady(0, frame);
+            emit waterfallRowReady(0, frame);
+            m_lastSpectrumMs = nowMs();
+        }
+    } else {
+        // Keep the window fed without paying for a transform — see
+        // Hl2RxDsp's identical reasoning in its own class comment.
+        m_spectrum->accumulate(wideband);
+    }
 }
 
 void HackRfBackend::emitInitialState()
