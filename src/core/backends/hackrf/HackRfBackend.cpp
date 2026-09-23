@@ -235,8 +235,18 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     connect(m_arbiter.get(), &HackRfTxRxArbiter::arbitrationTimedOut, this, &HackRfBackend::onArbiterTimedOut);
     m_arbiter->requestRx(nowMs());
 
-    emitInitialState();
+    // connected() MUST fire before the initial slice/pan state (mirrors
+    // RtlSdrBackend::connectRadio()'s own ordering). RadioModel::onConnected()
+    // unconditionally stages whatever is currently in m_slices/m_panadapters as
+    // "previous session, reclaimable on the next status" — publishing the
+    // initial state first meant it got staged the instant connected() fired
+    // and then sat orphaned, because HackRF (unlike Flex) never sends a
+    // follow-up status broadcast on its own to trigger a reclaim: the operator
+    // saw a live-looking VFO that silently stopped updating. See the
+    // regression this produced: dig into the reconnect-staging path if this
+    // ordering ever needs to change again.
     emit connected();
+    emitInitialState();
 }
 
 void HackRfBackend::disconnectRadio()
