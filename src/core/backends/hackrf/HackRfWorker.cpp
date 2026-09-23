@@ -61,6 +61,51 @@ bool HackRfWorker::open(const QString& serial)
     return true;
 }
 
+bool HackRfWorker::openByIndex(int index)
+{
+    if (m_device) {
+        qCWarning(lcHackRf) << "HackRfWorker: openByIndex() called while already open";
+        return false;
+    }
+    if (index < 0) {
+        qCWarning(lcHackRf) << "HackRfWorker: openByIndex() requires a non-negative index";
+        return false;
+    }
+
+    const int initRc = hackrf_init();
+    if (initRc != HACKRF_SUCCESS) {
+        qCWarning(lcHackRf) << "HackRfWorker: hackrf_init failed:" << errName(initRc);
+        return false;
+    }
+
+    hackrf_device_list_t* list = hackrf_device_list();
+    if (!list) {
+        qCWarning(lcHackRf) << "HackRfWorker: hackrf_device_list failed";
+        hackrf_exit();
+        return false;
+    }
+    if (index >= list->devicecount) {
+        qCWarning(lcHackRf) << "HackRfWorker: index" << index << "out of range ("
+                            << list->devicecount << "device(s) enumerated)";
+        hackrf_device_list_free(list);
+        hackrf_exit();
+        return false;
+    }
+
+    hackrf_device* dev = nullptr;
+    const int openRc = hackrf_device_list_open(list, index, &dev);
+    hackrf_device_list_free(list);  // the opened handle stays valid after this — see hackrf.h
+    if (openRc != HACKRF_SUCCESS || !dev) {
+        qCWarning(lcHackRf) << "HackRfWorker: openByIndex failed:" << errName(openRc);
+        hackrf_exit();
+        return false;
+    }
+
+    m_device = dev;
+    qCDebug(lcHackRf) << "HackRfWorker: opened device at index" << index;
+    return true;
+}
+
 void HackRfWorker::close()
 {
     if (!m_device) return;

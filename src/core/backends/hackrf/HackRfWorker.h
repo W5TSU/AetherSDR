@@ -62,6 +62,14 @@ public:
     // reference-counted init/exit, which is out of scope until multi-device
     // support is ever designed.
     bool open(const QString& serial = QString());
+
+    // Opens the device at USB enumeration index `index`, via
+    // hackrf_device_list()/hackrf_device_list_open() rather than
+    // hackrf_open_by_serial(). Needed when HackRfDiscovery falls back to an
+    // index-based identity ("hackrf:<index>") because a device's USB serial
+    // was empty or duplicated — mirrors RtlSdrBackend::connectRadio()'s own
+    // "rtl:<index>" parsing for exactly the same reason.
+    bool openByIndex(int index);
     void close();
     bool isOpen() const { return m_device != nullptr; }
 
