@@ -2498,6 +2498,27 @@ add_executable(hackrf_iq_test
 target_include_directories(hackrf_iq_test PRIVATE src)
 add_test(NAME hackrf_iq_test COMMAND hackrf_iq_test)
 
+# HackRF backend (#42): the RX/TX arbitration state machine, tested with a
+# fake monotonic clock (tick(nowMs)) instead of a real QTimer/event loop —
+# no hardware, no libhackrf, no real time elapsing.
+add_executable(hackrf_arbiter_test
+    tests/hackrf_arbiter_test.cpp
+    src/core/backends/hackrf/HackRfTxRxArbiter.cpp
+)
+target_include_directories(hackrf_arbiter_test PRIVATE src)
+target_link_libraries(hackrf_arbiter_test PRIVATE Qt6::Core)
+add_test(NAME hackrf_arbiter_test COMMAND hackrf_arbiter_test)
+
+if(AETHER_BACKEND_HACKRF)
+    # HackRfBackend capabilities declaration and restore-state contract.
+    # Never calls connectRadio() — no hardware needed — mirroring
+    # rtl_backend_test's own approach exactly.
+    add_executable(hackrf_backend_test tests/hackrf_backend_test.cpp)
+    target_include_directories(hackrf_backend_test PRIVATE src)
+    target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
+endif()
+
 add_executable(n1mm_spot_client_test
     tests/n1mm_spot_client_test.cpp
     src/core/N1MMSpotParser.cpp

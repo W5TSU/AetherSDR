@@ -27,15 +27,18 @@ namespace AetherSDR::hackrf {
 // Owns one hackrf_device* handle — the only class permitted to touch it,
 // mirroring RtlSdrWorker's ownership rule for rtlsdr_dev (#42 design doc).
 //
-// Unlike RtlSdrWorker, this is NOT a QThread::run() blocking-call host.
-// rtlsdr_read_async() blocks the calling thread until cancelled, so
-// RtlSdrWorker's whole run() loop lives inside that call. HackRF's API is
-// shaped differently: hackrf_start_rx()/hackrf_start_tx() return
+// Unlike RtlSdrWorker, this is NOT a QThread::run() blocking-call host, and
+// (unlike an earlier draft of this comment claimed) it doesn't need a
+// dedicated worker thread at all: rtlsdr_read_async() blocks the calling
+// thread until cancelled, which is why RtlSdrWorker's whole run() loop
+// lives inside that call and its control calls need a cancel/retune/
+// restart dance to reach the device around it. HackRF's API has no
+// equivalent hazard — hackrf_start_rx()/hackrf_start_tx() return
 // immediately and hand the USB transfer loop to libhackrf/libusb's own
-// internal thread. This object's job is to own the handle and serialize
-// control calls (open/close/retune/gain) — matching the moveToThread() +
-// initialize() pattern N1MMSpotClient/DxClusterClient use — not to host a
-// blocking read loop, because there isn't one to host.
+// internal thread, and every control call here (open/close/set_freq/gain)
+// is a plain, fast USB control transfer safe to call from whatever thread
+// owns this object (HackRfBackend calls it directly, from the same thread
+// IRadioBackend itself runs on — see HackRfBackend.cpp).
 //
 // RX and TX are mutually exclusive on one HackRF's single USB pipe (the
 // design doc's RX/TX arbitration section) — this class does NOT enforce
