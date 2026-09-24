@@ -2545,6 +2545,8 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfWorker.h
         src/core/backends/hackrf/HackRfTxRxArbiter.cpp
         src/core/backends/hackrf/HackRfTxRxArbiter.h
+        src/core/backends/hackrf/HackRfDdc.cpp
+        src/core/backends/hackrf/HackRfDdc.h
         src/core/backends/hackrf/HackRfBackend.cpp
         src/core/backends/hackrf/HackRfBackend.h)
 else()
@@ -2558,6 +2560,8 @@ endif()
 target_sources(aethercore PRIVATE
     src/core/RtlSdrDiscovery.cpp    # RTL-SDR discovery — compiled unconditionally, stubbed internally when librtlsdr absent
     src/core/RtlSdrDiscovery.h
+    src/core/HackRfDiscovery.cpp    # HackRF discovery (#42) — compiled unconditionally, stubbed internally when libhackrf absent
+    src/core/HackRfDiscovery.h
     src/core/UlanziDialBackend.h    # header-only Q_OBJECT — listed so AUTOMOC mocs it in the engine
     src/core/UlanziChordDecoder.cpp # chord decode shared by all three backends (ulanzi_chord_decoder_test)
     src/core/UlanziChordDecoder.h

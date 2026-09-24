@@ -4,7 +4,7 @@
 
 Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine-design.md) §2, §10). One row per engine header the UI includes; converting a touchpoint means the UI reaches that surface through the versioned protocol instead of the header.
 
-**Totals:** 223 touchpoint headers (192 core, 31 models) — 223/223 tagged, 0/223 converted.
+**Totals:** 224 touchpoint headers (193 core, 31 models) — 224/224 tagged, 0/224 converted.
 
 | Header | Includers | Tag | Status |
 |---|---:|---|---|
@@ -68,6 +68,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/FreeDvClient.h` | 4 | universal — FreeDV Reporter spot client (qso.freedv.org); radio-agnostic spotting fed by canonical freq/TX + RADE SNR | unconverted |
 | `core/GpuSelector.h` | 2 | ui-support — GPU enumeration + persisted QRhi render-adapter choice applied at app startup; pure client rendering plumbing | unconverted |
 | `core/GreenHeronProtocol.h` | 1 | peripheral(greenheron) — Pure framing/parsing/encoding for the Green Heron Everyware wire protocol — the antenna switches and the rotator both, which share one TCP connection. No sockets, no timers, so the parser can be tested against verbatim captured bytes. Peripheral accessory transport, NOT radio-family wire and NOT behind the IRadioBackend radio seam. See docs/green-heron-everyware.md. | unconverted |
+| `core/HackRfDiscovery.h` | 1 | vendor(hackrf) — HackRF USB device discovery that emits the shared RadioInfo shape (#42), same category as RtlSdrDiscovery.h. Family-specific discovery belongs below the HackRF backend seam. | unconverted |
 | `core/HidEncoderManager.h` | 2 | ui-support — USB HID control-surface driver (RC-28, StreamDeck+, TMate 2): desktop input device plumbing, not radio state | unconverted |
 | `core/HostVoiceChainPolicy.h` | 1 | mixed(flex) — Decides when the Flex-shaped voice controls (PROC, 8-band graphic EQ) may write the SHARED ClientComp/ClientEq objects the Aetherial strip also edits — two surfaces onto one object, so 'may we write' has a wrong answer (#4609). Universal DSP-ownership question, answered today from Flex-shaped state. | unconverted |
 | `core/IConnectionAutomation.h` | 1 | ui-support — Gui-free connect/disconnect/dialog hook the automation bridge drives; bridge plumbing, not radio state. | unconverted |

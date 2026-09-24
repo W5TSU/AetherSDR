@@ -189,6 +189,8 @@ QString familyFromProfile(const QJsonObject& profile)
         return QString::fromLatin1(ConnectionPanel::kFamilyIcom);
     if (family == QLatin1String(ConnectionPanel::kFamilyRtl))
         return QString::fromLatin1(ConnectionPanel::kFamilyRtl);
+    if (family == QLatin1String(ConnectionPanel::kFamilyHackRf))
+        return QString::fromLatin1(ConnectionPanel::kFamilyHackRf);
     return QString::fromLatin1(ConnectionPanel::kFamilyFlex);
 }
 
@@ -724,6 +726,9 @@ ConnectionPanel::ConnectionPanel(QWidget* parent)
     m_manualRadioTypeCombo->addItem(tr("Icom (network)"), QString::fromLatin1(kFamilyIcom));
 #ifdef AETHER_BACKEND_RTL
     m_manualRadioTypeCombo->addItem(tr("RTL-SDR (USB)"), QString::fromLatin1(kFamilyRtl));
+#endif
+#ifdef AETHER_BACKEND_HACKRF
+    m_manualRadioTypeCombo->addItem(tr("HackRF (USB, experimental)"), QString::fromLatin1(kFamilyHackRf));
 #endif
     addManualRow(QStringLiteral("Radio type:"), m_manualRadioTypeCombo);
 
@@ -2360,6 +2365,7 @@ void ConnectionPanel::setManualFamily(const QString& family)
       : lowered == QLatin1String(kFamilyAnan) ? QString::fromLatin1(kFamilyAnan)
       : lowered == QLatin1String(kFamilyIcom) ? QString::fromLatin1(kFamilyIcom)
       : lowered == QLatin1String(kFamilyRtl)  ? QString::fromLatin1(kFamilyRtl)
+      : lowered == QLatin1String(kFamilyHackRf) ? QString::fromLatin1(kFamilyHackRf)
                                               : QString::fromLatin1(kFamilyFlex);
     const int index = m_manualRadioTypeCombo->findData(wanted);
     if (index < 0 || index == m_manualRadioTypeCombo->currentIndex()) {

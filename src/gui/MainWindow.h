@@ -13,6 +13,7 @@
 #include "core/backends/anan/AnanDiscovery.h"
 #include "core/backends/hl2/Hl2Discovery.h"
 #include "core/RtlSdrDiscovery.h"
+#include "core/HackRfDiscovery.h"
 #include "models/RadioModel.h"
 #include "models/BandSettings.h"
 #include "models/AntennaGeniusModel.h"
@@ -1045,6 +1046,8 @@ private:
     anan::AnanDiscovery m_ananDiscovery;
     // Local USB discovery for RTL-SDR devices, tagged family="rtl".
     RtlSdrDiscovery m_rtlDiscovery;
+    // Local USB discovery for HackRF devices, tagged family="hackrf" (#42).
+    HackRfDiscovery m_hackRfDiscovery;
     // Radio sessions (#3445 Camp B / #3351). Each session owns the full
     // per-radio aggregate; today there is exactly one. The vector sits at
     // the old `RadioModel m_radioModel` member position so destruction
