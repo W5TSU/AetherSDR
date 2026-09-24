@@ -1,5 +1,6 @@
 #include "HackRfBackend.h"
 #include "core/backends/hackrf/HackRfWorker.h"
+#include "core/backends/hl2/Hl2ModeTable.h"
 
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -17,6 +18,60 @@ constexpr const char* kPanId = "0xh1000000";
 // choice for the same "USB SDR wideband capture" category of source; twice
 // Hl2RxDsp's default (1024) since HL2's span is narrower to begin with.
 constexpr int kSpectrumFftSize = 2048;
+
+// RX audio (WDSP RXA channel) constants — see the class comment.
+//
+// NOT 48 kHz, despite that being HackRfDdc's own documented default and
+// Hl2RxDsp's WDSP input rate: 48 kHz only covers ±24 kHz of IQ bandwidth
+// (Nyquist), which is plenty for the narrow modes (SSB/CW/AM/NFM top out
+// around ±12.5 kHz) but far short of broadcast WFM's real bandwidth
+// (±75 kHz deviation). Feeding WFM through a 48 kHz slice puts the FM
+// discriminator's per-sample phase step (2π·Δf/rate) past π on loud peaks —
+// a genuine phase-wrap, not just a quality trade-off — measured on real
+// hardware as exactly the reported symptom: quiet, badly distorted audio.
+// 384 kHz matches SDRangel's own WFM channel rate exactly (its
+// WFMDemodSink defaults: 384 kHz channel rate, 80 kHz RF bandwidth i.e.
+// ±40 kHz, 75 kHz deviation scaling — the same reference points WDSP's own
+// wbfm.c uses), giving the discriminator twice the phase margin 192 kHz
+// did. Divides cleanly into the 24 kHz audio-output rate below; the extra
+// CPU on the narrow modes is the accepted trade for one shared rate instead
+// of a per-mode-adaptive one (out of scope for this increment).
+// HackRfBackend calls HackRfDdc::setOutputSampleRateHz(kAudioDdcRateHz) in
+// connectRadio() specifically because this no longer matches HackRfDdc's
+// own default.
+constexpr int kAudioDdcRateHz = 384'000;
+// AudioEngine's native RX rate (Hl2RxDsp::Config::audioSampleRateHz's own
+// comment) — emitting it directly means no resampling downstream.
+constexpr int kAudioOutputRateHz = 24'000;
+// WDSP processing block, matching Hl2RxDsp's own default dspBlockSize.
+// 1024 * 24000 / 384000 = 64 exactly, satisfying WdspChannel::create()'s
+// integer-output-block requirement.
+constexpr std::size_t kAudioDspBlockSize = 1024;
+}
+
+WdspChannel::Mode HackRfBackend::wdspModeFromString(const QString& mode) noexcept
+{
+    const QString u = mode.trimmed().toUpper();
+    if (u == QLatin1String("FMN")) return WdspChannel::Mode::Fm;
+    if (u == QLatin1String("CWR")) return WdspChannel::Mode::Cwl;
+    return hl2::modeFromString(mode);
+}
+
+int HackRfBackend::wdspAgcModeFromString(const QString& mode) noexcept
+{
+    const QString m = mode.trimmed().toLower();
+    if (m == QLatin1String("off"))  return 0;
+    if (m == QLatin1String("slow")) return 2;
+    if (m == QLatin1String("fast")) return 4;
+    return 3;  // medium: WDSP's own default, and this backend's fallback
+}
+
+std::pair<int, int> HackRfBackend::defaultPassbandForMode(const QString& mode) noexcept
+{
+    const QString u = mode.trimmed().toUpper();
+    if (u == QLatin1String("FMN")) return hl2::defaultPassbandForMode(QStringLiteral("FM"));
+    if (u == QLatin1String("CWR")) return hl2::defaultPassbandForMode(QStringLiteral("CW"));
+    return hl2::defaultPassbandForMode(mode);
 }
 
 HackRfBackend::HackRfBackend(QObject* parent)
@@ -33,6 +88,7 @@ HackRfBackend::HackRfBackend(QObject* parent)
     // for the whole backend lifetime.
     connect(m_worker.get(), &HackRfWorker::streamStopped, this, &HackRfBackend::onWorkerStreamStopped);
     connect(m_worker.get(), &HackRfWorker::rxIqReady, this, &HackRfBackend::onWorkerRxIqReady);
+    connect(m_ddc.get(), &HackRfDdc::decimatedIqReady, this, &HackRfBackend::onDdcAudioIqReady);
 
     // Polls HackRfTxRxArbiter::tick() for timeout recovery. HackRfWorker's
     // start/stop calls are synchronous (see its own header comment on why
@@ -117,8 +173,14 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     // Mirrors RtlSdrBackend::applyRestoredState exactly.
     m_sliceFreqHz = 100'000'000.0;
     m_sliceMode = QStringLiteral("WFM");
-    m_sliceFilterLow = -100'000;
-    m_sliceFilterHigh = 100'000;
+    // Matches defaultPassbandForMode("WFM") — see its own comment on why
+    // ±100 kHz (the value this used to be) is not just wider than needed
+    // but actively wrong: WdspChannel applies ONE filter to both the
+    // pre-demod IF stage and the post-demod audio stage, and ±100 kHz on
+    // the audio side sits at the edge of/beyond this chain's 192 kHz
+    // internal rate's Nyquist.
+    m_sliceFilterLow = -40'000;
+    m_sliceFilterHigh = 40'000;
     m_sampleRateHz = 8'000'000.0;
     m_vgaGainDb = 20;
     m_lnaGainDb = 16;
@@ -218,6 +280,10 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     m_ddc->setInputSampleRateHz(m_sampleRateHz);
     m_ddc->setCenterFrequencyHz(m_sliceFreqHz);
     m_ddc->setSliceFrequencyHz(m_sliceFreqHz);
+    // Not HackRfDdc's own 48 kHz default — see kAudioDdcRateHz's comment on
+    // why WFM needs a wider slice than WDSP's usual 48 kHz input.
+    m_ddc->setOutputSampleRateHz(kAudioDdcRateHz);
+    rebuildRxChannel();
 
     m_connected = true;
     m_clock.start();
@@ -255,6 +321,11 @@ void HackRfBackend::disconnectRadio()
     m_arbiterTickTimer.stop();
     m_worker->close();  // also stops any active RX/TX — see HackRfWorker::close()
     m_connected = false;
+    // No RX IQ can reach it once the worker is closed, but drop it anyway
+    // rather than leave a channel from the last session sitting idle — the
+    // next connectRadio() builds a fresh one regardless.
+    m_rxChannel.reset();
+    m_audioIqBuffer.clear();
     emit disconnected();
 }
 
@@ -266,6 +337,21 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
     m_ddc->setCenterFrequencyHz(hz);
     m_ddc->setSliceFrequencyHz(hz);
+    // Single-slice/single-pan: every VFO retune moves the ENTIRE captured
+    // span (there is no independent "slice inside a wider pan window" the
+    // way RtlSdrBackend has), so the pan model must move with it every time,
+    // unconditionally — matching what setPanCenter() already does below.
+    // Missing this left the pan/waterfall's own centerMhz stale at whatever
+    // it was last explicitly set to (e.g. the connect-time default), while
+    // the hardware — and so the audio, which is genuinely correct — kept
+    // following every real retune. Measured on real hardware (#42): audio
+    // correctly tuned to a real station while the waterfall's peak appeared
+    // at the wrong position relative to the VFO cursor, by an amount that
+    // grew with how far the operator had retuned since the last event that
+    // happened to touch the pan center — a moving target, not a fixed
+    // offset, which is exactly what a stale label produces.
+    emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6,
+                                   m_sampleRateHz / 1e6);
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -277,13 +363,36 @@ void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
 {
     Q_UNUSED(sliceId);
     if (!m_connected) return;
-    // Stored, not yet applied to any real demodulator — see the class
-    // comment (no HackRfDdc/WDSP RXA channel yet).
+    const QString previous = m_sliceMode;
     m_sliceMode = mode.trimmed().toUpper();
+
+    // The passband belongs to the mode, adopted on CHANGE only so an
+    // operator's own filter edit survives until they change mode again —
+    // matches Hl2Backend::setSliceMode's own documented policy (its comment
+    // there explains why: nothing else heals a stale filter left over from
+    // the previous mode, which reads as noise/distortion rather than "wrong
+    // filter", exactly what was observed here going WFM -> FM).
+    if (!previous.isEmpty() && previous.compare(m_sliceMode, Qt::CaseInsensitive) != 0) {
+        const auto [lo, hi] = defaultPassbandForMode(m_sliceMode);
+        m_sliceFilterLow = lo;
+        m_sliceFilterHigh = hi;
+    }
+
+    // ORDER IS LOAD-BEARING (Hl2Backend::setSliceMode's own documented
+    // finding): WDSP's SetRXAMode rebuilds the NBP filter stage from its own
+    // per-mode notion of the passband, discarding whatever setFilter() set
+    // before it. The filter must be re-pushed AFTER setMode() on every call,
+    // not only when the mode actually changed.
+    if (m_rxChannel) {
+        m_rxChannel->setMode(wdspModeFromString(m_sliceMode));
+        m_rxChannel->setFilter(m_sliceFilterLow, m_sliceFilterHigh);
+    }
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
     delta.mode = m_sliceMode;
+    delta.filterLow = m_sliceFilterLow;
+    delta.filterHigh = m_sliceFilterHigh;
     emit sliceChanged(0, delta);
 }
 
@@ -293,6 +402,9 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
     if (!m_connected || lowHz >= highHz) return;
     m_sliceFilterLow = lowHz;
     m_sliceFilterHigh = highHz;
+    if (m_rxChannel) {
+        m_rxChannel->setFilter(lowHz, highHz);
+    }
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -305,10 +417,16 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
 void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
 {
     Q_UNUSED(sliceId);
-    Q_UNUSED(mode);
-    Q_UNUSED(thresholdDb);
-    // AGC is engine-side DSP once a WDSP RXA channel exists (HackRfDdc);
-    // nothing to apply it to yet. Mirrors RtlSdrBackend's own Phase 1 note.
+    if (!m_connected) return;
+    m_agcModeIndex = wdspAgcModeFromString(mode);
+    // 0..100 -> 0..100 dB ceiling — see the m_agcMaxGainDb header comment on
+    // why this is 1:1 rather than Hl2Backend's *0.6 map (measured on real
+    // hardware: WBFM's raw discriminator output needs far more headroom than
+    // SSB/AM's mixer output does before it clips).
+    m_agcMaxGainDb = std::clamp(thresholdDb, 0, 100) * 1.0;
+    if (m_rxChannel) {
+        m_rxChannel->setAgc(m_agcModeIndex, m_agcMaxGainDb);
+    }
 }
 
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
@@ -458,10 +576,9 @@ void HackRfBackend::onWorkerStreamStopped(bool wasRx, const QString& reason)
 
 void HackRfBackend::onWorkerRxIqReady(QVector<std::complex<float>> iq)
 {
-    // No WDSP RXA channel exists yet to consume HackRfDdc's output (see the
-    // class comment) — this just runs the real DDC on real samples so the
-    // decimation/tuning math is exercised end to end. decimatedIqReady()
-    // is observable via ddc() for verification until a real consumer exists.
+    // Feeds HackRfDdc's decimator, which emits decimatedIqReady() — caught by
+    // onDdcAudioIqReady() below (connected in the constructor) and turned into
+    // demodulated audio via m_rxChannel. See the class comment.
     m_ddc->process(iq);
 
     // Wideband panadapter spectrum — computed once per backend from the raw
@@ -514,6 +631,97 @@ void HackRfBackend::emitInitialState()
     sDelta.active = true;
     sDelta.panId = panId;
     emit sliceChanged(0, sDelta);
+}
+
+void HackRfBackend::rebuildRxChannel()
+{
+    WdspChannel::Config cfg;
+    cfg.direction = WdspChannel::Direction::Receive;
+    cfg.inputBlockSize = kAudioDspBlockSize;
+    cfg.dspBlockSize = kAudioDspBlockSize;
+    cfg.inputSampleRate = kAudioDdcRateHz;
+    cfg.dspSampleRate = kAudioDdcRateHz;
+    cfg.outputSampleRate = kAudioOutputRateHz;
+    cfg.mode = wdspModeFromString(m_sliceMode);
+    cfg.filterLowHz = m_sliceFilterLow;
+    cfg.filterHighHz = m_sliceFilterHigh;
+    cfg.agcMode = m_agcModeIndex;
+    cfg.maximumAgcGainDb = m_agcMaxGainDb;
+    // NOT the default false. WdspChannel::Config::blockForOutput's own
+    // comment: false assumes a steady one-block-per-tick feed and WDSP's
+    // async worker paces itself against real time; true "waits for each
+    // output block (deterministic for a burst/offline feed)". HackRF
+    // delivers IQ in USB-transfer-sized bursts, not a steady tick — one
+    // onDdcAudioIqReady() call typically drains several WDSP blocks back to
+    // back — so false is the wrong mode entirely, not just a quality trade.
+    // Measured on real hardware (#42): with it false, the raw output PCM had
+    // an exact-period glitch every 128 samples (2x this config's own output
+    // block size) — a synchronization artifact, not real audio — audible as
+    // the reported "over modulated"/distorted sound at an otherwise healthy
+    // signal level and clean spectrum shape.
+    cfg.blockForOutput = true;
+
+    std::string error;
+    auto channel = WdspChannel::create(cfg, &error);
+    if (!channel) {
+        qCWarning(lcHackRf) << "HackRfBackend: failed to create RX WDSP channel:"
+                            << QString::fromStdString(error);
+        m_rxChannel.reset();
+        return;
+    }
+    m_rxChannel = std::move(channel);
+    m_audioIqBuffer.clear();
+}
+
+void HackRfBackend::onDdcAudioIqReady(QVector<std::complex<float>> iq)
+{
+    if (!m_rxChannel) return;
+
+    m_audioIqBuffer.insert(m_audioIqBuffer.end(), iq.begin(), iq.end());
+
+    const std::size_t block = kAudioDspBlockSize;
+    const std::size_t outN = m_rxChannel->outputBlockSize();
+    if (m_audioI.size() != block) {
+        m_audioI.assign(block, 0.0f);
+        m_audioQ.assign(block, 0.0f);
+    }
+    if (m_audioLeft.size() != outN) {
+        m_audioLeft.assign(outN, 0.0f);
+        m_audioRight.assign(outN, 0.0f);
+    }
+
+    QByteArray pcm;
+    std::size_t consumed = 0;
+    while (m_audioIqBuffer.size() - consumed >= block) {
+        for (std::size_t n = 0; n < block; ++n) {
+            m_audioI[n] = m_audioIqBuffer[consumed + n].real();
+            m_audioQ[n] = m_audioIqBuffer[consumed + n].imag();
+        }
+        consumed += block;
+
+        const WdspChannel::ProcessResult res =
+            m_rxChannel->processIq(m_audioI, m_audioQ, m_audioLeft, m_audioRight);
+        if (res != WdspChannel::ProcessResult::Ok) {
+            continue;  // underrun while the pipeline fills, etc. — no output yet
+        }
+
+        const int before = pcm.size();
+        pcm.resize(before + static_cast<int>(outN * 2 * sizeof(float)));
+        auto* out = reinterpret_cast<float*>(pcm.data() + before);
+        for (std::size_t k = 0; k < outN; ++k) {
+            out[2 * k] = m_audioLeft[k];
+            out[2 * k + 1] = m_audioRight[k];
+        }
+    }
+    if (consumed > 0) {
+        m_audioIqBuffer.erase(m_audioIqBuffer.begin(),
+                              m_audioIqBuffer.begin() + static_cast<std::ptrdiff_t>(consumed));
+    }
+
+    if (!pcm.isEmpty()) {
+        emit audioFrameReady(pcm);
+        emit sliceAudioFrameReady(0, pcm);
+    }
 }
 
 } // namespace AetherSDR::hackrf

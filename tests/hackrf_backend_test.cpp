@@ -3,11 +3,13 @@
 // exercises capabilities() declaration and the restore-state contract only.
 
 #include "core/backends/hackrf/HackRfBackend.h"
+#include "core/dsp/WdspChannel.h"
 
 #include <QCoreApplication>
 #include <QJsonObject>
 #include <cstdio>
 #include <memory>
+#include <utility>
 
 using namespace AetherSDR;
 
@@ -101,6 +103,52 @@ int main(int argc, char** argv)
     backend->setKeying(true);
     backend->setKeying(false);
     check(!backend->isConnected(), "still disconnected — setters before connect do nothing harmful");
+
+    // ── RX audio mode/AGC mapping (#42: WDSP RXA channel) ───────────────
+    // wdspModeFromString delegates to hl2::modeFromString (already tested via
+    // hl2_mode_table_test) for the vocabulary the two backends share, plus the
+    // two spellings unique to this backend's own declared mode list (FMN, CWR)
+    // that hl2::modeFromString does not recognize.
+    check(hackrf::HackRfBackend::wdspModeFromString("USB") == WdspChannel::Mode::Usb,
+          "USB maps straight through the shared table");
+    check(hackrf::HackRfBackend::wdspModeFromString("LSB") == WdspChannel::Mode::Lsb,
+          "LSB maps straight through the shared table");
+    check(hackrf::HackRfBackend::wdspModeFromString("AM") == WdspChannel::Mode::Am,
+          "AM maps straight through the shared table");
+    check(hackrf::HackRfBackend::wdspModeFromString("SAM") == WdspChannel::Mode::Sam,
+          "SAM maps straight through the shared table");
+    check(hackrf::HackRfBackend::wdspModeFromString("WFM") == WdspChannel::Mode::Wbfm,
+          "WFM maps straight through the shared table");
+    check(hackrf::HackRfBackend::wdspModeFromString("CW") == WdspChannel::Mode::Cwu,
+          "CW maps straight through the shared table (upper-sideband CW)");
+    check(hackrf::HackRfBackend::wdspModeFromString("FMN") == WdspChannel::Mode::Fm,
+          "FMN (this backend's narrow-FM spelling) maps to WDSP's single Fm mode");
+    check(hackrf::HackRfBackend::wdspModeFromString("CWR") == WdspChannel::Mode::Cwl,
+          "CWR (reversed-sideband CW) maps to WDSP's Cwl, not the USB fallback");
+    check(hackrf::HackRfBackend::wdspModeFromString("bogus") == WdspChannel::Mode::Usb,
+          "unknown mode falls back to USB, matching hl2::modeFromString's own fallback");
+
+    check(hackrf::HackRfBackend::wdspAgcModeFromString("off") == 0, "AGC off -> WDSP mode 0");
+    check(hackrf::HackRfBackend::wdspAgcModeFromString("slow") == 2, "AGC slow -> WDSP mode 2");
+    check(hackrf::HackRfBackend::wdspAgcModeFromString("med") == 3, "AGC med -> WDSP mode 3");
+    check(hackrf::HackRfBackend::wdspAgcModeFromString("fast") == 4, "AGC fast -> WDSP mode 4");
+    check(hackrf::HackRfBackend::wdspAgcModeFromString("bogus") == 3,
+          "unknown AGC mode falls back to medium, matching Hl2Backend's own wdspAgcMode()");
+
+    // ── Mode-appropriate default passband (#42: filter must not survive a
+    // mode change, and WFM specifically must not reuse the flat ±100 kHz
+    // that used to double as both the pre-demod IF filter and the post-demod
+    // audio filter — see defaultPassbandForMode's own comment). ──────────
+    check(hackrf::HackRfBackend::defaultPassbandForMode("USB") == std::make_pair(100, 2900),
+          "USB passband matches the shared table");
+    check(hackrf::HackRfBackend::defaultPassbandForMode("CW") == std::make_pair(-250, 250),
+          "CW passband matches the shared table");
+    check(hackrf::HackRfBackend::defaultPassbandForMode("WFM") == std::make_pair(-40000, 40000),
+          "WFM passband matches the shared table's WBFM entry, not this backend's old ±100 kHz");
+    check(hackrf::HackRfBackend::defaultPassbandForMode("FMN") == std::make_pair(-8000, 8000),
+          "FMN (narrow FM) aliases onto the shared table's FM entry");
+    check(hackrf::HackRfBackend::defaultPassbandForMode("CWR") == std::make_pair(-250, 250),
+          "CWR (reversed-sideband CW) aliases onto the shared table's CW entry");
 
     if (g_failures == 0) {
         std::printf("hackrf_backend_test: OK\n");
