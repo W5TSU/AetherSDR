@@ -242,9 +242,16 @@ private:
     // from the other side (PR #5650 review).
     void resetBandscopeMirrors();
     // Per-band memory (RFC #4603 PR 3): apply the remembered LNA + drive for
-    // the band containing freqHz (falling back to the restored defaults),
-    // and record the operator's current values into the maps for the band
-    // being left. Called from the band-change path and connect.
+    // the band containing freqHz, and record the operator's current values
+    // into the maps for the band being left. Called from the band-change path
+    // and connect.
+    //
+    // THE TWO HALVES FALL BACK DIFFERENTLY SINCE #5829, and this comment used
+    // to say "the restored defaults" for both. Drive still falls back to
+    // m_driveDefaultPercent, a genuine per-profile first-use latch restored
+    // from the document. LNA falls back to hl2::kLnaDefaultGainDb -- the
+    // shipped constant, nothing restored -- because the document key that once
+    // answered this was a value no operator action could move.
     void applyPerBandStateFor(double freqHz, const char* reason);
     void applyLnaGainDb(int gainDb);   // the one true LNA application
     void rememberCurrentBandState();
@@ -925,7 +932,11 @@ private:
     RestoredRadioState m_restoredState;
     QMap<QString, int> m_lnaDbByBand;
     QMap<QString, int> m_driveByBand;
-    int m_lnaDefaultDb = hl2::kLnaDefaultGainDb;
+    // There is no m_lnaDefaultDb. The LNA fallback for an unvisited band is
+    // hl2::kLnaDefaultGainDb directly (#5829) -- a member here would be a
+    // second source of truth for a value no operator action can move, which is
+    // the defect that key had. Note the asymmetry with m_driveDefaultPercent
+    // below: that one has a real first-use latch and is genuinely per-profile.
     // The connect param pinned a gain that the start band did not have stored.
     // Live value honoured, persistence refused: see Hl2BandMemoryPolicy.h.
     // Cleared when the operator changes gain or leaves the start band.

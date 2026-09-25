@@ -1924,10 +1924,10 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
         const bool hasStored = m_lnaDbByBand.contains(m_currentBandKey);
         const AetherSDR::hl2::ConnectLna seed = AetherSDR::hl2::connectLna(
             m_haveRestoredState, hasStored,
-            m_lnaDbByBand.value(m_currentBandKey, m_lnaDefaultDb),
+            m_lnaDbByBand.value(m_currentBandKey, hl2::kLnaDefaultGainDb),
             paramPresent,
             request.params.value(QStringLiteral("lnaGainDb")).toInt(),
-            m_lnaDefaultDb, kLnaGainMinDb, kLnaGainMaxDb);
+            hl2::kLnaDefaultGainDb, kLnaGainMinDb, kLnaGainMaxDb);
         // Only take the live value when the policy actually had something to
         // say: with no restored state and no param it returns the default,
         // which must not stamp on a value the lines above already settled.
@@ -5715,7 +5715,6 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_haveRestoredState = false;
     m_lnaDbByBand.clear();
     m_driveByBand.clear();
-    m_lnaDefaultDb = hl2::kLnaDefaultGainDb;
     m_lnaGainDb = hl2::kLnaDefaultGainDb;
     m_lnaSessionPin = false;
     m_driveDefaultPercent = -1;
@@ -5826,10 +5825,42 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     // (RestoredRadioState.h). Values clamp to the hardware's own ranges.
     const QJsonObject rfGain =
         state.extension.value(QStringLiteral("rfGain")).toObject();
-    if (rfGain.contains(QStringLiteral("defaultDb")))
-        m_lnaDefaultDb = qBound(kLnaGainMinDb,
-                                rfGain.value(QStringLiteral("defaultDb")).toInt(),
-                                kLnaGainMaxDb);
+    // rfGain.defaultDb IS DELIBERATELY NOT READ (#5829). The fallback gain an
+    // UNVISITED band comes up on is hl2::kLnaDefaultGainDb and nothing else.
+    //
+    // The key used to be read here into a member that was then written straight
+    // back out by currentOperatingState() -- and nowhere in the tree did
+    // anything else ever assign it. No setter, no verb, no GUI control. So its
+    // value was a closed loop: whatever a profile happened to hold, it held
+    // forever, steering every first visit to a band, with no operator action
+    // able to move it. One station's profile sat at -6 dB permanently.
+    //
+    // Ignoring it on read and dropping it from the capture below is what makes
+    // a stale value harmless: the key decays out of the document on the next
+    // snapshot and the shipped constant is the single source of truth. A
+    // document that still carries the key is not rejected -- it is simply not
+    // consulted, which is what "authoritative" has to mean here.
+    //
+    // This also retires a clamp the codebase's own rule rejects. The read this
+    // comment replaces qBound()ed the document value and then persisted the
+    // clamped result, which is exactly what the AGC threshold restore a few
+    // lines up refuses to do in its own words: clamping invents a setpoint the
+    // operator never chose and then writes it back.
+    //
+    // IGNORED OUT LOUD, because this boundary logs every other value it
+    // declines -- the pre-#4914 CW passband just above, the invalid mic level
+    // just below -- and a key dropped in silence is the one an operator cannot
+    // connect to what they hear. A document still carrying this key is exactly
+    // a profile whose next UNVISITED band now comes up on +20 dB instead of
+    // whatever was frozen in it, so the line names both numbers: the value
+    // being ignored, and the value that replaces it. That is what lets a
+    // support log be traced back to #5829 rather than read as a radio fault.
+    if (rfGain.contains(QStringLiteral("defaultDb"))) {
+        qCInfo(lcHl2) << "HL2: ignoring stale restored LNA default (#5829)"
+                      << rfGain.value(QStringLiteral("defaultDb")).toVariant()
+                      << "— unvisited bands come up on"
+                      << hl2::kLnaDefaultGainDb << "dB";
+    }
     const QJsonObject lnaByBand =
         rfGain.value(QStringLiteral("lnaDbByBand")).toObject();
     for (auto it = lnaByBand.constBegin(); it != lnaByBand.constEnd(); ++it)
@@ -6032,8 +6063,23 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
         driveByBand.insert(m_currentBandKey, m_rfPowerPercent);
     }
 
-    QJsonObject rfGain{{QStringLiteral("defaultDb"), m_lnaDefaultDb},
-                       {QStringLiteral("lnaDbByBand"), lnaByBand}};
+    // THE OPERATOR'S AUTOMATIC-GAIN SWITCH, and it belongs HERE rather than in
+    // an AppSettings key. docs/HERMES.md is explicit: a value the radio cannot
+    // store goes in this family's OperatingState, "never in a flat AppSettings
+    // key". It rides the rfGain object because that is the axis it acts on.
+    //
+    // THE SWITCH ONLY. The OFFSET the loop is holding is deliberately NOT
+    // persisted and is absent from this object: an automatic transient that
+    // outlived the session that produced it would be indistinguishable, next
+    // launch, from a gain the operator chose. See m_lnaAutoOffsetDb.
+    // NO "defaultDb" KEY (#5829). It was persisted here and read back in
+    // applyRestoredState with nothing in the tree able to write it, so a
+    // profile's value was frozen for the life of that profile and decided the
+    // gain of every first band visit.
+    // hl2::kLnaDefaultGainDb is now the only answer to that question; see
+    // applyRestoredState(). Dropping the key here is the half that heals an
+    // existing document, because the next capture writes the object without it.
+    QJsonObject rfGain{{QStringLiteral("lnaDbByBand"), lnaByBand}};
     QJsonObject txSetpoints{{QStringLiteral("driveByBand"), driveByBand}};
     if (m_driveDefaultPercent >= 0)
         txSetpoints.insert(QStringLiteral("defaultPercent"), m_driveDefaultPercent);
@@ -6182,8 +6228,11 @@ void Hl2Backend::applyPerBandStateFor(double freqHz, const char* reason)
     const QString oldBand = m_currentBandKey;
     m_currentBandKey = newBand;
 
+    // A band with no entry of its own comes up on the SHIPPED default, never on
+    // a persisted one (#5829): the document key that used to sit here could not
+    // be written by anything and so could never be corrected either.
     const int lna = qBound(kLnaGainMinDb,
-                           m_lnaDbByBand.value(newBand, m_lnaDefaultDb),
+                           m_lnaDbByBand.value(newBand, hl2::kLnaDefaultGainDb),
                            kLnaGainMaxDb);
     if (lna != m_lnaGainDb)
         applyLnaGainDb(lna);

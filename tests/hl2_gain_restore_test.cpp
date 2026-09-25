@@ -126,7 +126,28 @@ int main(int argc, char** argv)
               "updated gain persists through the production OperatingState store");
     }
     {
-        GainSession session(RadioStateMemory::load(scope, caps));
+        const RestoredRadioState reloaded = RadioStateMemory::load(scope, caps);
+        // THE HEAL, PINNED WHERE THE CLAIM IS MADE (#5869 review, ten9876).
+        // The absence checks elsewhere in this file read currentOperatingState(),
+        // the IN-MEMORY capture; the sentence in Hl2Backend.cpp's
+        // currentOperatingState() is about what lands in the DOCUMENT. This
+        // state got there the production way: the session above was restored
+        // from rememberedGain(), which seeds `defaultDb: 20`, and its capture
+        // went through a real RadioStateMemory::store; this is the matching
+        // load. So a stale key is shown to decay out of the stored document,
+        // not merely out of the snapshot.
+        //
+        // It is also the standing guard against a merging store. store()
+        // rebuilds the gated extension wholesale from state.extension today,
+        // which is why dropping the key from the capture is enough -- if that
+        // ever became a preserve-unknown-siblings merge, as
+        // storeRtlRfGainPreservingLegacy is for its own family, the key would
+        // survive on disk forever and this is the check that would say so.
+        check(!reloaded.extension.value(QStringLiteral("rfGain")).toObject()
+                   .contains(QStringLiteral("defaultDb")),
+              "the stored document itself carries no LNA default after a real "
+              "RadioStateMemory store/load round trip");
+        GainSession session(reloaded);
         int writes = 0;
         check(session.restoreDisplay(20, writes) == 5 && writes == 0 && session.liveGain() == 5,
               "a recreated session restores the operator's +5 despite stale global +20");
@@ -179,10 +200,15 @@ int main(int argc, char** argv)
         const RestoredRadioState captured = session.backend.currentOperatingState();
         check(session.liveGain() == gain,
               "stored native gain seeds the live snapshot without folding");
+        // INVERTED BY #5829 in its second half only. The per-band value is
+        // still preserved verbatim -- that is real operator memory and nothing
+        // about it changed. The `defaultDb == gain` half asserted a round trip
+        // of a key nothing could write; it is now asserted absent instead,
+        // which is the behaviour that replaces the round trip.
         check(bandGain(captured, QStringLiteral("20m")) == gain
-                  && captured.extension.value(QStringLiteral("rfGain")).toObject()
-                         .value(QStringLiteral("defaultDb")).toInt() == gain,
-              "capture preserves the stored band and default gain");
+                  && !captured.extension.value(QStringLiteral("rfGain")).toObject()
+                          .contains(QStringLiteral("defaultDb")),
+              "capture preserves the stored band gain and emits no LNA default");
     }
     {
         GainSession session(rememberedGain(), 999);
@@ -191,6 +217,58 @@ int main(int argc, char** argv)
         check(bandGain(session.backend.currentOperatingState(), QStringLiteral("20m")) == -12,
               "clamped connect override still preserves stored gain while pinned");
     }
+    // ---- #5829: a STALE rfGain.defaultDb must not steer the radio ---------
+    //
+    // The fix is worthless if an old profile keeps deciding the gain, so both
+    // halves are asserted together: a profile with NO defaultDb and a profile
+    // carrying a stale one must produce the SAME gain on a band neither has an
+    // entry for, and that gain must be the shipped constant.
+    //
+    // -6 is not an arbitrary stale value. It is the number the reporting
+    // station's profile actually held, frozen, with ten of its twelve stored
+    // bands sitting at it because each inherited it on its first visit.
+    //
+    // 15m (21.074 MHz) is the unvisited band: rememberedGain() stores 20m and
+    // 40m only, so the fallback is what decides, which is the whole subject.
+    {
+        RestoredRadioState absent = rememberedGain();
+        QJsonObject withoutKey =
+            absent.extension.value(QStringLiteral("rfGain")).toObject();
+        withoutKey.remove(QStringLiteral("defaultDb"));
+        absent.extension.insert(QStringLiteral("rfGain"), withoutKey);
+
+        RestoredRadioState stuck = absent;
+        QJsonObject withStaleKey = withoutKey;
+        withStaleKey.insert(QStringLiteral("defaultDb"), -6);
+        stuck.extension.insert(QStringLiteral("rfGain"), withStaleKey);
+
+        int gainWithNoKey = 999;
+        int gainWithStaleKey = 999;
+        {
+            GainSession session(absent);
+            session.backend.setSliceFrequency(0, 21'074'000.0);   // unvisited 15m
+            gainWithNoKey = session.liveGain();
+        }
+        {
+            GainSession session(stuck);
+            session.backend.setSliceFrequency(0, 21'074'000.0);   // unvisited 15m
+            gainWithStaleKey = session.liveGain();
+
+            // And the key does not survive a capture, which is what heals an
+            // existing document: the next snapshot simply writes it away.
+            check(!session.backend.currentOperatingState()
+                       .extension.value(QStringLiteral("rfGain")).toObject()
+                       .contains(QStringLiteral("defaultDb")),
+                  "a restored stale defaultDb is dropped from the next capture");
+        }
+        check(gainWithNoKey == gainWithStaleKey,
+              "a profile carrying a stale rfGain.defaultDb comes up on the same "
+              "unvisited-band gain as a profile without the key");
+        check(gainWithNoKey == hl2::kLnaDefaultGainDb,
+              "and that gain is the shipped kLnaDefaultGainDb, which is now the "
+              "only answer to what an unvisited band comes up on");
+    }
+
     // Cross-family compatibility at the exact display-restore seam. No Flex or
     // Icom backend is instantiated or changed; their current domain is empty.
     for (const QString& family : {QStringLiteral("flex"), QStringLiteral("icom"),
