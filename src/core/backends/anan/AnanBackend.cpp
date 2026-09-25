@@ -413,6 +413,8 @@ RadioCapabilities AnanBackend::capabilities() const
     amplitude.binsAbsolute = true;
     c.panAmplitude = amplitude;
     c.hasDdcPanEdgeRolloff = true; // see RadioCapabilities.h's own comment
+    // No band/segment zoom: the protocol carries no per-pan zoom flag.
+    c.panZoomModes = std::nullopt;
     c.persistsMemories = false;    // default; stated explicitly
     c.clientSettingsDomains = {};  // no applyRestoredState()/currentOperatingState() yet
     c.hostDroopCalibration = true; // AnanDroopCorrection.h -- real DDC0 CIC droop,

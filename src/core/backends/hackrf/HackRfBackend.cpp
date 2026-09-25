@@ -346,6 +346,8 @@ RadioCapabilities HackRfBackend::capabilities() const
     amplitude.calibratedDbm = false;
     amplitude.binsAbsolute = true;
     c.panAmplitude = amplitude;
+    // No band/segment zoom: no command plane, no per-pan zoom flag.
+    c.panZoomModes = std::nullopt;
 
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};
