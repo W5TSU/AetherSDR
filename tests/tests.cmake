@@ -4082,6 +4082,14 @@ add_test(NAME icom_settings_test COMMAND icom_settings_test)
 
 # ANAN-G2 settings ("Anan" root key, Principle V). Own process because
 # AppSettings is a process-wide singleton, same reasoning as icom_settings_test.
+# Compressor Drive and Phase survive a TX channel-strip preset round trip,
+# a preset from before they were stored leaves them alone, and imported values
+# are clamped (upstream 76da21b1). Isolated settings home; no audio device.
+add_executable(channel_strip_presets_comp_test tests/channel_strip_presets_comp_test.cpp)
+target_include_directories(channel_strip_presets_comp_test PRIVATE src tests)
+target_link_libraries(channel_strip_presets_comp_test PRIVATE aethercore Qt6::Core)
+add_test(NAME channel_strip_presets_comp_test COMMAND channel_strip_presets_comp_test)
+
 add_executable(anan_settings_test tests/anan_settings_test.cpp)
 target_include_directories(anan_settings_test PRIVATE src tests)
 target_link_libraries(anan_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
