@@ -20,10 +20,11 @@ therefore retains its upstream fallback behavior.
 
 ## Local boundary
 
-`upstream/` matches that source snapshot except for the eight changes recorded
+`upstream/` matches that source snapshot except for the nine changes recorded
 in `AETHERSDR-PATCHES.md` — four teardown corrections, three channel-state
-fixes, and one performance change that builds the minimum-phase workspace only
-when minimum phase is on. All portability changes live outside it:
+fixes, one performance change that builds the minimum-phase workspace only
+when minimum phase is on, and one fix that makes the DSP worker take its input
+before it releases a blocked host. All portability changes live outside it:
 
 - `port/` implements the narrow Windows compatibility surface WDSP uses on
   Unix: threads, mutexes, semaphores/events, atomic operations, aligned

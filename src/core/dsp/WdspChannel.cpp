@@ -1042,6 +1042,11 @@ uint64_t WdspChannel::outstandingAllocationsForTest() noexcept
     return wdspPortOutstandingAllocations();
 }
 
+void WdspChannel::setWorkerHandoffPauseForTest(unsigned microseconds) noexcept
+{
+    wdspPortSetHandoffPauseForTest(microseconds);
+}
+
 std::unique_lock<std::mutex> WdspChannel::fftwSetupLock()
 {
     // Forwards, and keeps its name so Hl2Spectrum, AnanPanAnalyzer and

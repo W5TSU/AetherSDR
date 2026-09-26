@@ -48,7 +48,7 @@ reports exactly this snapshot's version. A refresh therefore fails loudly at the
 first channel open rather than drifting, and updating that constant is part of
 the refresh.
 
-The source snapshot has eight documented changes (numbered 1-4 and 7-10). See
+The source snapshot has nine documented changes (numbered 1-4, 7-10 and 13). See
 `third_party/wdsp/AETHERSDR-PATCHES.md`; refreshes must either find the
 changes upstream or reapply and retest them explicitly.
 
