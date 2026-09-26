@@ -921,9 +921,14 @@ void RadioModel::setupBackend(const QString& family)
     }
 
     // aetherd Gap B (Step 2): backends that deliver spectra via the normalized
-    // IRadioBackend data-plane signal (HL2) feed the neutral render feed here.
-    // Flex uses the PanadapterStream passthrough wired above and never emits this,
-    // so this connect is harmless for Flex and load-bearing for HL2.
+    // IRadioBackend data-plane signal feed the neutral render feed here. Flex
+    // uses the PanadapterStream passthrough wired above and never emits this,
+    // so this connect is harmless for Flex -- but it is load-bearing for every
+    // OTHER family, not for HL2 alone: HL2, ANAN, Icom, RTL-SDR and the demo
+    // SimBackend all emit it, and what their frames CONTAIN differs (see the
+    // m_backendWfLastRowNs comment in the header). An earlier wording here said
+    // "(HL2)", which is how a sentence downstream came to describe HL2's frames
+    // as if they were everyone's.
     connect(m_backend.get(), &IRadioBackend::spectrumFrameReady,
             this, &RadioModel::onBackendSpectrumFrame);
     // Liveness stamps, on the arrival edge rather than anywhere downstream: a
@@ -6544,9 +6549,13 @@ void RadioModel::onBackendSpectrumFrame(int panId, const QByteArray& frame)
     // the waterfall row; it needs real band edges to scale against.
     //
     // Gated once more, because the waterfall rate is a SEPARATE control from
-    // the frame rate and normally asks for something slower. That gate is what
-    // makes a row actually represent the requested span of time — the
-    // calibration the widget's time axis already assumes.
+    // the frame rate and normally asks for something slower. That gate paces
+    // the row; it does NOT integrate it -- the row that goes out is the single
+    // producer frame that landed on the gate. What that frame is on each of
+    // the five families this handler serves, what is owed (the row's
+    // FIDELITY, not the time axis), and why the accumulator does not belong
+    // here are all on m_backendWfLastRowNs in the header, with RFC #5782
+    // (this repository's own) as the ruling. Kept in one place on purpose.
     // Geometry for THIS pan. `panId` here is already the neutral index, which is
     // the same key the geometry handler stores under.
     const double panBandwidthMhz = m_backendPanBandwidthMhz.value(panId, 0.0);
