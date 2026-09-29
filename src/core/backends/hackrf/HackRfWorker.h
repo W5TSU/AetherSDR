@@ -93,15 +93,23 @@ public:
     bool stopTx();
     bool isTxStreaming() const { return m_txStreaming.load(std::memory_order_relaxed); }
 
-    // Producer side of the TX sample queue — called from whatever thread
-    // owns the WDSP TXA channel output, once HackRfBackend exists (the
-    // design doc's IRadioBackend::submitTxAudio -> WDSP -> IQ path).
-    // Samples are consumed by the TX callback as fast as USB drains them;
-    // HackRfBackend is expected to pace submission to the stream's actual
-    // sample rate, the same assumption Hl2Backend::queueTxIq() makes of its
-    // callers — this queue has no backpressure signal and will grow
-    // unbounded if fed faster than the transfer drains it.
+    // Producer side of the TX sample queue — fed by HackRfBackend's
+    // HackRfTxDsp (a hand-rolled FM modulator, not WDSP's TXA chain; see
+    // HackRfTxDsp.h for why). Samples are consumed by the TX callback as
+    // fast as USB drains them; HackRfBackend is expected to pace submission
+    // to the stream's actual sample rate, the same assumption
+    // Hl2Backend::queueTxIq() makes of its callers — this queue has no
+    // backpressure signal and will grow unbounded if fed faster than the
+    // transfer drains it.
     void submitTxIq(const QVector<std::complex<float>>& iq);
+
+    // How many samples are currently queued and not yet transmitted — what
+    // HackRfBackend::finishTxAudio() converts to milliseconds so a caller
+    // holds PTT exactly as long as the buffered tail takes to drain, rather
+    // than a compile-time guess (IRadioBackend::finishTxAudio()'s own
+    // contract). Thread-safe: locks the same mutex submitTxIq()/
+    // handleTxTransfer() do.
+    std::size_t txQueueDepth() const;
 
 signals:
     // RX samples, wideband and unfiltered — HackRfDdc (not yet built) is
@@ -135,7 +143,7 @@ private:
     // order of magnitude below HackRF's wideband RX sample rate, so lock
     // contention here is not the concern a wideband path would have — see
     // HackRfDdc (RX side) for where that concern actually applies.
-    QMutex m_txQueueMutex;
+    mutable QMutex m_txQueueMutex;
     std::deque<std::complex<float>> m_txQueue;
 };
 

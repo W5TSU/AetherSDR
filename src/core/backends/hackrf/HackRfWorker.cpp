@@ -294,6 +294,12 @@ void HackRfWorker::submitTxIq(const QVector<std::complex<float>>& iq)
     for (const auto& s : iq) m_txQueue.push_back(s);
 }
 
+std::size_t HackRfWorker::txQueueDepth() const
+{
+    QMutexLocker locker(&m_txQueueMutex);
+    return m_txQueue.size();
+}
+
 int HackRfWorker::txCallback(hackrf_transfer* transfer)
 {
     auto* worker = static_cast<HackRfWorker*>(transfer->tx_ctx);

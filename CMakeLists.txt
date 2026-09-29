@@ -2535,7 +2535,7 @@ endif()
 if(NOT ENABLE_HACKRF)
     message(STATUS "HackRF ... disabled by ENABLE_HACKRF=OFF")
 elseif(HACKRF_FOUND)
-    message(STATUS "HackRF ... libhackrf found — HackRfBackend enabled, EXPERIMENTAL, single-slice, TX audio not wired (#42)")
+    message(STATUS "HackRF ... libhackrf found — HackRfBackend enabled, EXPERIMENTAL, single-slice, FM TX audio wired, CW TX not wired (#42)")
     set(AETHER_BACKEND_HACKRF ON)
     target_compile_definitions(aethercore PUBLIC AETHER_BACKEND_HACKRF)
     target_link_libraries(aethercore PRIVATE ${HACKRF_TARGET})
@@ -2548,6 +2548,8 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfTxRxArbiter.h
         src/core/backends/hackrf/HackRfDdc.cpp
         src/core/backends/hackrf/HackRfDdc.h
+        src/core/backends/hackrf/HackRfTxDsp.cpp
+        src/core/backends/hackrf/HackRfTxDsp.h
         src/core/backends/hackrf/HackRfBackend.cpp
         src/core/backends/hackrf/HackRfBackend.h)
 else()

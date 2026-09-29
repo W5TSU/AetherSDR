@@ -79,16 +79,18 @@ HackRfBackend::HackRfBackend(QObject* parent)
     , m_worker(std::make_unique<HackRfWorker>())
     , m_ddc(std::make_unique<HackRfDdc>())
     , m_spectrum(std::make_unique<hl2::Hl2Spectrum>(kSpectrumFftSize))
+    , m_txDsp(std::make_unique<HackRfTxDsp>())
 {
     // m_arbiter itself is (re)created fresh in connectRadio() — a stale
     // pending/timed-out state from a previous session must not leak into
     // the next one if this backend object is reused for another connect.
     // Its signals are connected there, once per instance; nothing to wire
-    // here. m_worker/m_ddc are never replaced, so their connections live
-    // for the whole backend lifetime.
+    // here. m_worker/m_ddc/m_txDsp are never replaced, so their connections
+    // live for the whole backend lifetime.
     connect(m_worker.get(), &HackRfWorker::streamStopped, this, &HackRfBackend::onWorkerStreamStopped);
     connect(m_worker.get(), &HackRfWorker::rxIqReady, this, &HackRfBackend::onWorkerRxIqReady);
     connect(m_ddc.get(), &HackRfDdc::decimatedIqReady, this, &HackRfBackend::onDdcAudioIqReady);
+    connect(m_txDsp.get(), &HackRfTxDsp::iqReady, this, &HackRfBackend::onTxDspIqReady);
 
     // Polls HackRfTxRxArbiter::tick() for timeout recovery. HackRfWorker's
     // start/stop calls are synchronous (see its own header comment on why
@@ -285,6 +287,10 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     m_ddc->setOutputSampleRateHz(kAudioDdcRateHz);
     rebuildRxChannel();
 
+    HackRfTxDsp::Config txCfg;
+    txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
+    m_txDsp->configure(txCfg);
+
     m_connected = true;
     m_clock.start();
     m_arbiterTickTimer.start();
@@ -471,11 +477,54 @@ void HackRfBackend::setPanPreamp(const QString& panId, int step)
 void HackRfBackend::setKeying(bool key)
 {
     if (!m_connected) return;
+    m_keyed = key;
     if (key) {
         m_arbiter->requestTx(nowMs());
     } else {
         m_arbiter->requestRx(nowMs());
+        // Drop accumulated phase/resample state so the NEXT transmission's
+        // carrier starts clean rather than carrying this one's tail —
+        // mirrors Hl2TxDsp::reset()'s own reasoning for the same edge.
+        m_txDsp->reset();
     }
+}
+
+void HackRfBackend::submitTxAudio(const QByteArray& int16Stereo, int sampleRateHz,
+                                  bool clientLeveled)
+{
+    Q_UNUSED(clientLeveled);   // no ALC/makeup gain in this modulator to gate — see HackRfTxDsp.h
+    // Only actually modulate while genuinely keyed — see the header comment
+    // on why this guard exists (mirrors Hl2Backend::submitTxAudio's own).
+    if (!m_connected || !m_keyed || int16Stereo.isEmpty()) return;
+
+    if (sampleRateHz != m_txDsp->config().audioSampleRateHz) {
+        // Stated rather than silently resampled — a mismatch would
+        // transmit at the wrong pitch, exactly like Hl2Backend's own
+        // refusal for the identical situation.
+        HackRfTxDsp::Config cfg = m_txDsp->config();
+        cfg.audioSampleRateHz = sampleRateHz;
+        m_txDsp->configure(cfg);
+    }
+
+    // Interleaved stereo to mono, matching Hl2Backend::submitTxAudio's own
+    // conversion exactly: AudioEngine duplicates the mic across both
+    // channels, so averaging is right for that and still sane if they differ.
+    const auto* pcm = reinterpret_cast<const qint16*>(int16Stereo.constData());
+    const int frames = static_cast<int>(int16Stereo.size() / sizeof(qint16)) / 2;
+    std::vector<float> mono(static_cast<std::size_t>(frames));
+    for (int n = 0; n < frames; ++n) {
+        const float l = static_cast<float>(pcm[2 * n]) / 32768.0f;
+        const float r = static_cast<float>(pcm[2 * n + 1]) / 32768.0f;
+        mono[static_cast<std::size_t>(n)] = 0.5f * (l + r);
+    }
+    m_txDsp->processAudioBlock(mono);
+}
+
+int HackRfBackend::finishTxAudio()
+{
+    if (!m_connected || m_sampleRateHz <= 0.0) return 0;
+    const std::size_t queued = m_worker->txQueueDepth();
+    return static_cast<int>(static_cast<double>(queued) * 1000.0 / m_sampleRateHz);
 }
 
 void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
@@ -722,6 +771,15 @@ void HackRfBackend::onDdcAudioIqReady(QVector<std::complex<float>> iq)
         emit audioFrameReady(pcm);
         emit sliceAudioFrameReady(0, pcm);
     }
+}
+
+void HackRfBackend::onTxDspIqReady(QVector<std::complex<float>> iq)
+{
+    // No arbiter-state gate here: HackRfWorker's own TX queue drains only
+    // while actually streaming, and stopTx() clears it on unkey (see its
+    // own comment) — a brief RxPending/TxPending window just means this IQ
+    // sits queued a little longer, not that it transmits early.
+    m_worker->submitTxIq(iq);
 }
 
 } // namespace AetherSDR::hackrf
