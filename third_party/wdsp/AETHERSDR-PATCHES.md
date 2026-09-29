@@ -527,10 +527,8 @@ itself. The ten are different shapes, so grep for the shape, not for a free:
   reapply a patch upstream already carries.
 - **patch 4** -- the `mainGen` / `mainRunGen` / `mainExited` exit handshake
   between the DSP worker and `pre_main_destroy()`.
-- **patch 5** -- standalone `set*_nnr()` accessors alongside the `SetRXANNR*`
-  properties.
-- **patch 6** -- an `n->df` guard in `setAlpha_nnet()` and `setKnee_nnet()`
-  (TAPR/OpenHPSDR-wdsp#4, fix in TAPR/OpenHPSDR-wdsp#5).
+- **patches 5-6** -- not carried in this fork (upstream AetherSDR's NNR
+  integration); nothing to look for.
 - **patch 7** -- `SetChannelState()` case 1 clearing a still-pending
   `slew.downflag` / `iob.ch_upslew` down-ramp before it arms the up-ramp
   (TAPR/OpenHPSDR-wdsp#6).
