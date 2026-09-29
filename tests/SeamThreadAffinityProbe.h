@@ -122,6 +122,7 @@ inline void attachAllSeamSignals(SeamThreadAffinityProbe& p)
     AETHER_SEAM_PROBE(transmitFrequencyCheckChanged);
     AETHER_SEAM_PROBE(radioDialLockChanged);
     AETHER_SEAM_PROBE(linkStatsUpdated);
+    AETHER_SEAM_PROBE(resamplingChanged);
     AETHER_SEAM_PROBE(extensionResult);
     AETHER_SEAM_PROBE(extensionError);
     AETHER_SEAM_PROBE(sliceChanged);
