@@ -564,6 +564,13 @@ add_executable(wdsp_channel_test tests/wdsp_channel_test.cpp)
 target_link_libraries(wdsp_channel_test PRIVATE aethercore)
 add_test(NAME wdsp_channel_test COMMAND wdsp_channel_test)
 
+# Socket-free lifetime checks for the two process-global FFTW planners.
+# Uses real NR2/NR4/RTL constructors and destructors, without radio sockets.
+add_executable(fftw_planner_lock_test tests/fftw_planner_lock_test.cpp)
+target_link_libraries(fftw_planner_lock_test PRIVATE aethercore Qt6::Core)
+add_test(NAME fftw_planner_lock_test COMMAND fftw_planner_lock_test)
+set_tests_properties(fftw_planner_lock_test PROPERTIES TIMEOUT 30)
+
 # Socket-free shared-pool admission and injected receiver lifetime tests. These
 # foundations are compiled/tested even when the optional RTL USB driver is off.
 add_executable(wdsp_channel_reservation_test tests/wdsp_channel_reservation_test.cpp)
@@ -931,6 +938,18 @@ add_executable(hl2_am_dcblock_test tests/hl2_am_dcblock_test.cpp)
 target_include_directories(hl2_am_dcblock_test PRIVATE src)
 target_link_libraries(hl2_am_dcblock_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME hl2_am_dcblock_test COMMAND hl2_am_dcblock_test)
+
+# Every non-`Ok` WdspChannel::ProcessResult used to be one unannotated
+# `continue` in BOTH raw-IQ RX stages -- no log line, no counter, no signal --
+# so a chain silent because WDSP was returning EngineError on every block was
+# indistinguishable from one whose pipeline was still filling. Pins the
+# classification of all six outcomes, that Underrun is counted apart from the
+# four faults, and that the HL2 and ANAN call sites both reach the counter on
+# every block. Drives real WDSP chains, hence aethercore.
+add_executable(wdsp_process_tally_test tests/wdsp_process_tally_test.cpp)
+target_include_directories(wdsp_process_tally_test PRIVATE src)
+target_link_libraries(wdsp_process_tally_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME wdsp_process_tally_test COMMAND wdsp_process_tally_test)
 
 # The RX DSP must demodulate at every IQ rate the operator can select by zooming.
 add_executable(hl2_rxdsp_rate_test tests/hl2_rxdsp_rate_test.cpp)
@@ -3957,6 +3976,19 @@ add_executable(demo_backend_swap_test tests/demo_backend_swap_test.cpp)
 target_include_directories(demo_backend_swap_test PRIVATE src)
 target_link_libraries(demo_backend_swap_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME demo_backend_swap_test COMMAND demo_backend_swap_test)
+
+# IRadioBackend threading contract (IRadioBackend.h "THREADING AND LIFETIME
+# CONTRACT"). Socket-free: the simulator standalone plus every family through
+# the production factory, constructed and torn down, never dialed.
+add_executable(backend_seam_affinity_test tests/backend_seam_affinity_test.cpp)
+target_include_directories(backend_seam_affinity_test PRIVATE src tests)
+target_link_libraries(backend_seam_affinity_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME backend_seam_affinity_test COMMAND backend_seam_affinity_test)
+
+add_executable(backend_family_switch_test tests/backend_family_switch_test.cpp)
+target_include_directories(backend_family_switch_test PRIVATE src tests)
+target_link_libraries(backend_family_switch_test PRIVATE aethercore Qt6::Core Qt6::Test)
+add_test(NAME backend_family_switch_test COMMAND backend_family_switch_test)
 
 add_executable(demo_applet_tooltip_test
     tests/demo_applet_tooltip_test.cpp

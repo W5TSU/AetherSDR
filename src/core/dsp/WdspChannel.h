@@ -82,6 +82,31 @@ public:
         // pihpsdr runs 8192 by comparison.
         int filterTaps = 2048;
         bool minimumPhase = false;
+        // FM detector deviation in Hz — the receiver's ASSUMPTION about how
+        // wide the incoming signal is deviated, not a filter width. WDSP turns
+        // it into an inverse audio gain (again = rate / (deviation * TWOPI)),
+        // so this scales recovered audio and narrows nothing; see the block
+        // above SetRXAFMDeviation in aether_wdsp.h. 5000 is what RXA.c builds
+        // the stage with, so the default changes nothing on its own.
+        //
+        // IN Config RATHER THAN ONLY A SETTER, for the same reason the noise
+        // blanker is: reconfigure() closes and reopens the channel, which frees
+        // the fmd stage and everything set on it. A deviation held only in a
+        // runtime setter would revert to 5 kHz on the next sample-rate or
+        // block-size change, silently and with nothing to read that says so.
+        //
+        // BOUNDED, AND THE BOUND IS THE REFUSAL. A sign check is not enough:
+        // 1e-40 is positive and finite, and `again = rate / (deviation *
+        // TWOPI)` then runs away until the detector's float output is inf.
+        // That was measured on this branch before these two numbers existed,
+        // not reasoned about. One pair, shared by setFmDeviation(),
+        // validateConfig() and RtlReceiverRegistry::boundedDsp(), so the three
+        // doors cannot drift apart. The floor sits below any narrow-FM service
+        // in use (2.5 kHz in Europe); the ceiling sits above broadcast FM's
+        // 75 kHz, which this detector does not demodulate anyway.
+        static constexpr double kMinFmDeviationHz = 100.0;
+        static constexpr double kMaxFmDeviationHz = 100000.0;
+        double fmDeviationHz = 5000.0;
         bool blockForOutput = false;
         // Impulse noise blanker — see the setNoiseBlanker() block below. Kept
         // in Config, not just as a runtime setter, so that reconfigure() (a
@@ -143,7 +168,132 @@ public:
                             std::span<float> outputLeft,
                             std::span<float> outputRight) noexcept;
 
+    // ── Start and stop, which are NOT teardown ────────────────────────────
+    //
+    // The T/R call. Stopping runs the Config mute envelope DOWN, flushes the
+    // chain, and leaves everything the channel owns in place: the FFTW plans,
+    // the filter masks, the notch database, the AGC and shift state, the noise
+    // blanker stage. Starting runs the envelope back up. Nothing is allocated
+    // or freed either way, which is the whole point — `allocationSequenceForTest()`
+    // does not move across a stop/start, and does move across a reconfigure().
+    //
+    // CloseChannel is not this and must not be used as this. It frees the
+    // channel, so a "stop" written as a close throws all of the above away and
+    // pays a rebuild to get it back — on this codebase that rebuild is FFTW
+    // planning (see loadWisdomOnce() in the .cpp), which is the expensive half
+    // of a connect. Closing is teardown, and this class does it in exactly one
+    // place: close(), reached from the destructor and from reconfigure().
+    //
+    // DMODE, and why a running stop cannot use the blocking form. WDSP's stop
+    // sets a down-slew flag and a flush flag, and clearing them takes TWO hops,
+    // not one: the next fexchange0/fexchange2 calls run the down-slew and
+    // release the channel's Sem_Flush when it completes (the ReleaseSemaphore
+    // calls at the tail of fexchange0/fexchange2, iobuffs.c), and WDSP's
+    // per-channel flushChannel thread wakes on that semaphore, flushes, and
+    // clears the flush flag (the tail of flushChannel, channel.c). Either way
+    // the drain
+    // starts on the thread that is feeding the channel, not inside
+    // SetChannelState, and a channel nobody is feeding can never finish it.
+    // The blocking form
+    // (dmode 1) is therefore correct only once the feed has been fenced off,
+    // which is what close() does behind beginControlOperation(). Called with
+    // the feed still live — and worse, from the feeding thread itself — it
+    // waits out its entire 100 ms timeout, then force-clears the flags and
+    // abandons the ramp, which is the click it exists to prevent. This takes
+    // the non-blocking form and lets processIq() play the ramp out.
+    //
+    // While stopped, processIq() still runs (that is what advances the ramp)
+    // and returns silence at the caller's normal cadence: once WDSP's exchange
+    // bit clears, fexchange2 writes nothing at all, so this class zeroes the
+    // output itself rather than letting the last block before the stop repeat.
+    //
+    // A START HAS NO CLOCKING PRECONDITION, and that took a vendored patch.
+    // Upstream's SetChannelState case 1 arms the up-slew but never clears
+    // slew.downflag, and the two flags are read independently on opposite sides
+    // of fexchange2 — up gates the input, down gates the output. So a start
+    // taken before the previous stop's ramp had been clocked out used to leave
+    // that ramp pending on a channel WDSP considered running; the next few
+    // blocks finished it, and downslew2's completion arm clears
+    // ch[].exchange, after which fexchange2 returns having touched nothing at
+    // all. The channel was silently dead, isRunning() said true, and only a
+    // reconfigure() recovered it. AetherSDR patch 7 (see
+    // third_party/wdsp/AETHERSDR-PATCHES.md) makes case 1 cancel a pending
+    // down-ramp first.
+    //
+    // That fixed the ramp that is still PENDING and nothing else, and this
+    // header said "safe at any spacing, including none" on the strength of it.
+    // THAT WAS TRUE ONLY FOR THE REGIME WE HAD TESTED — restarts inside the
+    // ramp — and false just outside it (K5PTB, review of #5628). A ramp that
+    // has COMPLETED has already released Sem_Flush, and the flushChannel
+    // thread sets exec_bypass whenever it next gets scheduled, which can be
+    // after case 1 has cleared it: the worker is then bypassed, so the channel
+    // produces nothing, or — in the blocking form — parks the host in
+    // fexchange2 forever on a semaphore the bypassed worker will never
+    // release. Measured on this tree, restarting with no gap at the spacing
+    // where the ramp completes: 42 of 440 non-blocking trials dead, and 20 of
+    // 20 blocking trials hung. Patch 8 waits that flush out before arming, and
+    // both are 0.
+    //
+    // AND A STOP FOLLOWED BY CLOCKING USED TO MAKE THE NEXT CLOSE A
+    // USE-AFTER-FREE, which is the other half of the same thread's story and
+    // took a third vendored patch (ten9876, review of #5628). A completed ramp
+    // makes flushChannel runnable; CloseChannel waited for the wdspmain worker
+    // and for nothing else, so destroy_main() freed the RXA chain while
+    // flushChannel was inside flush_rxa() on it. MEASURED: the shape stop ->
+    // clock -> destroy crashed 30 of 30 trials, against clean 15 of 15 for both
+    // stop -> destroy and never-stopped -> destroy; a 50 ms gap before the
+    // destroy was clean 30 of 30, which is what identifies the flush thread.
+    // AetherSDR patch 9 moves upstream's own flushChannel handshake out of
+    // destroy_iobuffs() and into pre_main_destroy(), so it runs BEFORE
+    // destroy_main() instead of after it. Pinned by
+    // runCloseAfterStoppedClockingTest.
+    //
+    // SO, PLAINLY, WHAT IS SAFE. With patches 7, 8 and 9 together: a stop/start
+    // pair is safe at any spacing including none, EXCEPT that the start may
+    // block up to WDSP's 100 ms timeout waiting for the flush thread — in
+    // practice under 3 ms, and 0 unless the previous stop's ramp was clocked
+    // out; and a stopped channel may be clocked for as long as the caller likes
+    // and then destroyed, with no ordering obligation on the caller.
+    //
+    // THAT LAST CLAUSE RESTS ON A PATCH, and it was false before it. Clocking a
+    // stopped channel completes the down-ramp, which leaves WDSP's flushChannel
+    // thread runnable; its flush_iobuffs() then drained the very token
+    // pre_main_destroy() posts to wake the worker, the worker parked forever,
+    // and destroy_iobuffs() closed that semaphore under a live waiter -- where
+    // glibc's pthread_cond_destroy() blocks and never returns. ten9876 measured
+    // it on #5628: 7 hangs in 16 runs under 8-way parallel load. Patch 4's wait
+    // loop now re-posts the token on every iteration, which closes it. See
+    // third_party/wdsp/AETHERSDR-PATCHES.md, patch 4.
+    //
+    // What is NOT claimed: none of this has run on hardware, the measurements
+    // behind it are synthetic probes rather than a T/R edge, and the hang above
+    // does not reproduce on macOS/arm64 at all -- 16 runs clean with the fix and
+    // 16 clean without it -- so that platform cannot confirm the fix, only that
+    // it causes no regression. Pinned by
+    // runRestartDuringRampTest, whose scenarios straddle the ramp, and by
+    // runCloseAfterStoppedClockingTest.
+    //
+    // Control-path work, guarded exactly like setMode(): returns false if a
+    // control operation is already in flight, and must not be called from
+    // processIq(). Setting the state it is already in is a no-op that succeeds.
+    //
+    // [[nodiscard]] because beginControlOperation() REFUSES rather than waits:
+    // a caller that ignores false has not stopped the channel and will silently
+    // pay close()'s 100 ms instead. Every owner in this tree calls this from the
+    // thread that drives processIq(), where a callback cannot be in flight, so
+    // today it cannot fail — the attribute is there to make it a compile error
+    // rather than a mystery if that ownership ever moves off that thread.
+    [[nodiscard]] bool setRunning(bool running) noexcept;
+    [[nodiscard]] bool isRunning() const noexcept
+    {
+        return m_running.load(std::memory_order_relaxed);
+    }
+
     // The caller must stop feeding processIq() before a control operation.
+    // Rebuilds the channel, and therefore DESTROYS what setRunning() preserves
+    // (the notch database most visibly — see addNotch()'s note). It does
+    // restore the running state it found, the way WDSP's own rebuilds do, so
+    // reconfiguring a stopped channel does not put it back on the air.
     bool reconfigure(const Config& config, std::string* error = nullptr) noexcept;
     bool setMode(Mode mode) noexcept;
     bool setFilter(double lowHz, double highHz) noexcept;
@@ -154,17 +304,124 @@ public:
     // already in flight. Control-path work, guarded exactly like setMode(); it
     // must not be called from the processIq() callback.
     bool setAgc(int agcMode, double maximumGainDb) noexcept;
-    // Runtime RX bandpass FIR length change (the selectivity/latency trade —
-    // longer sharpens the skirt and the minimum notch width, and adds group
-    // delay). RXASetNC internally stops and restarts the channel, so this is
-    // control-path work carrying the same beginControlOperation() /
-    // g_setupMutex discipline as setAgc(); never call it from processIq(). The
-    // notch database survives the realloc; the frequency shift is re-asserted
-    // here in case it does not, so callers need replay neither. Receive
-    // channels only. Returns true when the channel now runs `taps` (including a
-    // no-op when it already did); false on a transmit channel, a non-positive
-    // count, or control-operation contention.
+
+    // ── Filter length and phase mode, at runtime ──────────────────────────
+    //
+    // Until these existed, Config::filterTaps and Config::minimumPhase could
+    // only be chosen in open(), and the only way to revisit either was
+    // reconfigure() -- which closes and reopens the channel and so DESTROYS the
+    // notch database. That is the wrong tool for both: the notch database is
+    // exactly what a caller changing the filter length is usually trying to
+    // keep.
+    //
+    // setFilterTaps() is what makes the length/selectivity trade a runtime
+    // choice rather than a connect-time one. The floor on notch width is a
+    // function of the length -- 200 Hz at 2048, 50 Hz at 8192, see
+    // minimumNotchWidthHz() -- so a caller that wants a narrow notch can buy
+    // the taps when the operator asks for one and give them back afterwards,
+    // instead of every receiver paying the group delay of the longest filter
+    // anyone might want. The group delay is (taps-1)/2 samples at the DSP
+    // rate: 4095.5 samples (85.3 ms at 48 kHz) at 8192, 1023.5 (21.3 ms) at
+    // 2048.
+    //
+    // THE NOTCH DATABASE SURVIVES. RXASetNC reaches nbp0 through
+    // RXANBPSetNC -> setNc_nbp -> calc_nbp_impulse, which rebuilds the mask
+    // FROM the notch database rather than replacing it, so notches placed
+    // before the call are still placed after it -- at the new width floor.
+    // This is the whole difference between this call and reconfigure().
+    //
+    // THE SHIFT SURVIVES TOO, and needs no replay. calc_nbp_impulse() reads the
+    // shift from the notch DATABASE (`b->shift`, folded into the passband
+    // offset as `b->tunefreq + b->shift`), and setNc_nbp() changes only the tap
+    // count before rebuilding from that same database. Nothing on the RXASetNC
+    // path writes the shift stage or the database's copy of it. (This fork
+    // re-asserts both anyway, as cheap insurance on Hl2RxDsp's live notch
+    // path -- see the implementation.)
+    //
+    // COST, AND IT IS NOT FREE. setFilterTaps() stops the channel, re-plans
+    // six FIR cores under the process-global FFTW planner lock, and starts it
+    // again. MEASURED on this tree (macOS arm64, RelWithDebInfo, 48 kHz):
+    // 1.8-28.8 ms held on that lock per call. It is acceptable at a moment
+    // the operator initiated and is not acceptable per block, and a caller must
+    // not poll it.
+    //
+    // The stop is taken HERE, outside the lock, rather than left to the one
+    // inside RXASetNC -- see the block comment on the implementation. Left to
+    // RXASetNC it is a dmode-1 stop whose drain can never complete while the
+    // control fence is up, so it spins out its full 100-count Sleep(1) timeout
+    // WITH THE PLANNER LOCK HELD. That is 100 ms only where Sleep(1) costs
+    // 1 ms; the port routes it to nanosleep(), which on this machine lands
+    // nearer 1.6-2.3 ms, and the call measured 155-227 ms. Hl2Spectrum's
+    // constructor and destructor take the same lock on the EP2-pacing I/O
+    // thread (#5424), so this is not merely someone else's latency.
+    //
+    // WHAT THE OPERATOR ACTUALLY HEARS is the up-slew and a filter refill, NOT
+    // a mute ramp down. The down-ramp is armed and then cancelled unclocked by
+    // flush_slews() on the restore (AetherSDR patch 7). An earlier draft of
+    // this comment claimed the mute ramp plays; it does not, and it did not
+    // before this change either -- RXASetNC's timeout path force-cleared
+    // downflag just the same.
+    //
+    // `taps` MUST BE A POWER OF TWO IN [256, 16384] AND AN EXACT MULTIPLE OF
+    // dspBlockSize. nc >= size is only half of WDSP's requirement: fircore
+    // partitions into nfor = nc / size and walks the ring with nfor - 1 as a
+    // POWER-OF-TWO MASK, so an nfor that is not a power of two silently skips
+    // partitions and a non-multiple silently truncates the impulse -- wrong
+    // audio, no error. firmin.h says it outright: `int nc; // number of filter
+    // coefficients, power of two, >= size`. The same predicate now guards
+    // Config::filterTaps in validateConfig(), so create() and reconfigure()
+    // cannot reach what this refuses.
+    //
+    // THREADING, FOR WHOEVER WRITES THE GATE. These setters make
+    // Config::filterTaps MUTABLE ON AN OPEN CHANNEL, and minimumNotchWidthHz()
+    // reads it without taking anything. There is no cross-thread reader today
+    // -- every caller of both is on the control thread -- so this is sound as
+    // it stands. It stops being sound the moment the gate publishes a tap
+    // count that another thread reads: whoever adds that must either make the
+    // field atomic or take the lock in the getter. Recording it here so it is
+    // not rediscovered from a torn read.
+    //
+    // setMinimumPhase() trades linear phase for latency: the same length of
+    // filter, its energy front-loaded, so the group delay collapses while the
+    // magnitude response (and therefore the notch depth and the width floor)
+    // is preserved. Unlike RXASetNC it does NOT stop the channel -- RXASetMP
+    // only re-runs the mask through the cepstral conversion -- but it does
+    // rebuild all six masks, so it is control-path work for the same reason.
+    //
+    // Both are receive-only: RXASetNC and RXASetMP have no transmit
+    // counterpart and a TX channel has none of the six cores they address.
+    // Control-path work, guarded exactly like setMode(); neither may be called
+    // from the processIq() callback. Both are idempotent at the WDSP level --
+    // RXANBPSetNC and RXANBPSetMP compare against the stored value first -- but
+    // RXASetNC still pays the stop/restart, so a caller should not poll them.
     bool setFilterTaps(int taps) noexcept;
+    bool setMinimumPhase(bool on) noexcept;
+
+    // Runtime FM detector deviation, in Hz. Receive channels only.
+    //
+    // Applies in every mode but is only AUDIBLE in FM: RXA builds one fmd stage
+    // per channel and runs it only when the mode selects it, so this is
+    // accepted and stored on an SSB channel and takes effect if and when the
+    // mode becomes FM. That is deliberate — refusing by mode would make the
+    // value depend on the order the caller sets mode and deviation in.
+    //
+    // NOT WBFM. Broadcast FM is a different demodulator, not this one with a
+    // wider number: SetRXAMode clears setFMDRun() for every mode and its
+    // case RXA_WBFM raises wbfm.p->run WITHOUT putting fmd back, so xfmd's
+    // if (a->run) never fires and the value this writes is inert. wbfm.c runs
+    // an atan2 quadrature discriminator whose scale is fixed at construction
+    // (disc_gain_comp = rate / (TWOPI * 75000.0)), create_wbfm() takes no
+    // deviation argument, and WDSP exposes no SetRXAWBFMDeviation to reach it.
+    //
+    // Returns false on a transmit channel (SetRXAFMDeviation has no TX
+    // counterpart; TX deviation is SetTXAFMDeviation on a different stage), on
+    // a value outside Config::kMinFmDeviationHz..kMaxFmDeviationHz — WDSP
+    // divides by it, so 0 and anything near it drive the audio gain to
+    // infinity — or if a control operation is already in flight.
+    // Control-path work, guarded exactly like setMode(); it must not be called
+    // from the processIq() callback.
+    bool setFmDeviation(double deviationHz) noexcept;
+
     // ── Impulse noise blanker ─────────────────────────────────────────────
     //
     // WDSP's ANB (nob.c), run on the RAW IQ ahead of the channel. It has to be
@@ -297,18 +554,49 @@ public:
     // confirm setFilterTaps() did not drop it.
     [[nodiscard]] double shiftHz() const noexcept { return m_shiftHz; }
     [[nodiscard]] std::size_t outputBlockSize() const noexcept;
-    [[nodiscard]] int channelIdForTest() const noexcept { return m_channelId; }
+    // The WDSP channel number this object owns.
+    //
+    // A PRODUCTION ACCESSOR, despite the alias below. Two log lines read it --
+    // Hl2RxDsp::stop and AnanRxDsp's equivalent, both naming the channel in a
+    // warning an operator is expected to act on -- and a name ending in
+    // ForTest is precisely what a cleanup strips or wraps in an ifdef, which
+    // would take those log lines with it. Renamed on #5738 after
+    // aethersdr-agent noticed the two non-test callers.
+    [[nodiscard]] int channelId() const noexcept { return m_channelId; }
+
+    // Retained so the existing test call sites keep compiling. New code wants
+    // channelId(); this spelling says only "a test wrote it first".
+    [[nodiscard]] int channelIdForTest() const noexcept { return channelId(); }
 
     static uint64_t allocationSequenceForTest() noexcept;
     static uint64_t outstandingAllocationsForTest() noexcept;
+    // Process-global, test only (#5734, AetherSDR WDSP patch 13): the DSP
+    // worker sleeps this long right after it has released a blocked
+    // processIq(). That is the window in which, before patch 13, the host
+    // overwrote the input block the worker had not yet copied out. 0 restores
+    // the shipping path.
+    static void setWorkerHandoffPauseForTest(unsigned microseconds) noexcept;
 
-    // Shared FFTW-planner serialization guard. Anything outside this class
-    // that calls fftw_plan_*/fftw_destroy_plan directly (today: AnanSpectrum,
-    // off the real-time path) must hold this for the call, or it can race a
-    // concurrent WdspChannel::create()/reconfigure() on a DIFFERENT channel
-    // and corrupt FFTW's process-global plan cache -- the same reason
-    // open()/close() and every control call below already take it. Held only
-    // around the planner call itself, not the whole construction.
+    // Shared FFTW-planner serialization guard. FORWARDS to
+    // AetherSDR::fftwPlannerLock() (core/dsp/FftwPlannerLock.h), which owns
+    // the mutex; this spelling is kept only so existing call sites and tests
+    // need no churn. NEW CODE OUTSIDE THIS CLASS SHOULD TAKE
+    // fftwPlannerLock() DIRECTLY -- the lock is a property of FFTW, not of a
+    // WDSP channel, and reaching it through this header is the dependency
+    // edge that kept SpectralNR on a mutex of its own.
+    //
+    // THE CENSUS THIS COMMENT USED TO CARRY WAS THE BUG. It said "today:
+    // AnanSpectrum", which was already wrong when #5424 added Hl2Spectrum and
+    // stayed wrong while SpectralNR guarded the same planner with a private
+    // static (#5895). A list that has to be edited by hand goes stale
+    // silently, so the authoritative one now lives next to the lock in
+    // FftwPlannerLock.h and this comment deliberately keeps none.
+    //
+    // It also said "Held only around the planner call itself, not the whole
+    // construction." That is FALSE and was already false: Hl2Spectrum holds
+    // it across its fftw_malloc/fftw_free too, deliberately, because the
+    // frames TSan named in #5424 are memalign and free rather than the
+    // planner. Width is per call site and the allocations belong inside.
     [[nodiscard]] static std::unique_lock<std::mutex> fftwSetupLock();
 
 private:
@@ -351,6 +639,11 @@ private:
     std::atomic<unsigned> m_callbacksInFlight {0};
     std::atomic<bool> m_controlOperation {false};
     bool m_open = false;
+    // WDSP's channel state, mirrored. Atomic because processIq() consults it on
+    // the real-time path to decide whether it owns the output buffer this
+    // block, the same way it consults m_nbActive — the control handshake
+    // already orders the write, this keeps the read from being a data race.
+    std::atomic<bool> m_running {false};
 
     // ── Noise blanker state ───────────────────────────────────────────────
     //
