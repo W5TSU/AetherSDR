@@ -69,8 +69,12 @@ void CatControlApplet::setPorts(CatPort** ports, int count)
     for (int i = 0; i < m_portCount; ++i) {
         m_ports[i] = ports[i];
         if (m_ports[i]) {
+            // A member function, not a lambda: Qt::UniqueConnection is only
+            // defined for member-function slots. With a lambda it asserts in
+            // debug builds (abort at startup) and silently stacks a duplicate
+            // connection per setPorts() call in release builds.
             connect(m_ports[i], &CatPort::clientCountChanged, this,
-                    [this] { refresh(); }, Qt::UniqueConnection);
+                    &CatControlApplet::refresh, Qt::UniqueConnection);
         }
     }
     for (int i = m_portCount; i < kMaxPorts; ++i) {
