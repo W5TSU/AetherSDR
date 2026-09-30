@@ -1,6 +1,6 @@
 #!/bin/bash
-# setup-macos-deps.sh — Build fftw, portaudio and hidapi from source at a
-# pinned macOS deployment target, for the release DMG.
+# setup-macos-deps.sh — Build fftw, portaudio, hidapi, libusb and libhackrf
+# from source at a pinned macOS deployment target, for the release DMG.
 #
 # ── Why this exists instead of `brew install fftw portaudio hidapi` ──────
 #
@@ -39,8 +39,15 @@
 # rather than per release — the same deal third_party/qtkeychain already has.
 #
 # Requires: curl, cmake, ninja, make, a C compiler, and the autotools already
-# installed for the DMG build (autoconf/automake/libtool). All three tarballs
-# ship a pre-generated ./configure, so nothing here runs autoreconf.
+# installed for the DMG build (autoconf/automake/libtool). The autotools
+# tarballs (fftw, portaudio, libusb) ship a pre-generated ./configure, so
+# nothing here runs autoreconf.
+#
+# libusb and libhackrf joined later, for the HackRF backend (#42). Homebrew's
+# hackrf bottle has the same runner-OS floor as the three above, and v26.9.10's
+# DMGs simply shipped without HackRF because nothing supplied libhackrf at all.
+# Only host/libhackrf is built: Homebrew's fftw dependency for hackrf is for
+# the hackrf_sweep tool, which the app does not use.
 #
 # Usage: MACOS_DEPLOYMENT_TARGET=12.0 ./scripts/setup/setup-macos-deps.sh
 
@@ -77,11 +84,19 @@ HIDAPI_VERSION="0.15.0"
 HIDAPI_URL="https://github.com/libusb/hidapi/archive/refs/tags/hidapi-${HIDAPI_VERSION}.tar.gz"
 HIDAPI_SHA256="5d84dec684c27b97b921d2f3b73218cb773cf4ea915caee317ac8fc73cef8136"
 
+LIBUSB_VERSION="1.0.30"
+LIBUSB_URL="https://github.com/libusb/libusb/releases/download/v${LIBUSB_VERSION}/libusb-${LIBUSB_VERSION}.tar.bz2"
+LIBUSB_SHA256="fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf"
+
+HACKRF_VERSION="2026.01.3"
+HACKRF_URL="https://github.com/greatscottgadgets/hackrf/releases/download/v${HACKRF_VERSION}/hackrf-${HACKRF_VERSION}.tar.xz"
+HACKRF_SHA256="d2b76a1115d9b4df648c29efb2f3c8e80009b7cf9a8adf37abbfdba72101b086"
+
 OUT_DIR="third_party/macos-deps"
 PREFIX="$(pwd)/$OUT_DIR"
 WORK_DIR="$(pwd)/.macos-deps-build"
 STAMP="$OUT_DIR/.build-stamp"
-STAMP_CONTENT="target=$TARGET fftw=$FFTW_VERSION portaudio=$PORTAUDIO_VERSION hidapi=$HIDAPI_VERSION arch=$(uname -m)"
+STAMP_CONTENT="target=$TARGET fftw=$FFTW_VERSION portaudio=$PORTAUDIO_VERSION hidapi=$HIDAPI_VERSION libusb=$LIBUSB_VERSION hackrf=$HACKRF_VERSION arch=$(uname -m)"
 
 # ── Already set up? (lets CI cache third_party/macos-deps) ───────────────
 # The stamp carries the deployment target, so a local rebuild at a different
@@ -109,6 +124,8 @@ fetch() {  # fetch <url> <sha256> <output>
 fetch "$FFTW_URL"      "$FFTW_SHA256"      fftw.tar.gz
 fetch "$PORTAUDIO_URL" "$PORTAUDIO_SHA256" portaudio.tgz
 fetch "$HIDAPI_URL"    "$HIDAPI_SHA256"    hidapi.tar.gz
+fetch "$LIBUSB_URL"    "$LIBUSB_SHA256"    libusb.tar.bz2
+fetch "$HACKRF_URL"    "$HACKRF_SHA256"    hackrf.tar.xz
 
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
 
@@ -178,6 +195,50 @@ cmake -B "$WORK_DIR/hidapi-build" -S "$WORK_DIR/hidapi-hidapi-$HIDAPI_VERSION" -
     -DHIDAPI_BUILD_HIDTEST=OFF >/dev/null
 cmake --build "$WORK_DIR/hidapi-build" -j"$JOBS" >/dev/null
 cmake --install "$WORK_DIR/hidapi-build" >/dev/null
+
+# ── libusb ──────────────────────────────────────────────────────────────
+# libhackrf's only runtime dependency. libtool gives the dylib an absolute
+# install_name under $PREFIX, which macdeployqt resolves like hidapi's above.
+tar xjf "$WORK_DIR/libusb.tar.bz2" -C "$WORK_DIR"
+echo "Building libusb $LIBUSB_VERSION for macOS $TARGET..."
+( cd "$WORK_DIR/libusb-$LIBUSB_VERSION" && ./configure \
+    --prefix="$PREFIX" \
+    --enable-shared --disable-static >/dev/null )
+make -C "$WORK_DIR/libusb-$LIBUSB_VERSION" -j"$JOBS" >/dev/null
+make -C "$WORK_DIR/libusb-$LIBUSB_VERSION" install >/dev/null
+
+# ── libhackrf ───────────────────────────────────────────────────────────
+# LIBUSB_INCLUDE_DIR/LIBUSB_LIBRARIES are set explicitly, not left to
+# FindLIBUSB's pkg-config search: the runner image carries Homebrew packages,
+# and a libhackrf linked against Homebrew's libusb would drag that dylib (and
+# the runner OS's minos) into the bundle, the exact floor bug this script
+# exists to prevent. FindLIBUSB takes these two as "already found".
+# INSTALL_UDEV_RULES defaults OFF off Linux; it is stated anyway. Shared only,
+# so the bundle gets a dylib and nothing can link the static archive instead.
+tar xJf "$WORK_DIR/hackrf.tar.xz" -C "$WORK_DIR"
+echo "Building libhackrf $HACKRF_VERSION for macOS $TARGET..."
+cmake -B "$WORK_DIR/hackrf-build" -S "$WORK_DIR/hackrf-$HACKRF_VERSION/host/libhackrf" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$TARGET" \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_INSTALL_NAME_DIR="$PREFIX/lib" \
+    -DLIBUSB_INCLUDE_DIR="$PREFIX/include/libusb-1.0" \
+    -DLIBUSB_LIBRARIES="$PREFIX/lib/libusb-1.0.dylib" \
+    -DENABLE_STATIC_LIB=OFF \
+    -DINSTALL_UDEV_RULES=OFF >/dev/null
+cmake --build "$WORK_DIR/hackrf-build" -j"$JOBS" >/dev/null
+cmake --install "$WORK_DIR/hackrf-build" >/dev/null
+
+# libhackrf must reference OUR libusb. A Homebrew path here means the explicit
+# LIBUSB_* above stopped being honoured; fail now rather than at the floor
+# check, which would name the symptom but not the cause.
+if otool -L "$PREFIX/lib/libhackrf.dylib" | grep -q "libusb" \
+   && ! otool -L "$PREFIX/lib/libhackrf.dylib" | grep -q "$PREFIX/lib/libusb-1.0"; then
+    echo "ERROR: libhackrf links a libusb outside $PREFIX:" >&2
+    otool -L "$PREFIX/lib/libhackrf.dylib" >&2
+    exit 1
+fi
 
 # ── Verify the whole point of the exercise ──────────────────────────────
 # A build that silently ignored MACOSX_DEPLOYMENT_TARGET would look exactly like

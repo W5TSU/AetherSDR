@@ -140,12 +140,12 @@ if(NOT AETHERSDR_SANITIZER STREQUAL "none")
     unset(_aether_san_list)
 endif()
 option(ENABLE_RTL "Enable the experimental receive-only RTL-SDR backend" ON)
-# HackRfBackend itself doesn't exist yet (#42) — this option only gates the
-# libhackrf detection below for now. A later PR adding HackRfWorker/
-# HackRfDdc/HackRfBackend will add the target_compile_definitions/
-# target_sources block the RTL-SDR section below has, once there's
-# something to compile.
+# Gates the HackRF backend (#42), which compiles in only when libhackrf is
+# found. REQUIRE_HACKRF is the release guard, like REQUIRE_KEYCHAIN: without
+# it a runner with no libhackrf compiles the backend out without an error,
+# which is how v26.9.10's AppImages and DMGs shipped without HackRF.
 option(ENABLE_HACKRF "Enable the experimental HackRF backend (RX+TX)" ON)
+option(REQUIRE_HACKRF "Fail if the HackRF backend would be compiled out (use for release builds)" OFF)
 option(MQTT_TLS "Enable MQTT TLS via OpenSSL (disable for AppImage)" ON)
 option(LOWER_CASE_BINARY_NAME "Make the output binary lower case. Only affects Linux" OFF)
 if(WIN32)
@@ -2539,12 +2539,9 @@ else()
     message(STATUS "RTL-SDR ... disabled — librtlsdr not found")
 endif()
 
-# HackRF backend (#42) — detection, plus HackRfIq/HackRfWorker (the pure IQ
-# helpers and the hackrf_device* owner). HackRfBackend/HackRfDdc (the
-# IRadioBackend implementor and the per-slice DDC) don't exist yet, so there
-# is no AETHER_BACKEND_HACKRF compile definition yet — nothing consumes it
-# until a backend registers against IRadioBackend. Follows the RTL-SDR block
-# above's exact template.
+# HackRF backend (#42): libhackrf detection, then the backend's sources and
+# the AETHER_BACKEND_HACKRF definition that registers it. Follows the RTL-SDR
+# block above's template.
 if(PkgConfig_FOUND)
     pkg_check_modules(HACKRF IMPORTED_TARGET libhackrf)
 endif()
@@ -2567,6 +2564,13 @@ if(ENABLE_HACKRF AND NOT HACKRF_FOUND)
     endif()
 else()
     set(HACKRF_TARGET PkgConfig::HACKRF)
+endif()
+
+if(REQUIRE_HACKRF AND NOT (ENABLE_HACKRF AND HACKRF_FOUND))
+    message(FATAL_ERROR "REQUIRE_HACKRF=ON but the HackRF backend would be compiled out "
+        "(ENABLE_HACKRF=${ENABLE_HACKRF}, libhackrf found: ${HACKRF_FOUND}). "
+        "Install libhackrf (Linux: libhackrf-dev; macOS release: "
+        "scripts/setup/setup-macos-deps.sh builds it) or drop REQUIRE_HACKRF.")
 endif()
 
 if(NOT ENABLE_HACKRF)

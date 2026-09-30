@@ -388,6 +388,11 @@ jobs:
           # (#3639). Intel is no longer exempt — it only ever was because #812
           # had to drop Homebrew qtkeychain to dodge the Qt clash.
           KEYCHAIN_FLAG="-DREQUIRE_KEYCHAIN=ON"
+          # Both legs: HackRF (#42). setup-macos-deps.sh builds libhackrf and
+          # libusb at the deployment target; without this a missing libhackrf
+          # compiles the backend out silently, which is how v26.9.10's DMGs
+          # shipped without it.
+          HACKRF_FLAG="-DREQUIRE_HACKRF=ON"
           cmake -B build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -397,6 +402,7 @@ jobs:
             -DMQTT_TLS=OFF \
             $ASR_FLAGS \
             $KEYCHAIN_FLAG \
+            $HACKRF_FLAG \
             $GPU_FLAG 2>&1 | tee configure.log
 
       # Apple Silicon only — the Intel leg asks for OFF on purpose (see above).
@@ -546,6 +552,30 @@ jobs:
         run: |
           bash scripts/build/assert-macos-deployment-floor.sh \
             build/AetherSDR.app "${{ matrix.deploy_target }}"
+
+      # The app links libhackrf (REQUIRE_HACKRF=ON), so the bundle must carry it
+      # and its libusb: if macdeployqt ever left either behind, dyld would refuse
+      # to launch the app at all on a Mac without them, not merely drop HackRF.
+      # The floor check above only inspects what IS bundled, so it cannot see
+      # a library that is missing.
+      - name: Assert libhackrf and libusb were bundled
+        run: |
+          fw=build/AetherSDR.app/Contents/Frameworks
+          fail=0
+          for pattern in 'libhackrf*.dylib' 'libusb-1.0*.dylib'; do
+            found=$(find "$fw" -maxdepth 1 -name "$pattern" 2>/dev/null | sort || true)
+            if [ -z "$found" ]; then
+              echo "ERROR: no $pattern in $fw"
+              fail=1
+            else
+              echo "$found"
+            fi
+          done
+          if otool -L build/AetherSDR.app/Contents/MacOS/AetherSDR | grep -E 'hackrf|libusb' | grep -vE '@executable_path|@rpath|@loader_path'; then
+            echo "ERROR: the app still references libhackrf/libusb by a build-machine path (above)."
+            fail=1
+          fi
+          exit $fail
 
       - name: Import code signing certificate
         if: steps.signing.outputs.configured == 'true'
