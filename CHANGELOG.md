@@ -8,6 +8,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.10] — 2026-09-30
+
+### HackRF backend — highly experimental (#43, #44, #45)
+
+A new **HackRF One** receiver/transmitter family (tracked in #42), aimed at
+FM/CW satellite work. HackRF shows up in the Connection panel and connects
+like any other radio, with a live panadapter and waterfall and demodulated
+RX audio through WDSP. **FM voice TX** is wired through a hand-rolled
+narrow-FM modulator. An RX/TX arbitration state machine tears RX down before
+TX and rebuilds it after. It is covered by unit tests and never assumes an
+unconfirmed teardown succeeded. **CW TX is not wired yet**: keying in CW
+transmits silence. Single slice/panadapter only. Linux and macOS only
+(`ENABLE_HACKRF`, needs `libhackrf`); Windows is disabled, as for RTL-SDR.
+
+### Fork
+
+- **JS8Call spots in SpotHub** (#41): a client for JS8Call's TCP JSON API
+  turns `RX.SPOT` and `RX.DIRECTED` decodes into spots. SpotHub gets a new
+  JS8Call tab with host/port, auto-start, lifetime and colour settings.
+  Receive-only.
+- **Debug builds no longer abort at startup** in `CatControlApplet` (#48).
+  Release builds never crashed, but every `setPorts()` call stacked a
+  duplicate connection. This has been on `main` since 26.9.7.
+- Two weekly-sanitizer data races fixed: the TCI review test's log sink
+  and `VfoWidget` teardown (#38). Also a timing-sensitive HL2 seam test
+  that TSan could push past its budget (#40).
+
+### Synced with upstream — 75 commits (#49, #50, #51, #52, #53)
+
+**WDSP/DSP seam:** real `WdspChannel` start/stop, a process-global FFTW
+planner lock, settable FM deviation, and the `IRadioBackend`
+threading/lifetime contract. **Hermes-Lite 2:** a dBm reference derived
+from the AD9866 datasheet, a two-stage EP6 watchdog that re-asks a silent
+radio to stream, the second receiver's S-meter routed correctly, and an
+authoritative LNA default. **General:** RX meters read WDSP's average tap
+instead of peak-hold, so the noise floor no longer reads ~11–14 dB high. Also
+the ALC Gain meter, TCI PTT bind, atomic PMS/DVK saves, WSJT-X "calling me"
+spots, compressor presets, ASR robustness, Windows audio, and theming.
+**Hardware:** ANAN live DDC rate change, gateware droop defaults and
+panadapter crop geometry. TGXL, PGXL and SPE front-panel presentation.
+SmartMTR meter ballistics become project canon. FFT windows reset at
+discontinuities. A fix for a Windows crash on minimal-mode exit, plus Icom
+IC-7300MK2 connection cleanup.
+
 ## [v26.9.9] — 2026-09-17
 
 ### Synced with upstream — 37 commits (#33, #34, #35, #36)
