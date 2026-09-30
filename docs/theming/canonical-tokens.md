@@ -103,7 +103,7 @@ single-use colours snap to the nearest canonical neighbour.
 | `color.spectrum.peakHold` | `#ffb84d` | peak-hold overlay |
 | `color.spectrum.average` | `#8ea8c0` | averaged trace |
 | `color.spectrum.grid` | `#1a2330` | dB/frequency grid lines |
-| `color.waterfall.colormap` | (gradient — Phase 2 gradient support) | the 8-stop RF colormap |
+| `color.waterfall.colormap.*` | (gradient family — Phase 2 gradient support) | the RF colormap presets: `.default`, `.grayscale`, `.blueGreen`, `.fire`, `.plasma`, `.purple`, `.glacier`. One linear gradient per `WfColorScheme` enumerator; the Display ▸ Scheme selector is generated from that enum. `.glacier` is the only preset whose `at: 0.00` stop is not `#000000` — cleared waterfall pixels take `waterfallFloorRgb()` (the `t=0` colour) rather than black so its deep-blue floor is continuous |
 | `color.spectrum.zoomButton.disabled.background` | `#5a0f0f1a` | disabled state of the waterfall zoom / band-segment buttons |
 | `color.spectrum.zoomButton.disabled.border` | `#5a304050` | as above, border |
 | `color.spectrum.zoomButton.disabled.text` | `#8c90a0b0` | as above, glyph |
@@ -206,3 +206,12 @@ PSK Reporter dark-map luminance ramp. Both bundled themes use the same dark
 cartographic palette; selecting the light app theme does not turn an explicitly
 enabled dark map light. These tokens affect only basemap images, not data
 overlays, attribution, or window chrome.
+
+### Waterfall time markers
+
+`color.waterfall.timeMarker.foreground` is the pale gray-blue foreground for
+UTC row annotations. Lines use 55% of its opacity; timestamp text uses its full
+opacity. `color.waterfall.timeMarker.background` provides a compact translucent
+dark text backing. Both bundled themes retain the same colors because waterfall
+signal palettes do not invert when application chrome changes theme. These
+annotations are independent of RX/TX, warning, and selection colors.

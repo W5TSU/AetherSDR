@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QMap>
 #include <QImage>
+#include <QFont>
 #include <QColor>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -27,6 +28,7 @@
 #include "DssRenderer.h"
 #include "SpectrumPreviewLogic.h"
 #include "WaterfallHistoryBuffer.h"
+#include "WaterfallTimeMarkers.h"
 
 class QVariantAnimation;
 class QSoundEffect;
@@ -64,6 +66,7 @@ enum class WfColorScheme : int {
     Fire,          // black → red → orange → yellow → white
     Plasma,        // black → purple → magenta → orange → yellow
     Purple,        // SmartSDR "Add Purple": black→blue→green→yellow→red→purple→white
+    Glacier,       // deep blue → blue → ice blue → white (first preset not black at t=0)
     Count          // sentinel — number of schemes
 };
 
@@ -84,6 +87,7 @@ inline const char* wfSchemeName(WfColorScheme scheme)
     case WfColorScheme::Fire:      return "Fire";
     case WfColorScheme::Plasma:    return "Plasma";
     case WfColorScheme::Purple:    return "Purple";
+    case WfColorScheme::Glacier:   return "Glacier";
     default:                       return "Default";
     }
 }
@@ -139,6 +143,13 @@ public:
     // Per-pan settings persistence
     void setPanIndex(int idx);
     int panIndex() const { return m_panIndex; }
+    // Read-only by design: the interval is set through the context menu (or
+    // DisplaySettings), never by reflection. Exposing it for reads keeps the
+    // automation bridge's dss snapshot honest without adding settable surface.
+    Q_PROPERTY(int waterfallTimeMarkerSeconds READ waterfallTimeMarkerSeconds)
+    int waterfallTimeMarkerSeconds() const { return m_wfTimeMarkerSeconds; }
+    void setWaterfallTimeMarkerSeconds(int seconds);
+
     QString settingsKey(const QString& base) const;
     void loadSettings();
 
@@ -516,6 +527,16 @@ public:
     bool extendedFrequencyLine() const { return m_extendedFrequencyLine; }
     void setExtendedPassband(bool on);
     bool extendedPassband() const { return m_extendedPassband; }
+    void setExtendedTnf(bool on);
+    bool extendedTnf() const { return m_extendedTnf; }
+    // Push a global pan-display flag onto every other open panadapter,
+    // floating ones included. See the definition for why the walk is over
+    // topLevelWidgets() rather than window()'s children.
+    // `onApplied` runs on each sibling that actually changed, for toggles that
+    // own more than a flag (e.g. stopping that pan's tune-guide timer).
+    void propagateGlobalDisplayToggle(
+        bool SpectrumWidget::*flag, bool on, const char* cause,
+        const std::function<void(SpectrumWidget*)>& onApplied = {});
     void setThreeDSliceDepth(bool on);
     bool threeDSliceDepth() const { return m_threeDSliceDepth; }
     void setFloating(bool on) { m_isFloating = on; }
@@ -974,7 +995,11 @@ private:
     void drawSmartMtrValueLabels(QPainter& p);
     void drawOffScreenSlices(QPainter& p, const QRect& specRect);
     void drawBandPlan(QPainter& p, const QRect& specRect);
-    void drawTnfMarkers(QPainter& p, const QRect& specRect);
+    // wfRect is the waterfall band the notch is optionally extended into; pass
+    // an empty rect (or leave it defaulted) where there is no waterfall to
+    // paint, e.g. a pan rendered without one.
+    void drawTnfMarkers(QPainter& p, const QRect& specRect,
+                        const QRect& wfRect = QRect());
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void drawSwrSweep(QPainter& p, const QRect& specRect);
     void drawAutoSqlFloor(QPainter& p, const QRect& specRect);
@@ -1095,6 +1120,7 @@ private:
         QImage waterfall;
         QImage waterfallSupplemental;
         int wfWriteRow{0};
+        QVector<WaterfallTimeRow> visibleTimeRows;
         QVector<double> visibleRowCenterMhz;
         QVector<double> visibleRowBwMhz;
         QVector<double> visibleSupplementalCenterMhz;
@@ -1221,6 +1247,14 @@ private:
         const QRgb* supplementalRowData = nullptr,
         double supplementalCenterMhz = -1.0,
         double supplementalBandwidthMhz = -1.0);
+    QVector<WaterfallTimeMarker> visibleWaterfallTimeMarkers(qreal height) const;
+    void prepareWaterfallTimeMarkerAtlas(const QVector<WaterfallTimeMarker>& markers);
+    void drawWaterfallTimeMarkers(QPainter& painter, const QRect& rect);
+#ifdef AETHER_GPU_SPECTRUM
+    void prepareWaterfallTimeMarkersGpu(QRhiResourceUpdateBatch* batch, const QRect& rect, const QSize& logicalSize);
+    void drawWaterfallTimeMarkersGpu(QRhiCommandBuffer* cb);
+    void releaseWaterfallTimeMarkersGpu();
+#endif
     int waterfallHistoryCapacityRows() const;
     int maxWaterfallHistoryOffsetRows() const;
     int historyRowIndexForAge(int ageRows) const;
@@ -1338,6 +1372,11 @@ private:
     float kiwiSdrWaterfallLevel(float level) const;
     float intensityToWaterfallLevel(float intensity) const;
     QRgb waterfallLevelToRgb(float level) const;
+    // The colour a cleared / not-yet-painted waterfall pixel takes: the current
+    // palette's floor, not Qt::black. Every preset through Purple is #000000 at
+    // t=0, so this is a no-op for them; Glacier is the first palette with a
+    // non-black floor.
+    QRgb waterfallFloorRgb() const;
     static quint8 encodeWaterfallLevel(float level);
     std::array<QRgb, 256> waterfallHistoryColorLut() const;
     // 3DSS surface colour for a normalised strength s in [0,1] across the stable
@@ -1613,6 +1652,14 @@ private:
     float m_wfMaxDbm{-50.0f};
 
     // Scrolling waterfall image (Format_RGB32)
+    int m_wfTimeMarkerSeconds{0};
+    qint64 m_wfIncomingTimestampMs{0};
+    QVector<WaterfallTimeRow> m_wfVisibleTimeRows;
+    QImage m_wfTimeMarkerAtlas;
+    QFont m_wfTimeMarkerAtlasFont;
+    QVector<qint64> m_wfTimeMarkerLabels;
+    bool m_wfTimeMarkerAtlasDirty{true};
+    int m_wfTimeMarkerLabelHeight{0};
     QImage m_waterfall;
     // Same ring topology as m_waterfall. Native FLEX tiles are rasterized over
     // their full (wider) frequency frame here; the primary viewport row wins
@@ -1855,6 +1902,7 @@ private:
     bool    m_showTuneGuides{false};
     bool    m_extendedFrequencyLine{false};
     bool    m_extendedPassband{false};
+    bool    m_extendedTnf{false};
     bool    m_threeDSliceDepth{false};
     bool    m_isFloating{false};
     bool    m_tuneGuideVisible{false};
@@ -2028,6 +2076,10 @@ private:
     bool m_kiwiSdrDisplaySourceKiwi{false};
 
 #ifdef AETHER_GPU_SPECTRUM
+    QRhiTexture* m_wfTimeMarkerTexture{nullptr};
+    QRhiShaderResourceBindings* m_wfTimeMarkerSrb{nullptr};
+    QRhiBuffer* m_wfTimeMarkerVbo{nullptr};
+    int m_wfTimeMarkerQuadCount{0};
     bool m_rhiInitialized{false};
     bool m_rhiFailureForcedForAutomation{false};
     SpectrumRhiFailureState m_rhiFailure;

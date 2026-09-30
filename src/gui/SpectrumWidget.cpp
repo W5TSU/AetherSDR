@@ -38,6 +38,7 @@
 #include <QWheelEvent>
 #include <QNativeGestureEvent>
 #include <QMenu>
+#include <QActionGroup>
 #include <QToolTip>
 #include <QDialog>
 #include <QFormLayout>
@@ -105,7 +106,7 @@ constexpr qint64 kDssFftPixelScaleSettleMs = 750;
 // std140 float count of the waterfall UBO — must match the Uniforms block in
 // texturedquad.frag AND texturedquad_rowframes.frag, the buffer allocs in
 // initWaterfallPipeline(), and the uniforms[] writer in renderGpuFrame().
-constexpr int kWaterfallUboFloats = 8;
+constexpr int kWaterfallUboFloats = 12;
 
 QSize evenAlignedRhiSize(QSize size)
 {
@@ -773,9 +774,10 @@ static QString formatFreqScaleLabel(double freqMhz, int decimals)
 
 // ─── Waterfall color scheme gradient cache ────────────────────────────────────
 //
-// The five preset schemes (Default, Grayscale, Blue-Green, Fire, Plasma) used
-// to live as compile-time const tables.  They now resolve through ThemeManager
-// against `color.waterfall.colormap.{default,grayscale,blueGreen,fire,plasma}`
+// The preset schemes (Default, Grayscale, Blue-Green, Fire, Plasma, Purple,
+// Glacier) used to live as compile-time const tables.  They now resolve through
+// ThemeManager against
+// `color.waterfall.colormap.{default,grayscale,blueGreen,fire,plasma,purple,glacier}`
 // gradient tokens so a theme switch (or user theme override) reshapes any of
 // them.  Cached once per theme load — `intensityToRgb` and `fftDbmToRgb` hit
 // this hundreds of times per second per row, so we can't afford a token
@@ -810,6 +812,7 @@ const char* wfSchemeToken(WfColorScheme s)
     case WfColorScheme::Fire:      return "color.waterfall.colormap.fire";
     case WfColorScheme::Plasma:    return "color.waterfall.colormap.plasma";
     case WfColorScheme::Purple:    return "color.waterfall.colormap.purple";
+    case WfColorScheme::Glacier:   return "color.waterfall.colormap.glacier";
     default:                       return "color.waterfall.colormap.default";
     }
 }
@@ -1285,6 +1288,14 @@ QVariantMap SpectrumWidget::automationDssSnapshot() const
         static_cast<qulonglong>(m_frequencyRangeCommandCount);
     m[QStringLiteral("historyOffsetRows")] = m_wfHistoryOffsetRows;
     m[QStringLiteral("maxHistoryOffsetRows")] = maxWaterfallHistoryOffsetRows();
+    m[QStringLiteral("waterfallTimeMarkerSeconds")] = m_wfTimeMarkerSeconds;
+    QVariantList timeMarkers;
+    for (const WaterfallTimeMarker& marker : visibleWaterfallTimeMarkers(m_waterfall.height())) {
+        timeMarkers.append(QVariantMap{
+            {QStringLiteral("timestampMs"), marker.timestampMs},
+            {QStringLiteral("y"), marker.y}});
+    }
+    m[QStringLiteral("waterfallTimeMarkers")] = timeMarkers;
     m[QStringLiteral("waterfallRows")] = m_waterfall.height();
     m[QStringLiteral("waterfallWidth")] = m_waterfall.width();
     m[QStringLiteral("waterfallWriteRow")] = m_wfWriteRow;
@@ -2315,6 +2326,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // recolours as it is scrolled back in.
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() {
+        m_wfTimeMarkerAtlasDirty = true;
         rebuildWfStopsCacheFromTheme();
         recolorWaterfallViewport();
         markOverlayDirty();
@@ -2334,6 +2346,8 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         "color.background.2",
         "color.background.3",
         "color.background.spectrum",
+        "color.waterfall.timeMarker.foreground",
+        "color.waterfall.timeMarker.background",
         "color.spectrum.trace",
         "color.spectrum.peakHold",
         "color.spectrum.average",
@@ -2490,6 +2504,8 @@ QString SpectrumWidget::settingsKey(const QString& base) const
 void SpectrumWidget::setPanIndex(int idx)
 {
     m_panIndex = idx;
+    m_wfTimeMarkerSeconds = DisplaySettings::waterfallTimeMarkerSeconds(idx);
+    update();
     // Let the overlay menu (the +RX/+TNF/Band/ANT/Display/Memory/DAX button
     // rail) key its persisted collapsed/expanded state to this slot.
     if (m_overlayMenu) {
@@ -2499,6 +2515,7 @@ void SpectrumWidget::setPanIndex(int idx)
 
 void SpectrumWidget::loadSettings()
 {
+    m_wfTimeMarkerSeconds = DisplaySettings::waterfallTimeMarkerSeconds(m_panIndex);
     auto& s = AppSettings::instance();
     // These four values are stored by the radio (including in profiles). Older
     // releases persisted a competing client copy and reasserted it after status
@@ -2594,6 +2611,7 @@ void SpectrumWidget::loadSettings()
     m_showTuneGuides  = s.value("ShowTuneGuides", "False").toString() == "True";
     m_extendedFrequencyLine = s.value("ExtendedFrequencyLine", "False").toString() == "True";
     m_extendedPassband = DisplaySettings::extendedPassband();
+    m_extendedTnf = DisplaySettings::extendedTnf();
     m_threeDSliceDepth = DisplaySettings::threeDSliceDepth();
 
     // Background image — default to bundled logo, "none" = explicitly cleared
@@ -4198,55 +4216,83 @@ void SpectrumWidget::setShowTuneGuides(bool on) {
     s.save();
     markOverlayDirty();
 
-    // Propagate to all sibling SpectrumWidgets so the toggle is global
-    if (QWidget* top = window()) {
-        const auto siblings = top->findChildren<SpectrumWidget*>();
-        for (SpectrumWidget* sw : siblings) {
-            if (sw != this && sw->m_showTuneGuides != on) {
-                sw->m_showTuneGuides = on;
-                if (!on) {
-                    sw->m_tuneGuideVisible = false;
-                    sw->m_tuneGuideTimer->stop();
-                }
-                sw->markOverlayDirty();
-            }
+    // Turning the guides off has to tear down each sibling's in-flight guide
+    // too, not just clear the flag -- otherwise a pan mid-timeout keeps a
+    // visible guide and a live timer after the operator switched them off.
+    propagateGlobalDisplayToggle(&SpectrumWidget::m_showTuneGuides, on,
+                                 "showTuneGuidesSibling",
+                                 [on](SpectrumWidget* sw) {
+                                     if (!on) {
+                                         sw->m_tuneGuideVisible = false;
+                                         sw->m_tuneGuideTimer->stop();
+                                     }
+                                 });
+}
+// Push a global pan-display toggle onto every other open panadapter.
+//
+// The walk has to be over topLevelWidgets(), not window()->findChildren():
+// a panadapter popped out into its own top-level window is NOT a descendant
+// of this widget's window(), so the narrower walk silently skips it and the
+// floating pan keeps the old value until the next loadSettings(). Three
+// adjacent items in the same context menu each carried their own copy of this
+// loop and two of them had the narrow one, which is exactly how they drifted
+// apart -- hence one shared helper rather than a fifth copy.
+//
+// `onApplied` runs on each sibling that actually changed, between the flag
+// write and the repaint, for toggles that own more than a flag (Show Tune
+// Guides also has to stop the sibling's timeout timer).
+void SpectrumWidget::propagateGlobalDisplayToggle(
+    bool SpectrumWidget::*flag,
+    bool on,
+    const char* cause,
+    const std::function<void(SpectrumWidget*)>& onApplied)
+{
+    const auto applyToSibling = [&](SpectrumWidget* sw) {
+        if (!sw || sw == this || sw->*flag == on) {
+            return;
+        }
+        sw->*flag = on;
+        if (onApplied) {
+            onApplied(sw);
+        }
+        sw->markOverlayDirty(cause);
+    };
+    for (QWidget* top : QApplication::topLevelWidgets()) {
+        applyToSibling(qobject_cast<SpectrumWidget*>(top));
+        const auto pans = top->findChildren<SpectrumWidget*>();
+        for (SpectrumWidget* sw : pans) {
+            applyToSibling(sw);
         }
     }
 }
+
 void SpectrumWidget::setExtendedFrequencyLine(bool on) {
     m_extendedFrequencyLine = on;
     auto& s = AppSettings::instance();
     s.setValue("ExtendedFrequencyLine", on ? "True" : "False");
     s.save();
     markOverlayDirty();
-
-    // Propagate to all sibling SpectrumWidgets so the toggle is global.
-    if (QWidget* top = window()) {
-        const auto siblings = top->findChildren<SpectrumWidget*>();
-        for (SpectrumWidget* sw : siblings) {
-            if (sw != this && sw->m_extendedFrequencyLine != on) {
-                sw->m_extendedFrequencyLine = on;
-                sw->markOverlayDirty();
-            }
-        }
-    }
+    propagateGlobalDisplayToggle(&SpectrumWidget::m_extendedFrequencyLine, on,
+                                 "extendedFrequencyLineSibling");
 }
 
 void SpectrumWidget::setExtendedPassband(bool on) {
     m_extendedPassband = on;
     DisplaySettings::setExtendedPassband(on);
     markOverlayDirty();
+    propagateGlobalDisplayToggle(&SpectrumWidget::m_extendedPassband, on,
+                                 "extendedPassbandSibling");
+}
 
-    // Propagate to all sibling SpectrumWidgets so the toggle is global.
-    if (QWidget* top = window()) {
-        const auto siblings = top->findChildren<SpectrumWidget*>();
-        for (SpectrumWidget* sw : siblings) {
-            if (sw != this && sw->m_extendedPassband != on) {
-                sw->m_extendedPassband = on;
-                sw->markOverlayDirty();
-            }
-        }
+void SpectrumWidget::setExtendedTnf(bool on) {
+    if (m_extendedTnf == on) {
+        return;
     }
+    m_extendedTnf = on;
+    DisplaySettings::setExtendedTnf(on);
+    markOverlayDirty("extendedTnf");
+    propagateGlobalDisplayToggle(&SpectrumWidget::m_extendedTnf, on,
+                                 "extendedTnfSibling");
 }
 
 void SpectrumWidget::setThreeDSliceDepth(bool on)
@@ -4258,25 +4304,8 @@ void SpectrumWidget::setThreeDSliceDepth(bool on)
     DisplaySettings::setThreeDSliceDepth(on);
     markOverlayDirty("threeDSliceDepth");
 
-    // This is a global display treatment: every open pan should agree,
-    // including panadapters popped out into their own top-level window, which
-    // are NOT descendants of this widget's window(). Walk every top-level
-    // window so a floating pan updates live rather than waiting for the next
-    // loadSettings() to pick up the persisted value.
-    const auto applyToSibling = [this, on](SpectrumWidget* sw) {
-        if (!sw || sw == this || sw->m_threeDSliceDepth == on) {
-            return;
-        }
-        sw->m_threeDSliceDepth = on;
-        sw->markOverlayDirty("threeDSliceDepthSibling");
-    };
-    for (QWidget* top : QApplication::topLevelWidgets()) {
-        applyToSibling(qobject_cast<SpectrumWidget*>(top));
-        const auto pans = top->findChildren<SpectrumWidget*>();
-        for (SpectrumWidget* sw : pans) {
-            applyToSibling(sw);
-        }
-    }
+    propagateGlobalDisplayToggle(&SpectrumWidget::m_threeDSliceDepth, on,
+                                 "threeDSliceDepthSibling");
 }
 
 void SpectrumWidget::setFftLineWidth(float w) {
@@ -5415,13 +5444,18 @@ void SpectrumWidget::appendVisibleRow(const QRgb* rowData,
 
     QElapsedTimer timer;
     timer.start();
+    if (m_wfVisibleTimeRows.size() != h) {
+        m_wfVisibleTimeRows = QVector<WaterfallTimeRow>(h);
+    }
+    const qint64 previousMs = m_wfVisibleTimeRows[m_wfWriteRow].timestampMs;
     m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
+    m_wfVisibleTimeRows[m_wfWriteRow] = {m_wfIncomingTimestampMs, previousMs};
     auto* row = reinterpret_cast<QRgb*>(m_waterfall.bits() + m_wfWriteRow * m_waterfall.bytesPerLine());
     std::memcpy(row, rowData, m_waterfall.width() * sizeof(QRgb));
     if (m_waterfallSupplemental.size() != m_waterfall.size()) {
         m_waterfallSupplemental =
             QImage(m_waterfall.size(), QImage::Format_RGB32);
-        m_waterfallSupplemental.fill(Qt::black);
+        m_waterfallSupplemental.fill(waterfallFloorRgb());
     }
     auto* supplementalRow = reinterpret_cast<QRgb*>(
         m_waterfallSupplemental.bits()
@@ -5470,6 +5504,7 @@ void SpectrumWidget::appendHistoryRow(const quint8* intensityData,
                                       double supplementalCenterMhz,
                                       double supplementalBandwidthMhz)
 {
+    m_wfIncomingTimestampMs = timestampMs;
     // A hidden Flex/Kiwi source keeps only its small viewport and 96-row live
     // DSS surface warm. Retained scrollback belongs to the visible source; it
     // is rebuilt from new rows after a source switch (#4081, #4083).
@@ -5787,7 +5822,10 @@ static void remapHistoryRowInto(
                 curCenterMhz, curBwMhz, x, preservePeaks)];
             continue;
         }
-        dst[x] = qRgb(0, 0, 0);
+        // No frame covers this column. Palette floor, not a black gap -- same
+        // reasoning as reprojectWaterfallImage()'s fill; colorLut[0] is
+        // waterfallFloorRgb() by construction.
+        dst[x] = colorLut[0];
     }
 }
 
@@ -5941,6 +5979,7 @@ void SpectrumWidget::paintWaterfallRowsFromHistory(
         resetVisibleWaterfallFrequencyFrames(centerMhz, bandwidthMhz);
     }
 
+    m_wfVisibleTimeRows = QVector<WaterfallTimeRow>(height);
     const int w = m_waterfall.width();
     const bool haveFrames = m_wfHistoryRowCenterMhz.size()
         == m_waterfallHistory.capacityRows();
@@ -5971,6 +6010,10 @@ void SpectrumWidget::paintWaterfallRowsFromHistory(
 
         const int destinationRow =
             waterfallVisibleRowForAge(writeRowOrigin, age, height);
+        const int previousIndex = historyRowIndexForAge(m_wfHistoryOffsetRows + age + 1);
+        m_wfVisibleTimeRows[destinationRow] = {
+            m_wfHistoryTimestamps.value(rowIndex),
+            m_wfHistoryTimestamps.value(previousIndex)};
         auto* dst = reinterpret_cast<QRgb*>(
             m_waterfall.scanLine(destinationRow));
         // With no stamped frames the rows carry no capture information at all,
@@ -6016,7 +6059,7 @@ void SpectrumWidget::paintWaterfallRowsFromHistory(
 
         // Label the pixels that were actually written. Claiming supplemental
         // coverage the image does not hold sends the shader sampling rows the
-        // fill() above left black.
+        // fill() above left at the palette floor.
         m_wfVisibleRowCenterMhz[destinationRow] =
             recolorPlan.primaryFrame.centerMhz;
         m_wfVisibleRowBwMhz[destinationRow] =
@@ -6058,9 +6101,9 @@ void SpectrumWidget::recolorWaterfallViewport()
     // palette-independent intensity history. Keep the current visible ring
     // position and scroll clock intact so a palette change cannot move the
     // waterfall while it is live or paused.
-    m_waterfall.fill(Qt::black);
+    m_waterfall.fill(waterfallFloorRgb());
     if (!m_waterfallSupplemental.isNull()) {
-        m_waterfallSupplemental.fill(Qt::black);
+        m_waterfallSupplemental.fill(waterfallFloorRgb());
     }
     resetVisibleWaterfallFrequencyFrames(m_centerMhz, m_bandwidthMhz);
 
@@ -6104,11 +6147,12 @@ void SpectrumWidget::rebuildWaterfallViewportForFrame(double centerMhz,
     }
 
     m_wfHistoryOffsetRows = std::clamp(m_wfHistoryOffsetRows, 0, maxWaterfallHistoryOffsetRows());
-    m_waterfall.fill(Qt::black);
+    m_waterfall.fill(waterfallFloorRgb());
     if (!m_waterfallSupplemental.isNull()) {
-        m_waterfallSupplemental.fill(Qt::black);
+        m_waterfallSupplemental.fill(waterfallFloorRgb());
     }
     m_wfWriteRow = 0;
+    m_wfVisibleTimeRows = QVector<WaterfallTimeRow>(m_waterfall.height());
     resetVisibleWaterfallFrequencyFrames(centerMhz, bandwidthMhz);
     m_wfVisiblePaletteToken = waterfallPaletteToken();
 
@@ -6513,11 +6557,13 @@ void SpectrumWidget::clearDisplay()
 
 void SpectrumWidget::clearCurrentWaterfallRows()
 {
+    m_wfVisibleTimeRows = QVector<WaterfallTimeRow>(m_waterfall.height());
+    m_wfIncomingTimestampMs = 0;
     if (!m_waterfall.isNull()) {
-        m_waterfall.fill(Qt::black);
+        m_waterfall.fill(waterfallFloorRgb());
     }
     if (!m_waterfallSupplemental.isNull()) {
-        m_waterfallSupplemental.fill(Qt::black);
+        m_waterfallSupplemental.fill(waterfallFloorRgb());
     }
     if (m_waterfallHistory.isConfigured()) {
         m_waterfallHistory.discardRows();
@@ -6674,6 +6720,7 @@ void SpectrumWidget::saveCurrentWaterfallStreamState()
     updated.waterfall = std::move(m_waterfall);
     updated.waterfallSupplemental = std::move(m_waterfallSupplemental);
     updated.wfWriteRow = m_wfWriteRow;
+    updated.visibleTimeRows = std::move(m_wfVisibleTimeRows);
     updated.visibleRowCenterMhz = std::move(m_wfVisibleRowCenterMhz);
     updated.visibleRowBwMhz = std::move(m_wfVisibleRowBwMhz);
     updated.visibleSupplementalCenterMhz =
@@ -6790,12 +6837,16 @@ void SpectrumWidget::restoreCurrentWaterfallStreamState()
     if (m_waterfallSupplemental.size() != m_waterfall.size()) {
         m_waterfallSupplemental =
             QImage(m_waterfall.size(), QImage::Format_RGB32);
-        m_waterfallSupplemental.fill(Qt::black);
+        m_waterfallSupplemental.fill(waterfallFloorRgb());
     }
     if (!m_waterfall.isNull()) {
         m_waterfallStreamSizeHint = m_waterfall.size();
     }
     m_wfWriteRow = restored.wfWriteRow;
+    // The viewport-size guard above preserves matching timestamp rows. Both
+    // marker readers also tolerate a mismatch: drawing skips it and append
+    // reinitializes the metadata before writing the next row.
+    m_wfVisibleTimeRows = std::move(restored.visibleTimeRows);
     m_wfVisibleRowCenterMhz = std::move(restored.visibleRowCenterMhz);
     m_wfVisibleRowBwMhz = std::move(restored.visibleRowBwMhz);
     m_wfVisibleSupplementalCenterMhz =
@@ -7288,11 +7339,14 @@ void SpectrumWidget::resetGpuResources()
 
 // Horizontally reproject a waterfall image from one frequency frame
 // (oldCenter/oldBw) to another (newCenter/newBw). Overlapping spectrum is
-// remapped to its new pixel columns; newly-exposed columns become black.
-// Shared by the live waterfall (per pan step) and the deferred history flush.
+// remapped to its new pixel columns; newly-exposed columns become floorRgb.
+// Called from reprojectWaterfall() on each pan step of the Legacy pipeline.
+// floorRgb is threaded in rather than read from the widget because this is a
+// file-static free function with no `this` — see SpectrumWidget::waterfallFloorRgb().
 static void reprojectWaterfallImage(QImage& image,
                                     double oldCenterMhz, double oldBandwidthMhz,
-                                    double newCenterMhz, double newBandwidthMhz)
+                                    double newCenterMhz, double newBandwidthMhz,
+                                    QRgb floorRgb)
 {
     if (image.isNull() || oldBandwidthMhz <= 0.0 || newBandwidthMhz <= 0.0) {
         return;
@@ -7311,7 +7365,9 @@ static void reprojectWaterfallImage(QImage& image,
                                           newCenterMhz + newBandwidthMhz / 2.0);
 
     QImage reprojected(imageWidth, imageHeight, QImage::Format_RGB32);
-    reprojected.fill(Qt::black);
+    // Non-overlap columns after a pan must read as the palette floor, not as a
+    // black gap.
+    reprojected.fill(floorRgb);
 
     if (overlapEndMhz > overlapStartMhz) {
         const double srcLeft = (overlapStartMhz - oldStartMhz) / oldBandwidthMhz * imageWidth;
@@ -7345,7 +7401,7 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterMhz, double oldBandwidth
         rebuildWaterfallViewportForFrame(newCenterMhz, newBandwidthMhz);
     } else {
         reprojectWaterfallImage(m_waterfall, oldCenterMhz, oldBandwidthMhz,
-                                newCenterMhz, newBandwidthMhz);
+                                newCenterMhz, newBandwidthMhz, waterfallFloorRgb());
         resetVisibleWaterfallFrequencyFrames(newCenterMhz, newBandwidthMhz);
     }
     m_prevTileLevels.clear();
@@ -10063,6 +10119,17 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
                     action->setChecked(currentDepth == option.second);
                 }
             }
+            // Client-side render preference, not a notch attribute, so it is
+            // separated from the radio-owned Width/Depth entries above it.
+            // Global on purpose (like Extended Passband): TNF ids are
+            // radio-assigned and get recycled, so a per-notch flag would follow
+            // the id onto a different notch after a reconnect.
+            menu.addSeparator();
+            QAction* extendedTnfAction = menu.addAction("Extended TNF");
+            extendedTnfAction->setCheckable(true);
+            extendedTnfAction->setChecked(m_extendedTnf);
+            connect(extendedTnfAction, &QAction::toggled, this, &SpectrumWidget::setExtendedTnf);
+
             // "Permanent" means the RADIO keeps the notch across a power cycle,
             // so it needs a radio with somewhere to keep it — which an HL2, with
             // no configuration store at all, does not have.
@@ -10129,6 +10196,24 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
             }
 
             menu.addSeparator();
+            QMenu* timeMenu = menu.addMenu(tr("Waterfall Time Markers"));
+            timeMenu->setObjectName(QStringLiteral("waterfallTimeMarkersMenu"));
+            QActionGroup* timeGroup = new QActionGroup(timeMenu);
+            timeGroup->setExclusive(true);
+            for (const int seconds : kWaterfallMarkerIntervals) {
+                const QString label = seconds == 0 ? tr("Off")
+                    : seconds < 60 ? tr("%1 seconds").arg(seconds)
+                    : seconds == 60 ? tr("1 minute")
+                    : tr("%1 minutes").arg(seconds / 60);
+                QAction* action = timeMenu->addAction(label);
+                action->setObjectName(QStringLiteral("waterfallTimeMarkers%1").arg(seconds));
+                action->setCheckable(true);
+                action->setChecked(seconds == m_wfTimeMarkerSeconds);
+                timeGroup->addAction(action);
+                connect(action, &QAction::triggered, this, [this, seconds]() {
+                    setWaterfallTimeMarkerSeconds(seconds);
+                });
+            }
             QAction* tuneGuideAction = menu.addAction("Show Tune Guides");
             tuneGuideAction->setCheckable(true);
             tuneGuideAction->setChecked(m_showTuneGuides);
@@ -10143,6 +10228,21 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* ev)
             extendedPassbandAction->setCheckable(true);
             extendedPassbandAction->setChecked(m_extendedPassband);
             connect(extendedPassbandAction, &QAction::toggled, this, &SpectrumWidget::setExtendedPassband);
+
+            // Same toggle the TNF marker's own menu offers, surfaced beside its
+            // sibling overlay switches so it is findable without hunting for a
+            // notch. Gated on the notch CAPABILITY, not on the current notch
+            // list: a radio with an engine and no notches yet should still be
+            // able to arm the overlay in advance, and gating on the list would
+            // hide the entry in exactly the case this second surface exists to
+            // serve. Absent (not disabled) on a radio with no notch engine,
+            // which never grows one mid-session.
+            if (m_maxNotchFilters > 0) {
+                QAction* extendedTnfAction = menu.addAction("Extended TNF");
+                extendedTnfAction->setCheckable(true);
+                extendedTnfAction->setChecked(m_extendedTnf);
+                connect(extendedTnfAction, &QAction::toggled, this, &SpectrumWidget::setExtendedTnf);
+            }
 
             if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
                 QAction* depthAction = menu.addAction("3D Slice Shadow");
@@ -10635,10 +10735,10 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* ev)
         // still visible in the FFT (#3482).
         if (wfHeight > 0 && contentWidth() > 0) {
             QImage newWf(contentWidth(), wfHeight, QImage::Format_RGB32);
-            newWf.fill(Qt::black);
+            newWf.fill(waterfallFloorRgb());
             QImage newSupplemental(
                 contentWidth(), wfHeight, QImage::Format_RGB32);
-            newSupplemental.fill(Qt::black);
+            newSupplemental.fill(waterfallFloorRgb());
             if (!m_waterfall.isNull()) {
                 QImage scaled = m_waterfall.scaled(contentWidth(), wfHeight, Qt::IgnoreAspectRatio, Qt::FastTransformation);
                 if (!scaled.isNull())
@@ -11757,9 +11857,9 @@ void SpectrumWidget::applySettledResizeBuffers()
 
     if (waterfallChanged) {
         QImage newWf(waterfallSize, QImage::Format_RGB32);
-        newWf.fill(Qt::black);
+        newWf.fill(waterfallFloorRgb());
         QImage newSupplemental(waterfallSize, QImage::Format_RGB32);
-        newSupplemental.fill(Qt::black);
+        newSupplemental.fill(waterfallFloorRgb());
         if (!m_waterfall.isNull()) {
             QImage scaled = m_waterfall.scaled(
                 waterfallSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
@@ -12237,6 +12337,18 @@ QRgb SpectrumWidget::waterfallLevelToRgb(float level) const
     return interpolateGradient(std::clamp(level, 0.0f, 1.0f), stops, n);
 }
 
+// The colour a cleared / not-yet-painted waterfall pixel takes.  Every preset
+// through Purple is #000000 at t=0, so this is a no-op for them; Glacier is the
+// first palette with a non-black floor, and clearing to Qt::black there leaves
+// a pure-black band against the #05183c noise floor (worst on the
+// recolorWaterfallViewport() path, which setWfColorScheme() calls directly —
+// picking Glacier would otherwise repaint black everywhere retained history
+// doesn't cover).
+QRgb SpectrumWidget::waterfallFloorRgb() const
+{
+    return waterfallLevelToRgb(0.0f);
+}
+
 quint8 SpectrumWidget::encodeWaterfallLevel(float level)
 {
     return static_cast<quint8>(std::lround(
@@ -12291,7 +12403,10 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins, int destWidth,
                 + (static_cast<double>(x) / static_cast<double>(destWidth))
                     * m_bandwidthMhz;
             if (freqMhz < txMaskLowMhz || freqMhz > txMaskHighMhz) {
-                scanline[x] = qRgb(0, 0, 0);
+                // Outside the TX passband reads as "no signal here", so it
+                // takes the palette floor like every other cleared pixel --
+                // not a hard-black notch beside a non-black floor (#5670).
+                scanline[x] = colorLut[0];
                 continue;
             }
         }
@@ -13377,7 +13492,7 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
             if (m_waterfallSupplemental.size() != m_waterfall.size()) {
                 m_waterfallSupplemental =
                     QImage(m_waterfall.size(), QImage::Format_RGB32);
-                m_waterfallSupplemental.fill(Qt::black);
+                m_waterfallSupplemental.fill(waterfallFloorRgb());
             }
             QImage supplementalRgba =
                 m_waterfallSupplemental.convertToFormat(
@@ -13767,6 +13882,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb,
         m_wfPipelineMode == WaterfallPipelineMode::RowFrequencyFrames
             && m_wfFrameTexReady
             && m_wfSupplementalGpuTex != nullptr ? 1.0f : 0.0f;
+    const QRgb wfFloorRgb = waterfallFloorRgb();
     float uniforms[] = {
         rowOffset,
         waterfallTargetCenterOffsetMhz,
@@ -13776,6 +13892,13 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb,
         m_wfGpuTexH > 0 ? 1.0f / static_cast<float>(m_wfGpuTexH) : 0.0f,
         static_cast<float>(m_wfGpuTexH),
         0.0f,
+        // floorColor -- the palette's t=0 colour, so the shader's "no data
+        // here" exits match the CPU fills (waterfallFloorRgb()) instead of
+        // hardcoding black. No-op for every preset that is #000000 at zero.
+        static_cast<float>(qRed(wfFloorRgb)) / 255.0f,
+        static_cast<float>(qGreen(wfFloorRgb)) / 255.0f,
+        static_cast<float>(qBlue(wfFloorRgb)) / 255.0f,
+        1.0f,
     };
     static_assert(sizeof(uniforms) == kWaterfallUboFloats * sizeof(float),
                   "waterfall UBO writer must match kWaterfallUboFloats, the "
@@ -13998,7 +14121,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb,
             if (m_bandPlanFontSize > 0) {
                 drawBandPlan(frequencyPainter, specRect);
             }
-            drawTnfMarkers(frequencyPainter, specRect);
+            drawTnfMarkers(frequencyPainter, specRect, wfRect);
             if (m_showSpots || m_showSHistory) {
                 drawSpotMarkers(frequencyPainter, specRect);
             }
@@ -14811,6 +14934,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb,
                 static_cast<quint64>(panStatsFftTimer.nsecsElapsed() / 1000);
     }
 
+    prepareWaterfallTimeMarkersGpu(batch,
+        QRect(wfRect.x(), wfRect.y(),
+              std::min(wfContentW, waterfallTimeScaleRect(wfRect).left() - wfRect.left()),
+              wfRect.height()), logicalSize);
     cb->resourceUpdate(batch);
 
     // Begin render pass
@@ -14993,6 +15120,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb,
         cb->draw(4);
     }
 
+    drawWaterfallTimeMarkersGpu(cb);
     cb->endPass();
 
     // VFO flag/widget repositioning now runs earlier (repositionVfoFlags(),
@@ -15047,6 +15175,7 @@ void SpectrumWidget::render(QRhiCommandBuffer* cb)
 
 void SpectrumWidget::releaseResources()
 {
+    releaseWaterfallTimeMarkersGpu();
     releaseWaterfallFramePipelineResources();
     delete m_wfPipeline;     m_wfPipeline = nullptr;
     delete m_wfSrb;          m_wfSrb = nullptr;
@@ -15207,7 +15336,10 @@ void SpectrumWidget::paintEvent(QPaintEvent* ev)
     p.drawLine(divRect.left(), divRect.center().y(), divRect.right(), divRect.center().y());
 
     drawFreqScale(p, scaleRect);
-    p.fillRect(wfRect, Qt::black);  // paint the strip gap before the time tape
+    // Paint the strip gap before the time tape. Palette floor, not black: with
+    // Glacier the gap would otherwise read as a pure-black seam beside the
+    // #05183c noise floor on every repaint.
+    p.fillRect(wfRect, QColor::fromRgb(waterfallFloorRgb()));
     drawWaterfall(p, wfContentRect);
 
     // Cosmetic fade over the outer margin of the spectrum trace and
@@ -15251,7 +15383,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* ev)
         drawDssDepthGeometry(
             p, buildDssDepthGeometry(specRect, dssFrameFloorDbm));
     }
-    drawTnfMarkers(p, specRect);
+    drawTnfMarkers(p, specRect, wfRect);
     if (m_showSpots || m_showSHistory) drawSpotMarkers(p, specRect);
     drawSwrSweep(p, specRect);
     drawSliceMarkers(p, specRect, wfRect);
@@ -15418,6 +15550,9 @@ void SpectrumWidget::paintEvent(QPaintEvent* ev)
     } else {
         drawDbmScale(p, specRect);
     }
+    drawWaterfallTimeMarkers(p, QRect(wfRect.x(), wfRect.y(),
+        std::min(wfContentRect.width(), waterfallTimeScaleRect(wfRect).left() - wfRect.left()),
+        wfRect.height()));
     drawTimeScale(p, wfRect);
 
     if (PerfTelemetry::instance().enabled()) {
@@ -15654,7 +15789,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& r)
 void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& r)
 {
     if (m_waterfall.isNull()) {
-        p.fillRect(r, Qt::black);
+        p.fillRect(r, QColor::fromRgb(waterfallFloorRgb()));
         return;
     }
 
@@ -15874,9 +16009,19 @@ void SpectrumWidget::setTnfGlobalEnabled(bool on)
     markOverlayDirty();
 }
 
-void SpectrumWidget::drawTnfMarkers(QPainter& p, const QRect& specRect)
+void SpectrumWidget::drawTnfMarkers(QPainter& p, const QRect& specRect,
+                                    const QRect& wfRect)
 {
     if (m_tnfMarkers.isEmpty()) return;
+
+    // Opt-in mirror of the notch band in the waterfall (sibling of Extended
+    // Passband). The band itself -- fill, hatch and both edge lines -- is
+    // reproduced exactly, so the extended part is the same object seen further
+    // down rather than a fainter cousin of it. Only the drag triangle stays
+    // behind: it is a grab handle, the notch is draggable in the FFT area
+    // alone, and a second one over the waterfall would advertise a control
+    // that isn't there.
+    const bool extendToWaterfall = m_extendedTnf && !wfRect.isEmpty();
 
     const auto drawDepthHatch = [&](const QRect& rect, const QColor& color, int left, int right, int spacing) {
         if (rect.isEmpty()) {
@@ -15886,7 +16031,16 @@ void SpectrumWidget::drawTnfMarkers(QPainter& p, const QRect& specRect)
         p.setClipRect(rect);
         p.setPen(QPen(color, 1));
         const int height = rect.height();
-        for (int x = left - height; x < right; x += spacing) {
+        // Seed at a whole number of `spacing` steps back from `left`, not at
+        // `left - height`. Each 45-degree line crosses the band at a height of
+        // (left - x) above the bottom edge, so seeding from the rect's own
+        // height puts the rungs at a phase of (height % spacing) -- different
+        // for the spectrum and waterfall bands, which have different heights,
+        // leaving the extended copy visibly out of step with the original.
+        // Rounding the seed UP to a multiple of spacing pins the first rung to
+        // each band's bottom edge and still starts far enough left to cover it.
+        const int steps = (height + spacing - 1) / spacing;
+        for (int x = left - steps * spacing; x < right; x += spacing) {
             p.drawLine(x, rect.bottom(), x + height, rect.top());
         }
         p.restore();
@@ -15905,15 +16059,26 @@ void SpectrumWidget::drawTnfMarkers(QPainter& p, const QRect& specRect)
         const QColor baseColor = tnfColor(tnf);
         const QColor fillColor = tnfFillColor(tnf);
         const QColor lineColor = tnfLineColor(tnf);
-        p.fillRect(left, specRect.top(), right - left, specRect.height(), fillColor);
         const int hatchSpacing = (tnf.depthDb <= 1) ? 12 : (tnf.depthDb == 2 ? 8 : 5);
-        drawDepthHatch(QRect(left, specRect.top(), right - left, specRect.height()), lineColor, left, right, hatchSpacing);
 
-        // Edge lines
-        const QPen edgePen(lineColor, 1, Qt::SolidLine);
-        p.setPen(edgePen);
-        p.drawLine(left, specRect.top(), left, specRect.bottom());
-        p.drawLine(right, specRect.top(), right, specRect.bottom());
+        // One renderer for both regions. The waterfall copy has to be
+        // indistinguishable from the spectrum one, and the edge lines are most
+        // of what a narrow notch actually shows -- fill (alpha 40) and a 45
+        // degree hatch alone read as a dashed line, not a band. Drawing the two
+        // from one lambda is what keeps them identical; the first cut hand-rolled
+        // the waterfall copy without the edges and promptly looked wrong.
+        const auto drawBand = [&](int top, int height) {
+            p.fillRect(left, top, right - left, height, fillColor);
+            drawDepthHatch(QRect(left, top, right - left, height), lineColor, left, right, hatchSpacing);
+            p.setPen(QPen(lineColor, 1, Qt::SolidLine));
+            p.drawLine(left, top, left, top + height - 1);
+            p.drawLine(right, top, right, top + height - 1);
+        };
+
+        drawBand(specRect.top(), specRect.height());
+        if (extendToWaterfall) {
+            drawBand(wfRect.top(), wfRect.height());
+        }
 
         // Center triangle (grab handle) at top of spectrum
         const int triH = 8 + tnf.depthDb * 2;  // bigger triangle for deeper notch

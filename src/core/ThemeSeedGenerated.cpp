@@ -177,6 +177,17 @@ void ThemeManager::seedGeneratedDefaults()
         ThemeGradient g;
         g.type = ThemeGradient::Linear;
         g.angle = 180.0;
+        g.stops.append({0.0, QColor("#05183c")});
+        g.stops.append({0.3, QColor("#0a5ad2")});
+        g.stops.append({0.55, QColor("#3ca0ff")});
+        g.stops.append({0.8, QColor("#a8dcff")});
+        g.stops.append({1.0, QColor("#ffffff")});
+        m_tokens.insert("color.waterfall.colormap.glacier", QVariant::fromValue(g));
+    }
+    {
+        ThemeGradient g;
+        g.type = ThemeGradient::Linear;
+        g.angle = 180.0;
         g.stops.append({0.0, QColor("#000000")});
         g.stops.append({1.0, QColor("#ffffff")});
         m_tokens.insert("color.waterfall.colormap.grayscale", QVariant::fromValue(g));
@@ -207,6 +218,8 @@ void ThemeManager::seedGeneratedDefaults()
     }
     m_tokens.insert("color.waterfall.history", QString("#506070"));
     m_tokens.insert("color.waterfall.live", QString("#ff4d4d"));
+    m_tokens.insert("color.waterfall.timeMarker.background", QString("#dc0f0f1a"));
+    m_tokens.insert("color.waterfall.timeMarker.foreground", QString("#c8d8e8"));
     {
         ThemeFont f;
         f.family = QStringLiteral("DSEG7 Modern");

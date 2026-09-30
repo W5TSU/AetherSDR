@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/AppSettings.h"
+#include "WaterfallTimeMarkers.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -29,6 +30,28 @@ namespace AetherSDR {
 //     spelling migrated by the now-removed TitleBarSettings helper.
 class DisplaySettings {
 public:
+    static int waterfallTimeMarkerSeconds(int slot)
+    {
+        if (!isValidPanSlotIndex(slot)) {
+            return 0;
+        }
+        return validWaterfallMarkerInterval(readObj()
+            .value("waterfallTimeMarkers").toObject()
+            .value(QString::number(slot)).toInt(0));
+    }
+
+    static void setWaterfallTimeMarkerSeconds(int slot, int seconds)
+    {
+        if (!isValidPanSlotIndex(slot)) {
+            return;
+        }
+        QJsonObject document = readObj();
+        QJsonObject slotStates = document.value("waterfallTimeMarkers").toObject();
+        slotStates[QString::number(slot)] = validWaterfallMarkerInterval(seconds);
+        document["waterfallTimeMarkers"] = slotStates;
+        write(document);
+    }
+
     // Global panadapter marker overlay preference. Default False preserves the
     // waterfall as signal history unless the operator opts into the overlay.
     static bool extendedPassband()
@@ -40,6 +63,21 @@ public:
     {
         QJsonObject o = readObj();
         o["extendedPassband"] = on ? QStringLiteral("True") : QStringLiteral("False");
+        write(o);
+    }
+
+    // Sibling of extendedPassband for tracking-notch markers. Same default and
+    // same reasoning: the waterfall is a record of what was received, so an
+    // overlay that paints over that history is opt-in.
+    static bool extendedTnf()
+    {
+        return readObj().value("extendedTnf").toString("False") == "True";
+    }
+
+    static void setExtendedTnf(bool on)
+    {
+        QJsonObject o = readObj();
+        o["extendedTnf"] = on ? QStringLiteral("True") : QStringLiteral("False");
         write(o);
     }
 

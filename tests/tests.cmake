@@ -2076,6 +2076,16 @@ target_include_directories(dvk_wav_transfer_test PRIVATE src)
 target_link_libraries(dvk_wav_transfer_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME dvk_wav_transfer_test COMMAND dvk_wav_transfer_test)
 
+# #5663 — socket-free DVK upload queue accounting. An injected QTcpSocket
+# writer accepts and drains partial spans without binding a radio-peer socket.
+add_executable(dvk_wav_upload_test
+    tests/dvk_wav_upload_test.cpp
+)
+target_include_directories(dvk_wav_upload_test PRIVATE src)
+target_link_libraries(dvk_wav_upload_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME dvk_wav_upload_test COMMAND dvk_wav_upload_test)
+
+
 # #5640 — QsoRecorder claims filename candidates atomically so a same-second
 # recording cannot truncate a populated WAV or a concurrently-created file.
 add_executable(qso_recorder_filename_collision_test
@@ -2129,6 +2139,82 @@ add_executable(firmware_uploader_test
 target_include_directories(firmware_uploader_test PRIVATE src)
 target_link_libraries(firmware_uploader_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME firmware_uploader_test COMMAND firmware_uploader_test)
+
+# Local Qt dialog + injected uploader callbacks; no radio connection or peer.
+add_executable(firmware_close_dialog_test
+    tests/firmware_close_dialog_test.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/RadioSetupDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/KiwiPublicReceiverPicker.cpp
+    src/gui/GuardedSlider.h
+)
+target_include_directories(firmware_close_dialog_test PRIVATE src tests)
+target_link_libraries(firmware_close_dialog_test PRIVATE
+    aetherdesktop_support Qt6::Widgets Qt6::Test)
+add_test(NAME firmware_close_dialog_test COMMAND firmware_close_dialog_test)
+set_tests_properties(firmware_close_dialog_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+
+# #5507: the production Radio Setup dialog against a backend that reports no
+# region, driven by RadioDelta over the real IRadioBackend::radioChanged route.
+# Same target shape as flex_control_visibility_test above — no sockets, no peers.
+# ${THEME_TEST_RESOURCES} -- set by this file's own
+# qt_add_resources(THEME_TEST_RESOURCES resources/resources.qrc), above -- is
+# what puts :/themes/default-dark.json and :/themes/default-light.json in this
+# binary. Without it ThemeManager still resolves color.accent.bright --
+# ThemeSeedGenerated.cpp compiles the dark values in -- but scanAvailableThemes()
+# finds nothing in :/themes/, so availableThemes() is empty and setActiveTheme()
+# cannot switch. #5857's slot switches the theme and reads the colour back, which
+# is the only assertion that can see a widget that is tracked but carries no
+# token to re-resolve.
+add_executable(radio_setup_region_field_test
+    tests/radio_setup_region_field_test.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/RadioSetupDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/KiwiPublicReceiverPicker.cpp
+    src/gui/GuardedSlider.h
+    ${THEME_TEST_RESOURCES}
+)
+target_include_directories(radio_setup_region_field_test PRIVATE src tests)
+target_link_libraries(radio_setup_region_field_test PRIVATE
+    aetherdesktop_support Qt6::Widgets Qt6::Test)
+add_test(NAME radio_setup_region_field_test COMMAND radio_setup_region_field_test)
+set_tests_properties(radio_setup_region_field_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+# #5896: RadioSetupDialog's caption labels and line edits across a LIVE theme
+# switch.  Same target shape as radio_setup_region_field_test above, plus
+# ${THEME_TEST_RESOURCES}: without :/themes/ compiled in, ThemeSeedGenerated.cpp
+# still resolves every token so a construction-time reading succeeds, but
+# availableThemes() is empty and setActiveTheme() has nothing to switch to --
+# and the switch is the only thing that can see this defect.
+add_executable(radio_setup_label_theme_token_test
+    tests/radio_setup_label_theme_token_test.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/RadioSetupDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/KiwiPublicReceiverPicker.cpp
+    src/gui/GuardedSlider.h
+    ${THEME_TEST_RESOURCES}
+)
+target_include_directories(radio_setup_label_theme_token_test PRIVATE src tests)
+target_link_libraries(radio_setup_label_theme_token_test PRIVATE
+    aetherdesktop_support Qt6::Widgets Qt6::Test)
+add_test(NAME radio_setup_label_theme_token_test COMMAND radio_setup_label_theme_token_test)
+set_tests_properties(radio_setup_label_theme_token_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
 add_executable(zip_archive_test
     tests/zip_archive_test.cpp
@@ -2425,6 +2511,22 @@ add_executable(pan_recenter_policy_test
 target_include_directories(pan_recenter_policy_test PRIVATE src)
 add_test(NAME pan_recenter_policy_test COMMAND pan_recenter_policy_test)
 
+add_executable(waterfall_time_marker_settings_test tests/waterfall_time_marker_settings_test.cpp)
+target_include_directories(waterfall_time_marker_settings_test PRIVATE src)
+target_link_libraries(waterfall_time_marker_settings_test PRIVATE aethercore Qt6::Core)
+add_test(NAME waterfall_time_marker_settings_test COMMAND waterfall_time_marker_settings_test)
+
+add_executable(extended_tnf_settings_test tests/extended_tnf_settings_test.cpp)
+target_include_directories(extended_tnf_settings_test PRIVATE src)
+target_link_libraries(extended_tnf_settings_test PRIVATE aethercore Qt6::Core)
+add_test(NAME extended_tnf_settings_test COMMAND extended_tnf_settings_test)
+
+# Pure row/timestamp geometry, no sockets or radio peer.
+add_executable(waterfall_time_markers_test tests/waterfall_time_markers_test.cpp)
+target_include_directories(waterfall_time_markers_test PRIVATE src)
+target_link_libraries(waterfall_time_markers_test PRIVATE Qt6::Core)
+add_test(NAME waterfall_time_markers_test COMMAND waterfall_time_markers_test)
+
 add_executable(waterfall_history_buffer_test
     tests/waterfall_history_buffer_test.cpp
     src/gui/WaterfallHistoryBuffer.cpp
@@ -2693,6 +2795,15 @@ add_executable(digital_voice_slice_lifecycle_test
 target_include_directories(digital_voice_slice_lifecycle_test PRIVATE src)
 target_link_libraries(digital_voice_slice_lifecycle_test PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME digital_voice_slice_lifecycle_test COMMAND digital_voice_slice_lifecycle_test)
+
+add_executable(mode_cycle_test
+    tests/mode_cycle_test.cpp
+    src/core/DigitalVoiceModeRegistry.cpp
+)
+target_include_directories(mode_cycle_test PRIVATE src)
+target_compile_definitions(mode_cycle_test PRIVATE AETHER_ENABLE_DIGITAL_VOICE_HELPER)
+target_link_libraries(mode_cycle_test PRIVATE Qt6::Core)
+add_test(NAME mode_cycle_test COMMAND mode_cycle_test)
 
 add_executable(dstar_model_test
     tests/dstar_model_test.cpp
@@ -3352,6 +3463,25 @@ target_include_directories(green_heron_protocol_test PRIVATE src)
 target_link_libraries(green_heron_protocol_test PRIVATE Qt6::Core)
 add_test(NAME green_heron_protocol_test COMMAND green_heron_protocol_test)
 
+# aethersdr/radio/state payload shape + the drive-publish timing contract
+# (#5518). Links the real TransmitModel because the have-status latch and the
+# coalesce debounce are half the contract; MqttRadioState.cpp itself is pure.
+add_executable(mqtt_radio_state_test
+    tests/mqtt_radio_state_test.cpp
+    src/core/MqttRadioState.cpp
+    src/models/TransmitModel.cpp
+    src/core/ClientQuindarTone.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/AsyncLogWriter.cpp
+    src/core/LogManager.cpp
+)
+target_include_directories(mqtt_radio_state_test PRIVATE src)
+target_link_libraries(mqtt_radio_state_test PRIVATE Qt6::Core)
+if(UNIX)
+    target_link_libraries(mqtt_radio_state_test PRIVATE pthread)
+endif()
+add_test(NAME mqtt_radio_state_test COMMAND mqtt_radio_state_test)
+
 add_executable(mqtt_settings_test
     tests/mqtt_settings_test.cpp
     src/core/MqttSettings.cpp
@@ -3380,6 +3510,18 @@ target_include_directories(cw_sidetone_test PRIVATE src)
 target_link_libraries(cw_sidetone_test PRIVATE Qt6::Core)
 add_test(NAME cw_sidetone_test COMMAND cw_sidetone_test)
 
+# #5713 — WHICH sidetone backend gets constructed, before the #4978 policy
+# below decides what it is handed. Pure, header-only, so the platform/build/
+# preference truth table is a compile-time assertion. The row that matters is
+# "Windows + PortAudio built + nothing saved -> QAudioSink": shipping PortAudio
+# in the Windows installer (#5200/#5201) flipped that default with no line of
+# code saying so, and v26.9.3 heap-corrupted at connect on three field boxes.
+add_executable(cw_sidetone_backend_policy_test
+    tests/cw_sidetone_backend_policy_test.cpp
+)
+target_include_directories(cw_sidetone_backend_policy_test PRIVATE src)
+add_test(NAME cw_sidetone_backend_policy_test COMMAND cw_sidetone_backend_policy_test)
+
 # #4978 — which device the CW sidetone backend is handed at start(). Pure,
 # header-only policy, so the whole truth table is a compile-time assertion; the
 # "saved device that IS the system default still takes the name-match path" row
@@ -3397,6 +3539,18 @@ add_executable(cw_sidetone_device_match_test tests/cw_sidetone_device_match_test
 target_include_directories(cw_sidetone_device_match_test PRIVATE src)
 target_link_libraries(cw_sidetone_device_match_test PRIVATE Qt6::Core)
 add_test(NAME cw_sidetone_device_match_test COMMAND cw_sidetone_device_match_test)
+
+# The env-gated sample-exact edge probe both sidetone sinks feed (#5200). No
+# PortAudio and no audio device: scan() takes a plain interleaved stereo float
+# buffer, so the instrument is a pure function of its samples and runs on every
+# runner. The load-bearing row is the empty-stream reset — dump() used to skip
+# its reset when a stream recorded no edges, leaking that stream's whole sample
+# count into the next one, which silently displaced every position the probe
+# reported afterwards.
+add_executable(cw_sidetone_edge_probe_test tests/cw_sidetone_edge_probe_test.cpp)
+target_include_directories(cw_sidetone_edge_probe_test PRIVATE src)
+target_link_libraries(cw_sidetone_edge_probe_test PRIVATE Qt6::Core)
+add_test(NAME cw_sidetone_edge_probe_test COMMAND cw_sidetone_edge_probe_test)
 
 # #4281 — who owns the Client-Side QSO recorder's TX slot. Pure, header-only,
 # so the truth table is a compile-time assertion; the run-time rows carry the
@@ -3478,6 +3632,17 @@ add_executable(hdlc_codec_test
 target_include_directories(hdlc_codec_test PRIVATE src)
 target_link_libraries(hdlc_codec_test PRIVATE aether_libmodem_core)
 add_test(NAME hdlc_codec_test COMMAND hdlc_codec_test)
+
+# Contour ShuttleXpress / ShuttlePro v2 report decoding (#5927). The parsers
+# are pure byte decoders with no hidapi dependency, so the test is built
+# unconditionally; HAVE_HIDAPI only unlocks the #ifdef around them.
+add_executable(hid_device_parser_test
+    tests/hid_device_parser_test.cpp
+    src/core/HidDeviceParser.cpp
+)
+target_include_directories(hid_device_parser_test PRIVATE src)
+target_compile_definitions(hid_device_parser_test PRIVATE HAVE_HIDAPI)
+add_test(NAME hid_device_parser_test COMMAND hid_device_parser_test)
 
 # Offline AX.25 decode diagnostic: replays a captured WAV through the decoder.
 # Not a ctest (needs an input file); built on demand for troubleshooting.
@@ -4019,6 +4184,15 @@ add_executable(extension_namespace_gate_test tests/extension_namespace_gate_test
 target_include_directories(extension_namespace_gate_test PRIVATE src)
 target_link_libraries(extension_namespace_gate_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME extension_namespace_gate_test COMMAND extension_namespace_gate_test)
+
+# #5594 item 3: the capacity a Flex declares in discovery (max_slices /
+# max_panadapters), and that it is never confused with the adjacent
+# available_* availability keys. Socket-free.
+add_executable(radio_capacity_declaration_test tests/radio_capacity_declaration_test.cpp)
+target_include_directories(radio_capacity_declaration_test PRIVATE src)
+target_link_libraries(radio_capacity_declaration_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME radio_capacity_declaration_test COMMAND radio_capacity_declaration_test)
+
 
 add_executable(radiomodel_tnf_removal_status_test tests/radiomodel_tnf_removal_status_test.cpp)
 target_include_directories(radiomodel_tnf_removal_status_test PRIVATE src)
@@ -4946,6 +5120,12 @@ add_executable(hl2_dsp_setup_policy_test
 )
 target_include_directories(hl2_dsp_setup_policy_test PRIVATE src)
 add_test(NAME hl2_dsp_setup_policy_test COMMAND hl2_dsp_setup_policy_test)
+add_executable(psk_beacon_level_policy_test
+    tests/psk_beacon_level_policy_test.cpp
+)
+target_include_directories(psk_beacon_level_policy_test PRIVATE src)
+add_test(NAME psk_beacon_level_policy_test COMMAND psk_beacon_level_policy_test)
+
 add_executable(hl2_tx_level_policy_test
     tests/hl2_tx_level_policy_test.cpp
 )
@@ -5439,12 +5619,20 @@ target_link_libraries(CAT_Flex_test PRIVATE Qt6::Core Qt6::Network)
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    firmware_close_dialog_test
+    radio_setup_region_field_test
+
+
+    radio_setup_label_theme_token_test
+
     atu_seam_gate_test
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test
     tx_operation_integration_test
     backend_slice_lifecycle_test
+    waterfall_time_marker_settings_test
+    extended_tnf_settings_test
     client_display_settings_test
     gui_nested_lifetime_test
     rx_applet_squelch_reconciliation_test
@@ -5483,6 +5671,7 @@ set(AETHER_SETTINGS_CONSUMERS
     shortcut_manager_test
     antenna_alias_test
     mqtt_settings_test
+    mqtt_radio_state_test
     ax25_libmodem_shim_test
     ax25_replay
     ax25_session_analyze

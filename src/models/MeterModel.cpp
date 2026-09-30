@@ -222,6 +222,7 @@ void MeterModel::defineMeter(const MeterDef& def)
     if (isTxWaveformMeter(def) && def.name == "COMPPEAK") {
         logCompressionMeterMap(def);
     }
+    emit meterDefinitionChanged(def.index);
 }
 
 void MeterModel::removeMeter(int index)
@@ -337,6 +338,9 @@ void MeterModel::removeMeter(int index)
         clearCompressionState();
         logCompressionSummary("meter-removed", true);
     }
+    // Presence subscribers query the routing maps synchronously. Notify only
+    // after the withdrawn meter has been removed from every index map.
+    emit meterRemoved(index);
 }
 
 float MeterModel::convertRaw(const MeterDef& def, qint16 raw) const
@@ -499,6 +503,7 @@ void MeterModel::clear()
     m_ampFwdPwr = 0.0f;
     m_ampSwr = 1.0f;
     m_ampTemp = 0.0f;
+    emit metersCleared();
 }
 
 void MeterModel::setCompressionMaximumDb(float maximum)
