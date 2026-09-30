@@ -253,14 +253,13 @@ void testMeterIdSplitEdges()
 // that block to the source-index fallback.
 void testWithdrawingAnUndeclaredMeterChangesNothing()
 {
+    // This fork's MeterModel has no meterRemoved() signal (upstream's comes
+    // with aetherd telemetry, c1bb1caf), so the "announces nothing" half is
+    // not observable here; the declared-meter and manifest-context halves are.
     MeterModel model;
-    int removals = 0;
-    QObject::connect(&model, &MeterModel::meterRemoved, &model,
-                     [&removals](int) { ++removals; });
 
     model.defineMeter(slcMeter(12, 0));
     model.removeMeter(4242);   // never declared, by any backend, ever
-    report("withdrawing an undeclared meter announces nothing", removals == 0);
     report("withdrawing an undeclared meter leaves the declared ones alone",
            model.findMeter(QStringLiteral("SLC"), QStringLiteral("LEVEL"), 0) == 12);
 
@@ -280,9 +279,8 @@ void testWithdrawingAnUndeclaredMeterChangesNothing()
 
     // And the guard has not made removeMeter() deaf to real withdrawals.
     model.removeMeter(30);
-    report("a declared meter is still withdrawn, and still announced",
-           removals == 1
-               && model.findMeter(QStringLiteral("SLC"), QStringLiteral("LEVEL"), 1) < 0);
+    report("a declared meter is still withdrawn",
+           model.findMeter(QStringLiteral("SLC"), QStringLiteral("LEVEL"), 1) < 0);
 }
 
 // These tests keep active-slice routing and direct COMPPEAK coverage. They

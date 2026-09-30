@@ -116,7 +116,7 @@
 //
 // WHAT THE NUMBER IS NOT COMPARED AGAINST
 //
-// This test deliberately does NOT assert leg 1 against Hl2RxDsp::kRxFilterTaps /
+// This test deliberately does NOT assert leg 1 against Hl2RxDsp::kRxFilterTapsShort /
 // kWdspDspSampleRateHz. A test that retypes -- or even re-reads -- the constant
 // it is supposed to be measuring agrees with itself while the code it guards is
 // wrong. The taps ARE read from the real header, but only to (a) print the
@@ -134,12 +134,14 @@
 //
 // WHAT TO EXPECT IF A BUILD SPLICES
 //
-// kRxFilterTaps is the FIR length handed to RXASetNC (WdspChannel::open), so the
-// frozen history spans kRxFilterTaps samples at kWdspDspSampleRateHz -- 170.667
-// ms at the current values. But a windowed-sinc bandpass has its energy
-// CONCENTRATED near tap nc/2, so feeding zeros into a full history does not
-// necessarily produce a 170 ms rectangle: the output may hold near full
-// amplitude for roughly the filter's group delay (~85 ms) and then fall away.
+// kRxFilterTapsShort is the FIR length handed to RXASetNC (WdspChannel::open)
+// with no notch placed -- this fork gates the length on notch state, switching
+// to kRxFilterTapsLong (8192, upstream's fixed value) only while one exists. So
+// the frozen history here spans 2048 samples at kWdspDspSampleRateHz -- 42.667
+// ms. But a windowed-sinc bandpass has its energy CONCENTRATED near tap nc/2,
+// so feeding zeros into a full history does not necessarily produce a 42 ms
+// rectangle: the output may hold near full amplitude for roughly the filter's
+// group delay (~21 ms) and then fall away.
 // That is why the report below is an ENERGY PROFILE with three threshold
 // crossings, not one number: "how long is the splice" has a different answer at
 // -6 dB than at -40 dB, and the shape is the finding. With the AGC out of the
@@ -757,17 +759,18 @@ int main(int argc, char** argv)
 
     // Context, printed and NOT asserted against -- see the header comment.
     const double predictedSupportMs =
-        1000.0 * static_cast<double>(Hl2RxDsp::kRxFilterTaps)
+        1000.0 * static_cast<double>(Hl2RxDsp::kRxFilterTapsShort)
         / static_cast<double>(Hl2RxDsp::kWdspDspSampleRateHz);
     std::fprintf(stderr,
                  "\n  For context only (NOT an assertion): the RX filter handed to\n"
-                 "  RXASetNC is Hl2RxDsp::kRxFilterTaps = %d taps at\n"
+                 "  RXASetNC is Hl2RxDsp::kRxFilterTapsShort = %d taps (this fork gates the\n"
+                 "  length on notch state; no notch here) at\n"
                  "  kWdspDspSampleRateHz = %d Hz, so its history spans %.3f ms\n"
                  "  and its group delay is about half that. A frozen history is\n"
                  "  expected to hold near full amplitude for roughly the group\n"
                  "  delay and reach nothing near the full support. With the AGC\n"
                  "  switched off this is a prediction about the FILTER alone.\n",
-                 Hl2RxDsp::kRxFilterTaps, Hl2RxDsp::kWdspDspSampleRateHz,
+                 Hl2RxDsp::kRxFilterTapsShort, Hl2RxDsp::kWdspDspSampleRateHz,
                  predictedSupportMs);
 
     // ---- LEG 2: the detector's POSITIVE control ---------------------------
@@ -818,7 +821,7 @@ int main(int argc, char** argv)
         // Two lengths, so the control proves the detector is a RULER and not
         // merely a bell. The long one is sized from the real filter constants
         // purely so it sits in the range leg 1 is being asked about.
-        std::size_t full = static_cast<std::size_t>(Hl2RxDsp::kRxFilterTaps)
+        std::size_t full = static_cast<std::size_t>(Hl2RxDsp::kRxFilterTapsShort)
                            * static_cast<std::size_t>(fs)
                            / static_cast<std::size_t>(Hl2RxDsp::kWdspDspSampleRateHz);
         full = std::clamp<std::size_t>(full, static_cast<std::size_t>(fs) / 50,
