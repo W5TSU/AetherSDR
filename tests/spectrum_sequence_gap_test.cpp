@@ -255,7 +255,7 @@ int main(int argc, char** argv)
     {
         hl2::Hl2Spectrum spec(N);
         std::vector<float> bins;
-        check(spec.reset() == 0, "a fresh accumulator discards nothing");
+        check(spec.discardPartialFrame() == 0, "a fresh accumulator discards nothing");
 
         // Two DIFFERENT signals either side of the seam, so a frame built from
         // both is distinguishable from one built from either alone.
@@ -264,9 +264,9 @@ int main(int argc, char** argv)
 
         check(spec.process(std::span(preGap).subspan(0, kPartial), bins) == 0,
               "30 of 64 samples produce no frame");
-        check(spec.reset() == static_cast<std::size_t>(kPartial),
-              "reset() reports the partial frame it discarded");
-        check(spec.reset() == 0, "...and the second reset has nothing left to discard");
+        check(spec.discardPartialFrame() == static_cast<std::size_t>(kPartial),
+              "discardPartialFrame() reports the partial frame it discarded");
+        check(spec.discardPartialFrame() == 0, "...and the second reset has nothing left to discard");
 
         check(spec.process(postGap, bins) == 1,
               "a full frame of post-gap samples completes one frame");
@@ -630,7 +630,7 @@ int main(int argc, char** argv)
         std::vector<float> hb, hcb, ab, acb;
         h.accumulate(pre);
         a.accumulate(pre);
-        check(h.reset() == 63, "HL2 reset discards capped rolling window");
+        check(h.discardPartialFrame() == 63, "HL2 reset discards capped rolling window");
         check(a.reset() == 63, "ANAN reset discards capped rolling window");
         h.process(post, hb); hc.process(post, hcb);
         a.process(post, ab); ac.process(post, acb);
