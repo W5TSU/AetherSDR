@@ -2535,7 +2535,7 @@ endif()
 if(NOT ENABLE_HACKRF)
     message(STATUS "HackRF ... disabled by ENABLE_HACKRF=OFF")
 elseif(HACKRF_FOUND)
-    message(STATUS "HackRF ... libhackrf found — HackRfBackend enabled, EXPERIMENTAL, single-slice, TX audio not wired (#42)")
+    message(STATUS "HackRF ... libhackrf found — HackRfBackend enabled, EXPERIMENTAL, single-slice, FM TX audio wired, CW TX not wired (#42)")
     set(AETHER_BACKEND_HACKRF ON)
     target_compile_definitions(aethercore PUBLIC AETHER_BACKEND_HACKRF)
     target_link_libraries(aethercore PRIVATE ${HACKRF_TARGET})
@@ -2546,6 +2546,10 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfWorker.h
         src/core/backends/hackrf/HackRfTxRxArbiter.cpp
         src/core/backends/hackrf/HackRfTxRxArbiter.h
+        src/core/backends/hackrf/HackRfDdc.cpp
+        src/core/backends/hackrf/HackRfDdc.h
+        src/core/backends/hackrf/HackRfTxDsp.cpp
+        src/core/backends/hackrf/HackRfTxDsp.h
         src/core/backends/hackrf/HackRfBackend.cpp
         src/core/backends/hackrf/HackRfBackend.h)
 else()
@@ -2559,6 +2563,8 @@ endif()
 target_sources(aethercore PRIVATE
     src/core/RtlSdrDiscovery.cpp    # RTL-SDR discovery — compiled unconditionally, stubbed internally when librtlsdr absent
     src/core/RtlSdrDiscovery.h
+    src/core/HackRfDiscovery.cpp    # HackRF discovery (#42) — compiled unconditionally, stubbed internally when libhackrf absent
+    src/core/HackRfDiscovery.h
     src/core/UlanziDialBackend.h    # header-only Q_OBJECT — listed so AUTOMOC mocs it in the engine
     src/core/UlanziChordDecoder.cpp # chord decode shared by all three backends (ulanzi_chord_decoder_test)
     src/core/UlanziChordDecoder.h

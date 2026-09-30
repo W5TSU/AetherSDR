@@ -1378,5 +1378,17 @@
   "note": "TCP listener for the local JS8Call app's JSON API (#21); desktop-side integration feeding the universal spot surface, same category as WsjtxClient.h.",
   "split": "",
   "confidence": "high"
+ },
+ "core/HackRfDiscovery.h": {
+  "tag": "vendor(hackrf)",
+  "note": "HackRF USB device discovery that emits the shared RadioInfo shape (#42), same category as RtlSdrDiscovery.h. Family-specific discovery belongs below the HackRF backend seam.",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/backends/LocalRadioDiscoveryMapping.h": {
+  "tag": "universal",
+  "note": "Pure RadioInfo <-> DiscoveredRadio projection for the normalized discovery seam: family/transport labels, serial identity, endpoint only for LAN. No vendor payload crosses it and nothing here reaches a radio command. The inverse feeds the desktop picker for families it owns through RadioDiscoverySource (HackRF, #42).",
+  "split": "",
+  "confidence": "high"
  }
 }

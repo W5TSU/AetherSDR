@@ -2528,6 +2528,29 @@ target_include_directories(hackrf_arbiter_test PRIVATE src)
 target_link_libraries(hackrf_arbiter_test PRIVATE Qt6::Core)
 add_test(NAME hackrf_arbiter_test COMMAND hackrf_arbiter_test)
 
+# HackRF backend (#42): the per-slice DDC (NCO tune + boxcar/fractional
+# decimate to WDSP's expected 48 kHz IQ rate). Verified with synthetic
+# tones — tuning correctness and multi-instance isolation are checked by
+# actual DSP math (phase-advance-per-sample), not just structural asserts.
+add_executable(hackrf_ddc_test
+    tests/hackrf_ddc_test.cpp
+    src/core/backends/hackrf/HackRfDdc.cpp
+)
+target_include_directories(hackrf_ddc_test PRIVATE src)
+target_link_libraries(hackrf_ddc_test PRIVATE Qt6::Core)
+add_test(NAME hackrf_ddc_test COMMAND hackrf_ddc_test)
+
+# HackRF backend (#42): the hand-rolled FM transmit modulator (phase
+# integration from audio, interpolated up to HackRF's TX sample rate) —
+# see HackRfTxDsp.h's own comment for why this isn't WdspChannel's TXA mode.
+add_executable(hackrf_txdsp_test
+    tests/hackrf_txdsp_test.cpp
+    src/core/backends/hackrf/HackRfTxDsp.cpp
+)
+target_include_directories(hackrf_txdsp_test PRIVATE src)
+target_link_libraries(hackrf_txdsp_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME hackrf_txdsp_test COMMAND hackrf_txdsp_test)
+
 if(AETHER_BACKEND_HACKRF)
     # HackRfBackend capabilities declaration and restore-state contract.
     # Never calls connectRadio() — no hardware needed — mirroring

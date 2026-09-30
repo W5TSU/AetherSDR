@@ -33,6 +33,7 @@
 #include "SpectrumOverlayMenu.h"
 #include "RfGainPresentation.h"
 #include "RfGainRestore.h"
+#include "core/backends/LocalRadioDiscoveryMapping.h"  // DiscoveredRadio -> RadioInfo for the picker
 #include "core/backends/ConnectionSharingPolicy.h"  // in-use share gate (#4448), shared with ConnectionPanel
 #include "core/backends/sim/SimBackend.h"   // demo owns its audio — see wirePanStreamRxAudioSinks
 #include "core/CwSidetoneGenerator.h"
@@ -193,6 +194,32 @@ void logXvtrWaterfallDecision(quint32 streamId,
 
 } // namespace
 
+// HackRF (#42) is discovered through the family-neutral RadioDiscoverySource
+// seam, filtered to "hackrf", so this file never includes the vendor
+// HackRfDiscovery header (EB3). A source is single-start, so a restart builds a
+// fresh one; dropping the old one stops its scan and disconnects it first.
+void MainWindow::restartHackRfDiscovery()
+{
+    m_hackRfDiscovery.reset();
+    auto source = makeLocalRadioDiscoverySource({true, false, {QStringLiteral("hackrf")}});
+    if (source->enabledSources().isEmpty()) {
+        return;   // built without libhackrf
+    }
+    // radioChanged covers first sight and every later change; onRadioDiscovered
+    // is the upsert slot, so it serves both, as it already does for re-seen
+    // Flex/HL2 radios.
+    connect(source.get(), &RadioDiscoverySource::radioChanged, m_connPanel,
+            [this](const DiscoveredRadio& radio) {
+                m_connPanel->onRadioDiscovered(discovery::toRadioInfo(radio));
+            });
+    connect(source.get(), &RadioDiscoverySource::radioLost, m_connPanel,
+            [this](const QString& /*family*/, const QString& serial) {
+                m_connPanel->onRadioLost(serial);
+            });
+    m_hackRfDiscovery = std::move(source);
+    m_hackRfDiscovery->start();
+}
+
 void MainWindow::wireDiscovery()
 {
     // ── Wire up discovery ──────────────────────────────────────────────────
@@ -301,6 +328,13 @@ void MainWindow::wireDiscovery()
     if (RtlSdrDiscovery::isAvailable()) {
         m_rtlDiscovery.start();
     }
+
+    // HackRF — highly experimental (#42). No auto-connect wiring, same as
+    // RTL above and deliberately unlike Flex/HL2/ANAN: a USB SDR appearing
+    // in the list is not the operator asking to connect to it, and HackRF
+    // can transmit, so the bar for "connect without being asked" is higher
+    // here than for a receive-only dongle, not lower.
+    restartHackRfDiscovery();
     connect(&m_discovery, &RadioDiscovery::radioUpdated,
             m_connPanel, &ConnectionPanel::onRadioUpdated);
     connect(&m_discovery, &RadioDiscovery::radioUpdated,
@@ -325,9 +359,10 @@ void MainWindow::wireDiscovery()
                     m_autoConnectSerial.clear();
             });
     connect(m_connPanel, &ConnectionPanel::retryDiscoveryRequested, this, [this] {
-        m_connPanel->setStatusText(RtlSdrDiscovery::isAvailable()
-                                       ? "Searching local network & USB devices…"
-                                       : "Searching your local network…");
+        m_connPanel->setStatusText(
+            (RtlSdrDiscovery::isAvailable() || m_hackRfDiscovery)
+                ? "Searching local network & USB devices…"
+                : "Searching your local network…");
         if (m_titleBar) m_titleBar->setDiscovering(true);
         m_discovery.stopListening();
         m_discovery.startListening();
@@ -335,6 +370,7 @@ void MainWindow::wireDiscovery()
             m_rtlDiscovery.stop();
             m_rtlDiscovery.start();
         }
+        restartHackRfDiscovery();
     });
     connect(m_connPanel, &ConnectionPanel::networkDiagnosticsRequested,
             this, &MainWindow::showNetworkDiagnosticsDialog);

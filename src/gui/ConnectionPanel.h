@@ -73,6 +73,9 @@ public:
     // RTL-SDR USB dongles (RTL2832U / R820T). USB-addressed (device index +
     // serial), not network. Receive-only (Principle VI).
     static constexpr const char* kFamilyRtl  = "rtl";
+    // HackRF One / HackRF Pro. USB-addressed like RTL-SDR, but NOT
+    // receive-only — highly experimental RX+TX (#42).
+    static constexpr const char* kFamilyHackRf = "hackrf";
 
     // IConnectionAutomation — engine-facing connect/disconnect/dialog hook.
     QList<RadioInfo> automationLocalRadios() const override;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/RadioSettingsIdentity.h"
+
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -21,6 +23,10 @@ struct DiscoveredRadio {
     QString address;   // LAN address only; empty for USB and simulator entries
     quint16 port{0};
     bool inUse{false};
+    // Reported USB identity vs. connection locator ("rtl:0", "hackrf:0").
+    // Carried because the connect path and per-radio settings key on it; see
+    // RadioSettingsIdentity.h.
+    RadioSerialIdentity serialIdentity;
 };
 
 // Owning-thread, single-start lifecycle. Construct a new source to restart.
@@ -42,6 +48,11 @@ signals:
 struct LocalDiscoveryOptions {
     bool local{false}; // Explicit operator opt-in: LAN broadcasts/listening and USB scans.
     bool simulator{false}; // Demo identity only; never starts an RX/TX backend.
+    // Restricts `local` to these families ("flex", "hl2", "anan", "rtl",
+    // "hackrf"). Empty means every family this build supports. Lets a caller
+    // that already runs some discovery itself own one more family through
+    // this seam instead of including its vendor header.
+    QStringList families;
 };
 
 // Implementation lives below the vendor seam. Above-seam consumers see only

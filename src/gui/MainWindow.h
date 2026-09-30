@@ -13,6 +13,7 @@
 #include "core/backends/anan/AnanDiscovery.h"
 #include "core/backends/hl2/Hl2Discovery.h"
 #include "core/RtlSdrDiscovery.h"
+#include "core/discovery/RadioDiscoverySource.h"
 #include "models/RadioModel.h"
 #include "models/BandSettings.h"
 #include "models/AntennaGeniusModel.h"
@@ -525,6 +526,7 @@ private:
     void wireSpotSubsystem();       // MainWindow_Spots.cpp
     // RadioSession precursors (#3351 Phase 2c / #3445) — MainWindow_Session.cpp
     void wireDiscovery();
+    void restartHackRfDiscovery();
     void wireRadioModel();
     void wirePanLifecycle();
     void wireCatPorts();            // MainWindow_Session.cpp
@@ -1045,6 +1047,12 @@ private:
     anan::AnanDiscovery m_ananDiscovery;
     // Local USB discovery for RTL-SDR devices, tagged family="rtl".
     RtlSdrDiscovery m_rtlDiscovery;
+    // Local USB discovery for HackRF devices, tagged family="hackrf" (#42).
+    // Owned through the family-neutral RadioDiscoverySource seam rather than
+    // as a HackRfDiscovery, so no vendor header sits above the radio seam
+    // (EB3). Null when this build has no libhackrf. A source cannot restart
+    // after stop(), so retry replaces it -- see restartHackRfDiscovery().
+    std::unique_ptr<RadioDiscoverySource> m_hackRfDiscovery;
     // Radio sessions (#3445 Camp B / #3351). Each session owns the full
     // per-radio aggregate; today there is exactly one. The vector sits at
     // the old `RadioModel m_radioModel` member position so destruction
