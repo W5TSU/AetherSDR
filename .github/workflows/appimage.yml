@@ -97,6 +97,9 @@ jobs:
           # conditional that has to be revisited every time the matrix moves.
           # On x86_64 it is a runner-side no-op — linuxdeploy bundles only what
           # the deployed ELFs actually link, and nothing there links libgstplay.
+          # libusb-1.0-0-dev is libhackrf-dev's undeclared dependency: its .pc adds
+          # -I/usr/include/libusb-1.0, and CMake rejects an imported target whose
+          # include directory does not exist, failing configure under REQUIRE_HACKRF.
           sudo apt-get install -y cmake ninja-build pkg-config \
             libvulkan-dev spirv-headers \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
@@ -108,7 +111,8 @@ jobs:
             libgstreamer-plugins-bad1.0-0 \
             libfuse2 file desktop-file-utils imagemagick \
             python3-pip autoconf automake libtool libasound2-dev \
-            libfftw3-dev libhidapi-dev portaudio19-dev
+            libfftw3-dev libhidapi-dev portaudio19-dev \
+            libhackrf-dev libusb-1.0-0-dev
 
       # glslc — the SPIR-V shader compiler whisper's Vulkan backend needs at
       # BUILD time (CMake resolves it via find_package(Vulkan COMPONENTS glslc),
@@ -258,6 +262,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DREQUIRE_SERIALPORT=ON \
             -DREQUIRE_KEYCHAIN=ON \
+            -DREQUIRE_HACKRF=ON \
             -DREQUIRE_ASR_ONNX=ON \
             -DREQUIRE_ASR_SHERPA=ON \
             -DREQUIRE_ASR_GPU=${{ matrix.require_gpu }} \
@@ -468,6 +473,24 @@ jobs:
           fi
           echo "Wayland integration plugin dirs:"
           find "$plugins" -maxdepth 1 -type d -name 'wayland-*' | sort
+
+      # The app links libhackrf (REQUIRE_HACKRF=ON above), so the AppImage must
+      # carry it: libhackrf is not on linuxdeploy's excludelist, but if it ever
+      # went unbundled the AppImage would fail to START on every machine without
+      # libhackrf0, not merely lack HackRF. libusb-1.0 comes from the host
+      # (linuxdeploy excludes it; every desktop distro ships it). Reaching a
+      # HackRF without root still needs its udev rule, which no AppImage can
+      # install; that is a documentation matter, not a bundling one.
+      - name: Assert libhackrf was bundled
+        run: |
+          lib=$(find AppDir -name 'libhackrf.so*' 2>/dev/null | sort || true)
+          if [ -z "$lib" ]; then
+            echo "ERROR: AetherSDR links libhackrf but the AppDir has no libhackrf.so*."
+            echo "This AppImage would not start without the host's libhackrf0."
+            exit 1
+          fi
+          echo "Bundled:"
+          echo "$lib"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
