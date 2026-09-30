@@ -97,6 +97,9 @@ jobs:
           # conditional that has to be revisited every time the matrix moves.
           # On x86_64 it is a runner-side no-op — linuxdeploy bundles only what
           # the deployed ELFs actually link, and nothing there links libgstplay.
+          # libusb-1.0-0-dev is libhackrf-dev's undeclared dependency: its .pc adds
+          # -I/usr/include/libusb-1.0, and CMake rejects an imported target whose
+          # include directory does not exist, failing configure under REQUIRE_HACKRF.
           sudo apt-get install -y cmake ninja-build pkg-config \
             libvulkan-dev spirv-headers \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
@@ -109,7 +112,7 @@ jobs:
             libfuse2 file desktop-file-utils imagemagick \
             python3-pip autoconf automake libtool libasound2-dev \
             libfftw3-dev libhidapi-dev portaudio19-dev \
-            libhackrf-dev
+            libhackrf-dev libusb-1.0-0-dev
 
       # glslc — the SPIR-V shader compiler whisper's Vulkan backend needs at
       # BUILD time (CMake resolves it via find_package(Vulkan COMPONENTS glslc),
