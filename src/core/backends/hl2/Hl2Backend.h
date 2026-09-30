@@ -10,6 +10,7 @@
 
 #include "core/backends/hl2/AdcOverloadLogGate.h"
 #include "core/backends/hl2/Hl2AdcPairing.h"
+#include "core/backends/hl2/Hl2BandMemoryPolicy.h"
 #include "core/backends/hl2/Hl2CapabilityAnnouncer.h"
 #include "core/backends/hl2/Hl2DbReference.h"
 #include "core/backends/hl2/Hl2IoBoardPolicy.h"
@@ -241,9 +242,16 @@ private:
     // from the other side (PR #5650 review).
     void resetBandscopeMirrors();
     // Per-band memory (RFC #4603 PR 3): apply the remembered LNA + drive for
-    // the band containing freqHz (falling back to the restored defaults),
-    // and record the operator's current values into the maps for the band
-    // being left. Called from the band-change path and connect.
+    // the band containing freqHz, and record the operator's current values
+    // into the maps for the band being left. Called from the band-change path
+    // and connect.
+    //
+    // THE TWO HALVES FALL BACK DIFFERENTLY SINCE #5829, and this comment used
+    // to say "the restored defaults" for both. Drive still falls back to
+    // m_driveDefaultPercent, a genuine per-profile first-use latch restored
+    // from the document. LNA falls back to hl2::kLnaDefaultGainDb -- the
+    // shipped constant, nothing restored -- because the document key that once
+    // answered this was a value no operator action could move.
     void applyPerBandStateFor(double freqHz, const char* reason);
     void applyLnaGainDb(int gainDb);   // the one true LNA application
     void rememberCurrentBandState();
@@ -306,6 +314,17 @@ private:
     // why a reconnect must not.
     void seedReceiverAgc();
     void defineMeters();
+
+    // Declare and withdraw the S-meter of ONE receiver above the first.
+    //
+    // Receiver 0's meter is defineMeters()' def(1) and stays there: it has to
+    // be declared before the TX block, because MeterModel::defineMeter uses the
+    // preceding "SLC" definition as the slice context its TX waveform meters
+    // register under. These arrive as standalone definitions afterwards, at
+    // receiver creation rather than at connect, so no meter is ever declared
+    // for a receiver that does not exist.
+    void defineSliceLevelMeter(int uiNumber);
+    void withdrawSliceLevelMeter(int uiNumber);
     void publishTelemetry(const Hl2Telemetry& t);
 
     // ---- stream-free telemetry (roadmap #15) ----
@@ -700,7 +719,16 @@ private:
 
     // Per-slice meter name for the seam ("SLC:LEVEL" for the first receiver, so
     // an existing single-receiver consumer keeps the name it already binds to).
+    // The suffix on the rest is not decoration: MeterModel::splitMeterId reads
+    // it back as the sourceIndex, which is the only way an index reaches the
+    // model across IRadioBackend::meterUpdate's two-argument signature.
     static QString sliceMeterName(int uiNumber);
+
+    // Meter index for a receiver's "SLC"/"LEVEL". Receiver 0 keeps index 1,
+    // which is what defineMeters() has always declared and what every existing
+    // binding resolves to. The rest take a band that cannot collide with the
+    // fixed 1..9, so a receiver's meter identity is stable for its life.
+    static int sliceLevelMeterIndex(int uiNumber);
 
     // Mixing scratch. m_mixPending is per receiver and holds demodulated samples
     // waiting for their peers; m_mixAccum is the summing buffer, reused because
@@ -819,7 +847,7 @@ private:
     // much the UI would like them to be. Four panadapters on four bands share
     // one preamp setting and one filter selection; see applyBandFilter() for
     // what happens when they disagree.
-    int m_lnaGainDb = 20;
+    int m_lnaGainDb = hl2::kLnaDefaultGainDb;
     // Last J16 open-collector filter byte commanded. 0xFF is "nothing sent yet"
     // rather than a real selection — kOcNone (0x00) is a legitimate value
     // meaning "every relay released", so it cannot double as the sentinel.
@@ -853,6 +881,12 @@ private:
     quint64 m_ep4Rewinds = 0;
     quint64 m_ep4Blocks = 0;
     quint64 m_ep4Timeouts = 0;
+    // The EP6 silence watchdog's recovery counters, mirrored the same way and
+    // for the same reason. These are NOT a bandscope number and are not reset
+    // by resetBandscopeMirrors(): they belong to the link, and MetisClient
+    // zeroes them with the rest of m_link at start().
+    quint64 m_silenceRecoveryAttempts = 0;
+    quint64 m_silenceRecoveriesCompleted = 0;
     // The bandscope GATE's state as MetisClient reports it on LinkCounters —
     // never this backend's own request. Mirrored so healthSnapshot() need not
     // reach across the I/O thread to read it.
@@ -924,7 +958,11 @@ private:
     RestoredRadioState m_restoredState;
     QMap<QString, int> m_lnaDbByBand;
     QMap<QString, int> m_driveByBand;
-    int m_lnaDefaultDb = 20;         // matches m_lnaGainDb's own default
+    // There is no m_lnaDefaultDb. The LNA fallback for an unvisited band is
+    // hl2::kLnaDefaultGainDb directly (#5829) -- a member here would be a
+    // second source of truth for a value no operator action can move, which is
+    // the defect that key had. Note the asymmetry with m_driveDefaultPercent
+    // below: that one has a real first-use latch and is genuinely per-profile.
     // The connect param pinned a gain that the start band did not have stored.
     // Live value honoured, persistence refused: see Hl2BandMemoryPolicy.h.
     // Cleared when the operator changes gain or leaves the start band.
@@ -1003,6 +1041,11 @@ private:
     // an HL2 sees meters that behave the same way.
     static constexpr double kMeterAttackAlpha = 0.5;
     static constexpr double kMeterDecayAlpha  = 0.15;
+    // Meter indices 1..9 are the fixed catalogue defineMeters() declares, and
+    // they are ours to choose (nothing on an HL2 assigns them). Receivers above
+    // the first take one each from here, clear of that block and of any room it
+    // might grow into.
+    static constexpr int kSliceLevelMeterBase = 100;
     // The S-meter's clock and EMA are PER RECEIVER (Receiver::sMeter*). Sharing
     // them would let a strong signal on one receiver drive every other
     // receiver's needle, and the 100 ms rate gate would publish whichever
@@ -1153,9 +1196,9 @@ private:
     // limits rather than a policy choice — clamping anywhere else would let a
     // value be silently truncated on the wire instead of stopping at the end of
     // the slider's travel.
-    static constexpr int kLnaGainMinDb  = -12;
-    static constexpr int kLnaGainMaxDb  = 48;
-    static constexpr int kLnaGainStepDb = 1;
+    static constexpr int kLnaGainMinDb  = hl2::kLnaGainMinDb;
+    static constexpr int kLnaGainMaxDb  = hl2::kLnaGainMaxDb;
+    static constexpr int kLnaGainStepDb = hl2::kLnaGainStepDb;
 
     // The TX passband's ceiling: Nyquist of the TX AUDIO rate, which is
     // AudioEngine's 24 kHz — NOT of the 48 kHz EP2 rate. The modulator

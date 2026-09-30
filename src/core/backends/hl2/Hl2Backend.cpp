@@ -627,6 +627,14 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         m_ep4Rewinds = c.ep4Rewinds;
         m_ep4Blocks = c.bandscopeBlocks;
         m_ep4Timeouts = c.bandscopeTimeouts;
+        // The silence watchdog's recovery record. It rides this publish for the
+        // reason the bandscope's counters do -- no signal and no timer of its
+        // own -- and it has to ride SOMETHING, because a recovery that works is
+        // invisible by construction: m_linkUp never drops, so no linkDown and
+        // no linkUp fires and nothing republishes. These two numbers are the
+        // whole trace it leaves.
+        m_silenceRecoveryAttempts = c.silenceRecoveryAttempts;
+        m_silenceRecoveriesCompleted = c.silenceRecoveriesCompleted;
     });
 
     // ONE ACCEPTED BANDSCOPE BLOCK, mirrored onto the GUI thread. The same
@@ -650,18 +658,25 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
 
 void Hl2Backend::publishLinkStats()
 {
+    // Fresh packets since the last tick — the transport-level proof of life the
+    // heartbeat runs on. Computed here rather than in linkStats() because the
+    // comparison CONSUMES the previous value, and linkStats() is a const getter
+    // any caller may poll at any rate.
+    //
+    // STORED ON m_link, not on the outgoing copy. It used to be written only to
+    // the local `s` that is emitted, so the SIGNAL path carried liveness and the
+    // GETTER path never did: linkStats() returned m_link.alive, which nothing
+    // had ever written, so every poller — the `liveness` automation verb among
+    // them — read a healthy radio as dead. Two paths, one of them silently
+    // wrong, and the wrong one is the one a diagnostic uses.
+    m_link.alive = m_connected && m_link.rxPackets != m_linkRxPacketsAtLastTick;
+    m_linkRxPacketsAtLastTick = m_link.rxPackets;
     LinkStats s = m_link;
     // The link is REPORTED from the moment we are connected, even before the
     // first counter snapshot has crossed from the I/O thread. Otherwise the
     // consumer's first tick sees reported=false, keeps its Flex sources, and
     // renders the blank readout this whole path exists to fix.
     s.reported = true;
-    // Fresh packets since the last tick — the transport-level proof of life the
-    // heartbeat runs on. Computed here rather than in linkStats() because the
-    // comparison CONSUMES the previous value, and linkStats() is a const getter
-    // any caller may poll at any rate.
-    s.alive = m_connected && m_link.rxPackets != m_linkRxPacketsAtLastTick;
-    m_linkRxPacketsAtLastTick = m_link.rxPackets;
     emit linkStatsUpdated(s);
 }
 
@@ -840,10 +855,17 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
             [this, ui](const std::vector<float>& bins) {
         if (!m_ids.byUi(ui))
             return;
-        // dBFS -> dBm through the one object that owns the reference. With
-        // an uncalibrated fullScaleDbm this is a pure -lnaGain shift, which
-        // is the part that is exactly right: it holds the trace still across
-        // a gain change instead of letting the whole display jump.
+        // dBFS -> dBm through the one object that owns the reference. Two
+        // terms now: the DERIVED full-scale figure, and -lnaGain. The second
+        // is the part that is exactly right whatever the first is worth --
+        // it holds the trace still across a gain change instead of letting
+        // the whole display jump. The first moves the floor once, to a
+        // figure that can be checked, and never again.
+        //
+        // WHICH IS WHY THE off == 0.0 FAST PATH NOW RARELY FIRES: at the
+        // default 0 dB of gain the offset is the constant +3, not zero. The
+        // branch stays because an operator at +3 dB of LNA gain still hits
+        // it, and because it is the same test either way.
         //
         // The reference is SHARED because the LNA it describes is shared —
         // one AD9866 behind every DDC — so a gain change moves all four
@@ -907,6 +929,13 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
         r->sMeterClock.restart();
         emit meterUpdate(sliceMeterName(ui), r->sMeterDbm);
     });
+
+    // The name the lambda above publishes under has to EXIST as a definition or
+    // MeterModel has nowhere to put the value. Declared here rather than in
+    // defineMeters() because this runs once per receiver, at both connect and
+    // add, so the catalogue describes the receivers that are actually running.
+    // A no-op for receiver 0, whose meter defineMeters() owns.
+    defineSliceLevelMeter(ui);
 
     // Recorded, not published. m_rx is this thread's, so this is a plain store;
     // the sample path sees nothing until the caller calls publishIoDsps().
@@ -1028,6 +1057,14 @@ bool Hl2Backend::createPanadapter()
                          << QString::fromStdString(err);
         dsp->disconnect(this);
         dsp->deleteLater();
+        // THE S-METER, HOWEVER, WAS PUBLISHED. openReceiverDsp() succeeded just
+        // above -- it is the CONFIGURE that failed -- and declaring the meter is
+        // the last thing it does. Withdraw it before m_ids.remove(ddc) below
+        // takes the UI number away, or this rolled-back receiver keeps a meter
+        // in the catalogue for a chain that is being deleted on the next line.
+        if (const Hl2ReceiverIds* ids = m_ids.byDdc(ddc)) {
+            withdrawSliceLevelMeter(ids->uiNumber);
+        }
         // Safe to destroy without withdrawing it first: this chain was never
         // published, so the fan-out has never held a pointer to it.
         m_rx.pop_back();
@@ -1152,6 +1189,34 @@ bool Hl2Backend::removePanadapter(const QString& panId)
 
     const QString removedPanId = ids->panId;
     const int removedUi = ids->uiNumber;
+
+    // Withdraw this receiver's S-meter before its DSP goes, so nothing is left
+    // describing a receiver that has stopped producing readings. UI numbers are
+    // not renumbered by the removal below, so the surviving meters keep their
+    // identities.
+    //
+    // EXCEPT RECEIVER 0 — say it here, because the sentence above is otherwise
+    // stronger than the code. Only the LAST receiver is refused above, so UI 0
+    // of two IS closable, and withdrawSliceLevelMeter(0) returns early by
+    // design: receiver 0's "SLC"/"LEVEL" is defineMeters()' def(1), not ours.
+    // So that one entry does stay in the catalogue, frozen at its last reading.
+    //
+    // THE ASYMMETRY IS IN THE DECLARATION, WHICH IS WHY THE WITHDRAWAL CANNOT
+    // BE SYMMETRIC. Every other receiver's meter is declared per receiver, by
+    // openReceiverDsp(), so a close-then-reopen gets it back. def(1) is declared
+    // ONCE per session, from defineMeters() at the linkUp edge. Withdraw it on a
+    // close and the next Hl2ReceiverMap::append() hands the lowest free UI
+    // number — 0 — to the new receiver, defineSliceLevelMeter(0) returns early,
+    // and nothing re-declares it: receiver 0's S-meter would be gone for the
+    // rest of the session. A stale entry is the smaller fault than a permanently
+    // missing one.
+    //
+    // Making def(1) per-receiver instead is the fix that would make this
+    // symmetric, and it is not a meter-routing change: defineMeter() derives the
+    // TX waveform meters' manifest slice context from the SLC definition that
+    // precedes them in defineMeters()' block, so moving it moves them. Out of
+    // scope here.
+    withdrawSliceLevelMeter(removedUi);
 
     // Tear the DSP down BEFORE the wire shrinks, so nothing is left consuming a
     // slot the radio has stopped sending. The reverse order feeds the surviving
@@ -1394,9 +1459,33 @@ void Hl2Backend::releaseReceiverDsps()
     // and only then post the destruction.
     std::vector<Hl2RxDsp*> doomed;
     doomed.reserve(m_rx.size());
-    for (Receiver& r : m_rx) {
+    // Indexed rather than ranged, because the S-meter withdrawal below needs the
+    // DDC index to find the receiver's UI NUMBER, and m_rx is indexed by DDC.
+    for (std::size_t k = 0; k < m_rx.size(); ++k) {
+        Receiver& r = m_rx[k];
         if (!r.dsp)
             continue;
+        // AND WITHDRAW ITS S-METER. A non-null dsp is an exact proxy for "this
+        // receiver's openReceiverDsp() returned true", and that function declares
+        // the meter as the last thing it does -- so every chain released here has
+        // a definition standing.
+        //
+        // THIS IS NOT REDUNDANT WITH RadioModel's MeterModel::clear(). That runs
+        // from onDisconnected(), which is reached only when the wire actually
+        // came up and went down again. Two teardowns never emit disconnected()
+        // at all -- finishDspSetup()'s superseded branch and its failed-socket
+        // branch both tearDownReceivers() and return -- and buildReceivers()
+        // calls this at the START of every connect, before any of it. On the
+        // supersede path the backend then re-drives the queued connect, so a
+        // second connect at a LOWER receiver count used to leave the higher
+        // meters standing forever: keyed into MeterModel's per-slice cache,
+        // listed in allMeters(), with no chain left to ever feed them.
+        //
+        // By UI number from the map, never by k: Hl2Receivers.h is explicit that
+        // the ddc<->ui identity is the starting state and not an invariant.
+        if (const Hl2ReceiverIds* ids = m_ids.byDdc(static_cast<int>(k))) {
+            withdrawSliceLevelMeter(ids->uiNumber);
+        }
         doomed.push_back(r.dsp);
         r.dsp = nullptr;
     }
@@ -1910,10 +1999,10 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
         const bool hasStored = m_lnaDbByBand.contains(m_currentBandKey);
         const AetherSDR::hl2::ConnectLna seed = AetherSDR::hl2::connectLna(
             m_haveRestoredState, hasStored,
-            m_lnaDbByBand.value(m_currentBandKey, m_lnaDefaultDb),
+            m_lnaDbByBand.value(m_currentBandKey, hl2::kLnaDefaultGainDb),
             paramPresent,
             request.params.value(QStringLiteral("lnaGainDb")).toInt(),
-            m_lnaDefaultDb, kLnaGainMinDb, kLnaGainMaxDb);
+            hl2::kLnaDefaultGainDb, kLnaGainMinDb, kLnaGainMaxDb);
         // Only take the live value when the policy actually had something to
         // say: with no restored state and no param it returns the default,
         // which must not stamp on a value the lines above already settled.
@@ -2428,6 +2517,42 @@ void Hl2Backend::finishDspSetup(const DspSetupResult& result)
             // the degradation. Trim to what opened and carry on.
             if (i == 0) {
                 invalidateTxDspConfiguration();
+                // AND WITHDRAW EVERY RECEIVER'S METER, for the same reason the
+                // trim below does — this exit had the same omission and is the
+                // one that leaves the MOST behind.
+                //
+                // buildReceivers() called openReceiverDsp() for all
+                // `actualNumRx` receivers before the I/O thread configured any
+                // of them, so a definition is standing for every receiver above
+                // the first even though receiver 0's failure means NONE of them
+                // will ever produce a reading: the wire below is never started
+                // and connected() never fires.
+                //
+                // Nor does anything clean up after us. RadioModel wipes the
+                // catalogue from onDisconnected(), and a connect refused here
+                // never emits disconnected() — so these definitions stand until
+                // the NEXT connect's releaseReceiverDsps() collects them, or for
+                // the life of the application if no reconnect is armed. That is
+                // the same phantom-catalogue outcome the four sites already
+                // fixed, on the one path that reaches it without a teardown.
+                //
+                // THE CHAINS ARE DELIBERATELY LEFT ALONE. Whether a refused
+                // connect should tear its receivers down is a separate question
+                // about this branch and is not decided here; the withdrawal is
+                // about what the meter catalogue claims, which is wrong either
+                // way. A later connect's buildReceivers() releases them.
+                //
+                // From the MAP, and from ddc 0 — not from `i` and not from 1.
+                // Hl2Receivers.h is explicit that the ddc<->ui identity is the
+                // starting state and not an invariant, and if ddc 0 were to hold
+                // a nonzero ui its meter would be ours to withdraw too.
+                // withdrawSliceLevelMeter() no-ops on ui 0, whose meter is
+                // defineMeters()' and is never declared on this path anyway.
+                for (int k = 0; k < actualNumRx; ++k) {
+                    if (const Hl2ReceiverIds* gone = m_ids.byDdc(k)) {
+                        withdrawSliceLevelMeter(gone->uiNumber);
+                    }
+                }
                 emit connectionError(
                     QStringLiteral("HL2 DSP: %1").arg(QString::fromStdString(err)));
                 emit dspSetupFinished();
@@ -2448,6 +2573,29 @@ void Hl2Backend::finishDspSetup(const DspSetupResult& result)
             // allowed to close them. Every other teardown in this file does this;
             // the one raw delete that remains (in the destructor) is justified
             // there by the thread already being joined.
+            // AND WITHDRAW THEIR METERS, for the same reason and in the same
+            // order. buildReceivers() called openReceiverDsp() for ALL
+            // actualNumRx receivers before the I/O thread configured any of
+            // them, and openReceiverDsp() declares the S-meter as the last
+            // thing it does -- so every receiver being trimmed here has a
+            // definition standing, INCLUDING receiver i, whose open succeeded
+            // and whose configure is what failed.
+            //
+            // Left declared, MeterModel keeps the definition and its per-slice
+            // cache entry, so the meter list goes on offering a receiver that
+            // has stopped producing readings, frozen at its last value. That is
+            // worse than the absence it replaces: nothing on screen says the
+            // receiver is gone.
+            //
+            // BEFORE m_ids.truncate(i) below, which takes these UI numbers
+            // away, and BY UI NUMBER FROM THE MAP rather than by k --
+            // Hl2Receivers.h is explicit that the ddc<->ui identity is the
+            // starting state and not an invariant.
+            for (int k = i; k < actualNumRx; ++k) {
+                if (const Hl2ReceiverIds* gone = m_ids.byDdc(k)) {
+                    withdrawSliceLevelMeter(gone->uiNumber);
+                }
+            }
             std::vector<Hl2RxDsp*> doomed;
             for (int k = i; k < actualNumRx; ++k) {
                 if (Hl2RxDsp* d = m_rx[static_cast<std::size_t>(k)].dsp) {
@@ -2600,6 +2748,48 @@ QString Hl2Backend::sliceMeterName(int uiNumber)
     // that did not exist before get a suffix.
     return uiNumber == 0 ? QStringLiteral("SLC:LEVEL")
                          : QStringLiteral("SLC%1:LEVEL").arg(uiNumber);
+}
+
+int Hl2Backend::sliceLevelMeterIndex(int uiNumber)
+{
+    return uiNumber == 0 ? 1 : kSliceLevelMeterBase + uiNumber;
+}
+
+void Hl2Backend::defineSliceLevelMeter(int uiNumber)
+{
+    // Receiver 0's is defineMeters()' business — see the header. Declaring it
+    // here as well would allocate a SECOND "SLC"/"LEVEL" definition for slice 0
+    // and MeterModel's per-slice cache keeps the last one, so the bare
+    // "SLC:LEVEL" updates would start resolving to whichever index won.
+    if (uiNumber <= 0) {
+        return;
+    }
+    MeterDef d;
+    d.index = sliceLevelMeterIndex(uiNumber);
+    d.source = QStringLiteral("SLC");
+    // THE FIELD THAT WAS MISSING. The suffix in sliceMeterName() is a transport
+    // detail; this is the identity. MeterModel::defineMeter keys its per-slice
+    // cache on source == "SLC" exactly, so a definition calling itself "SLC1"
+    // would be accepted, appear in allMeters(), and still never key the cache —
+    // it would look fixed and change nothing.
+    d.sourceIndex = uiNumber;
+    d.name = QStringLiteral("LEVEL");
+    d.unit = QStringLiteral("dBm");
+    d.low = -140.0;
+    d.high = 0.0;
+    d.description = QStringLiteral("Receive signal level, receiver %1").arg(uiNumber + 1);
+    emit meterDefined(d);
+}
+
+void Hl2Backend::withdrawSliceLevelMeter(int uiNumber)
+{
+    if (uiNumber <= 0) {
+        return;
+    }
+    // MeterModel::removeMeter purges m_sLevelIdxBySlice for this index, so a
+    // closed receiver stops appearing in the meter list instead of freezing at
+    // its last reading.
+    emit meterRemoved(sliceLevelMeterIndex(uiNumber));
 }
 
 void Hl2Backend::setSliceFrequency(int sliceId, double hz)
@@ -5040,8 +5230,9 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // NEITHER IS CALIBRATED, and they do not even share a scale: the slice
     // figure is dB relative to WIRE full scale, the DDC between the two
     // measurement points carries an unquantified processing gain, and
-    // Hl2DbReference::fullScaleDbm is 0.0 with isCalibrated() false, so nothing
-    // here is antenna-referred. The labels say "uncalibrated" because that is
+    // Hl2DbReference::isCalibrated() is false -- its fullScaleDbm is DERIVED
+    // rather than measured, and it refers the DISPLAY path in any case, not
+    // these two readings -- so nothing here is antenna-referred. The labels say "uncalibrated" because that is
     // the whole of what can be claimed. What survives the missing calibration
     // is the PAIRING itself — the pairing row below states a relationship, and
     // a relationship needs no absolute reference.
@@ -5453,6 +5644,23 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // this is the first number to look at when it does.
     put("droppedPackets", QStringLiteral("Dropped EP6 packets"),
         static_cast<qulonglong>(m_drops));
+    // ---- the silence watchdog's recovery record ----
+    //
+    // Reported unconditionally, next to the loss row, because the question they
+    // answer is the same one: "why did the audio have a hole in it". When the
+    // radio stops streaming an established link, MetisClient re-sends the run
+    // command before declaring the link down, and a recovery that WORKS is
+    // invisible everywhere else -- no linkDown, no linkUp, no reconnect, no
+    // pane rebuilt. These two rows are the only place it shows.
+    //
+    // READ THEM TOGETHER. Attempts climbing while completions do not is the
+    // shape that says the re-send is not the right answer for whatever is
+    // actually failing, and it is the reading that would be lost if only one of
+    // them were published.
+    put("silenceRecoveryAttempts", QStringLiteral("EP6 silence recoveries attempted"),
+        static_cast<qulonglong>(m_silenceRecoveryAttempts));
+    put("silenceRecoveriesCompleted", QStringLiteral("EP6 silence recoveries completed"),
+        static_cast<qulonglong>(m_silenceRecoveriesCompleted));
     // The wideband bandscope. Reported unconditionally rather than only when it
     // is on, because "off" is the answer the reader of a health dialog needs
     // first — an absent row would leave "is this costing me link budget?"
@@ -5624,12 +5832,45 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     };
     put("adcPeakDbfs", QStringLiteral("ADC peak (uncalibrated pre-DDC dBFS)"),
         dbfs(peak));
-    put("adcRmsDbfs", QStringLiteral("ADC RMS (uncalibrated pre-DDC dBFS)"),
+    // AC: the deviation about the block's own mean, not about zero, so a
+    // converter DC offset is not counted as signal. The row is labelled for it
+    // because the two numbers above and below it are absolute and this one is
+    // not — a reader comparing adcPeakDbfs with adcRmsDbfs is comparing two
+    // different references, and the label is the only place that says so.
+    // (#5802.)
+    put("adcRmsDbfs", QStringLiteral("ADC RMS, AC (uncalibrated pre-DDC dBFS)"),
         dbfs(rms));
     // Peak-to-RMS, which is the one figure here that IS scale-free: it
     // survives the missing calibration intact, because both terms carry the
     // same unknown offset and it cancels.
-    put("adcCrestDb", QStringLiteral("ADC crest factor (dB)"), dbfs(peak - rms));
+    //
+    // It is what separates a broadband floor from a discrete carrier — 11-12
+    // dB over 2048 Gaussian samples against ~3 dB for a sinusoid — and that
+    // separation is exactly what an about-zero RMS destroyed: a DC pedestal
+    // inflated the denominator and dragged the reading toward the carrier end
+    // whatever the antenna was doing. With the RMS now AC-referred and the
+    // peak still absolute (ruled on PR #5832), a large crest means EITHER a
+    // peaky signal OR a large DC offset under a quiet band; surfacing the
+    // offset itself (an adcDcDbfs row) is #5856, and until it exists this row
+    // cannot tell those two apart.
+    //
+    // NOT REPORTED, rather than fabricated, when either term is at or below
+    // the floor: that constant is a sentinel meaning "below the smallest code
+    // this converter has", and subtracting it invents the level it exists to
+    // refuse. See Ep4Stats::crestDb(), which owns the predicate so it can be
+    // tested without Qt.
+    //
+    // An invalid variant here is the SAME "nothing to say" this row and its
+    // two neighbours already use before the first block arrives: put() keeps
+    // the key in `order` and `labels` and only withholds the value, so the row
+    // stays in place and reads as a dash rather than the list changing shape
+    // under a reader — which was tried and reverted once already (PR #5650
+    // review round 3). On the bridge it lands as a JSON null, exactly as the
+    // pre-block case does, and not as a fabricated number.
+    const std::optional<double> crest =
+        haveBlock ? m_bandscopeBlock.crestDb() : std::nullopt;
+    put("adcCrestDb", QStringLiteral("ADC crest factor (dB)"),
+        crest ? QVariant(QString::number(*crest, 'f', 2)) : QVariant());
     // Counted with ad9866.v's OWN two thresholds — rxclipp at +2047 and
     // rxclipn at -2048 — and not a symmetric |code| >= 2048, which can
     // never fire on a positive clip because +2048 is not a code a 12-bit
@@ -5667,8 +5908,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_haveRestoredState = false;
     m_lnaDbByBand.clear();
     m_driveByBand.clear();
-    m_lnaDefaultDb = 20;          // Hl2Backend.h: m_lnaGainDb's constructed default
-    m_lnaGainDb = 20;
+    m_lnaGainDb = hl2::kLnaDefaultGainDb;
     m_lnaSessionPin = false;
     m_driveDefaultPercent = -1;
     m_rfPowerPercent = 100;       // TransmitModel's session default
@@ -5778,10 +6018,42 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     // (RestoredRadioState.h). Values clamp to the hardware's own ranges.
     const QJsonObject rfGain =
         state.extension.value(QStringLiteral("rfGain")).toObject();
-    if (rfGain.contains(QStringLiteral("defaultDb")))
-        m_lnaDefaultDb = qBound(kLnaGainMinDb,
-                                rfGain.value(QStringLiteral("defaultDb")).toInt(),
-                                kLnaGainMaxDb);
+    // rfGain.defaultDb IS DELIBERATELY NOT READ (#5829). The fallback gain an
+    // UNVISITED band comes up on is hl2::kLnaDefaultGainDb and nothing else.
+    //
+    // The key used to be read here into a member that was then written straight
+    // back out by currentOperatingState() -- and nowhere in the tree did
+    // anything else ever assign it. No setter, no verb, no GUI control. So its
+    // value was a closed loop: whatever a profile happened to hold, it held
+    // forever, steering every first visit to a band, with no operator action
+    // able to move it. One station's profile sat at -6 dB permanently.
+    //
+    // Ignoring it on read and dropping it from the capture below is what makes
+    // a stale value harmless: the key decays out of the document on the next
+    // snapshot and the shipped constant is the single source of truth. A
+    // document that still carries the key is not rejected -- it is simply not
+    // consulted, which is what "authoritative" has to mean here.
+    //
+    // This also retires a clamp the codebase's own rule rejects. The read this
+    // comment replaces qBound()ed the document value and then persisted the
+    // clamped result, which is exactly what the AGC threshold restore a few
+    // lines up refuses to do in its own words: clamping invents a setpoint the
+    // operator never chose and then writes it back.
+    //
+    // IGNORED OUT LOUD, because this boundary logs every other value it
+    // declines -- the pre-#4914 CW passband just above, the invalid mic level
+    // just below -- and a key dropped in silence is the one an operator cannot
+    // connect to what they hear. A document still carrying this key is exactly
+    // a profile whose next UNVISITED band now comes up on +20 dB instead of
+    // whatever was frozen in it, so the line names both numbers: the value
+    // being ignored, and the value that replaces it. That is what lets a
+    // support log be traced back to #5829 rather than read as a radio fault.
+    if (rfGain.contains(QStringLiteral("defaultDb"))) {
+        qCInfo(lcHl2) << "HL2: ignoring stale restored LNA default (#5829)"
+                      << rfGain.value(QStringLiteral("defaultDb")).toVariant()
+                      << "— unvisited bands come up on"
+                      << hl2::kLnaDefaultGainDb << "dB";
+    }
     const QJsonObject lnaByBand =
         rfGain.value(QStringLiteral("lnaDbByBand")).toObject();
     for (auto it = lnaByBand.constBegin(); it != lnaByBand.constEnd(); ++it)
@@ -5984,8 +6256,23 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
         driveByBand.insert(m_currentBandKey, m_rfPowerPercent);
     }
 
-    QJsonObject rfGain{{QStringLiteral("defaultDb"), m_lnaDefaultDb},
-                       {QStringLiteral("lnaDbByBand"), lnaByBand}};
+    // THE OPERATOR'S AUTOMATIC-GAIN SWITCH, and it belongs HERE rather than in
+    // an AppSettings key. docs/HERMES.md is explicit: a value the radio cannot
+    // store goes in this family's OperatingState, "never in a flat AppSettings
+    // key". It rides the rfGain object because that is the axis it acts on.
+    //
+    // THE SWITCH ONLY. The OFFSET the loop is holding is deliberately NOT
+    // persisted and is absent from this object: an automatic transient that
+    // outlived the session that produced it would be indistinguishable, next
+    // launch, from a gain the operator chose. See m_lnaAutoOffsetDb.
+    // NO "defaultDb" KEY (#5829). It was persisted here and read back in
+    // applyRestoredState with nothing in the tree able to write it, so a
+    // profile's value was frozen for the life of that profile and decided the
+    // gain of every first band visit.
+    // hl2::kLnaDefaultGainDb is now the only answer to that question; see
+    // applyRestoredState(). Dropping the key here is the half that heals an
+    // existing document, because the next capture writes the object without it.
+    QJsonObject rfGain{{QStringLiteral("lnaDbByBand"), lnaByBand}};
     QJsonObject txSetpoints{{QStringLiteral("driveByBand"), driveByBand}};
     if (m_driveDefaultPercent >= 0)
         txSetpoints.insert(QStringLiteral("defaultPercent"), m_driveDefaultPercent);
@@ -6134,8 +6421,11 @@ void Hl2Backend::applyPerBandStateFor(double freqHz, const char* reason)
     const QString oldBand = m_currentBandKey;
     m_currentBandKey = newBand;
 
+    // A band with no entry of its own comes up on the SHIPPED default, never on
+    // a persisted one (#5829): the document key that used to sit here could not
+    // be written by anything and so could never be corrected either.
     const int lna = qBound(kLnaGainMinDb,
-                           m_lnaDbByBand.value(newBand, m_lnaDefaultDb),
+                           m_lnaDbByBand.value(newBand, hl2::kLnaDefaultGainDb),
                            kLnaGainMaxDb);
     if (lna != m_lnaGainDb)
         applyLnaGainDb(lna);
