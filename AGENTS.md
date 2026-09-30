@@ -367,6 +367,16 @@ other three stale:
 
 `ROADMAP.md`'s "Current cycle" heading names the release too.
 
+**The `CHANGELOG.md` section is the release notes.** On the tag push,
+`release-notes.yml` publishes that section (via `tools/release_notes.py`) as
+the GitHub release's body. Write it for someone deciding whether to download,
+and say plainly when a feature in the source is missing from the downloadable
+builds. Static checks run `release_notes.py --check`, which fails a version
+bump whose section is missing or empty, so the release PR cannot merge
+without notes. To correct a shipped release's notes, fix its section on `main`
+and re-run *Release Notes* by hand (workflow_dispatch) with that tag. That
+also backfills releases from before the workflow existed.
+
 Leave every *historical* mention alone. "shipped v26.7.4" and "(v26.7.4)" are
 statements about when something landed and stay true forever, so a blanket
 find-and-replace across a version bump silently corrupts them.

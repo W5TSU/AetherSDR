@@ -1,0 +1,99 @@
+name: Release Notes
+
+# Every GitHub release gets its CHANGELOG.md section as its body.
+#
+# Until this existed, no release had notes. AppImage, macOS DMG and Windows
+# Installer attach binaries through softprops/action-gh-release, which writes
+# no body when it creates a release and keeps the existing one when it updates
+# (`workflowBody || existingReleaseBody`); Stream Deck Plugins' fallback creates
+# the release with the literal "Release $TAG". So every release through
+# v26.9.10 said "Release vX", and the real notes lived only in CHANGELOG.md.
+#
+# The section is written at release prep (AGENTS.md, "Version and release
+# files"), and static-checks.yml's `release_notes.py --check` makes a version
+# bump without one fail in the release PR, so by the time a tag exists its notes
+# do too. This runs on the tag push, well inside Stream Deck's five-minute wait,
+# and either creates the release with the notes or, if an attach step won the
+# race to create it, writes them onto the existing one. The attach steps then
+# keep that body.
+#
+# A prerelease tag (one with a `-`, e.g. v26.9.2-hl2-preview) needs no section
+# of its own: it falls back to GitHub's generated notes (the PRs since the
+# previous tag) rather than going out empty. A plain version tag with no
+# section is an error, never a silent fallback.
+#
+# workflow_dispatch republishes the notes of any existing tag: after correcting
+# a released section, or to backfill a release from before this workflow. It
+# reads CHANGELOG.md from `changelog_ref` (default main), because older tags
+# predate tools/release_notes.py and main carries every section.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag whose notes to publish (e.g. v26.9.10)'
+        required: true
+      changelog_ref:
+        description: 'Ref to read CHANGELOG.md and the tool from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.changelog_ref || github.ref }}
+
+      - name: Build notes
+        run: |
+          if python3 tools/release_notes.py "$TAG" > notes.md; then
+            {
+              printf '\n\n---\n\n'
+              printf 'Full history: [`CHANGELOG.md`](%s/%s/blob/%s/CHANGELOG.md). ' \
+                "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$TAG"
+              printf 'Verifying downloads: [`docs/VERIFYING-RELEASES.md`](%s/%s/blob/%s/docs/VERIFYING-RELEASES.md).\n' \
+                "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$TAG"
+            } >> notes.md
+          elif [[ "$TAG" == *-* ]]; then
+            echo "::notice::$TAG is a prerelease with no CHANGELOG.md section; using GitHub's generated notes."
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body > notes.md
+          else
+            echo "::error::CHANGELOG.md has no section for $TAG, so its release would have no notes. Add it and re-run this workflow (workflow_dispatch) with tag=$TAG."
+            exit 1
+          fi
+          test -s notes.md
+
+      - name: Publish notes
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            prerelease=()
+            [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+            # An attach step can create the release between the view above and
+            # this create; if so, the create fails and the edit writes the notes.
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+                --notes-file notes.md "${prerelease[@]}" \
+              || gh release edit "$TAG" --notes-file notes.md
+          fi
+          body=$(gh release view "$TAG" --json body --jq .body)
+          if [ -z "$body" ] || [ "$body" = "Release $TAG" ]; then
+            echo "::error::$TAG's release body is still empty or the placeholder after publishing."
+            exit 1
+          fi
+          echo "Published notes for $TAG ($(wc -l < notes.md) lines)."

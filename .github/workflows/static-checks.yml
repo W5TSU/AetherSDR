@@ -233,6 +233,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: python tools/check_shader_dialects.py --strict
 
+      # ── Release notes exist before the tag does. release-notes.yml publishes
+      # CHANGELOG.md's section for a tag as that GitHub release's body; until it
+      # existed every release said only "Release vX". The project() version in
+      # CMakeLists.txt changes only at release prep, so requiring a non-empty
+      # section for it fails a version bump that forgot the notes here, in the
+      # release PR, rather than on the tag after it has shipped.
+      - name: Release notes for the project version
+        if: ${{ !cancelled() }}
+        run: python tools/release_notes.py --check
+
       # ── Hardcoded-colour ratchet (#4569, RFC #3076). Counts may not rise
       # above the PR's base. The gate is a DELTA rather than a stored constant:
       # main gains colours from unrelated UI merges, so a frozen baseline goes
