@@ -3482,6 +3482,12 @@ if(PYTHON3_EXECUTABLE)
     add_test(NAME bridge_docs_subaction_audit
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_gen_bridge_docs.py)
+    # The CHANGELOG.md section extractor that release-notes.yml publishes as
+    # each GitHub release's body: section boundaries, hotfix versions, and a
+    # missing or empty section failing rather than shipping an empty body.
+    add_test(NAME release_notes_extract
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_release_notes.py)
 endif()
 
 # Retired local-listener fixture. Positive behavior is covered through the live

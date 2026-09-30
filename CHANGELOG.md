@@ -10,7 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [v26.9.10] — 2026-09-30
 
-### HackRF backend — highly experimental (#43, #44, #45)
+### HackRF backend — highly experimental, source builds only (#43, #44, #45)
+
+> **Not in the downloadable builds yet.** The HackRF code is in this release's
+> source, but the AppImage and macOS DMG in this release were built without
+> `libhackrf`, so they have no HackRF support. Windows is not supported yet, as
+> for RTL-SDR. To use HackRF now, build from source with `libhackrf` installed.
 
 A new **HackRF One** receiver/transmitter family (tracked in #42), aimed at
 FM/CW satellite work. HackRF shows up in the Connection panel and connects
@@ -19,8 +24,7 @@ RX audio through WDSP. **FM voice TX** is wired through a hand-rolled
 narrow-FM modulator. An RX/TX arbitration state machine tears RX down before
 TX and rebuilds it after. It is covered by unit tests and never assumes an
 unconfirmed teardown succeeded. **CW TX is not wired yet**: keying in CW
-transmits silence. Single slice/panadapter only. Linux and macOS only
-(`ENABLE_HACKRF`, needs `libhackrf`); Windows is disabled, as for RTL-SDR.
+transmits silence. Single slice/panadapter only.
 
 ### Fork
 
