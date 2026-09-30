@@ -306,6 +306,13 @@ public:
     bool hasSupplyVoltage() const { return m_hasSupplyVoltsValue; }
 
 signals:
+    // Definition lifecycle, each emitted after every routing map reflects the
+    // change so a subscriber can query this model synchronously. Backported
+    // from upstream (declared there with aetherd telemetry, c1bb1caf) because
+    // the ALC Gain meter presence sync (5d4dc349) listens to all three.
+    void meterDefinitionChanged(int index);
+    void meterRemoved(int index);
+    void metersCleared();
     // Emitted when the S-meter value changes (dBm).
     // sliceIndex identifies which slice's LEVEL meter this is.
     void sLevelChanged(int sliceIndex, float dbm);

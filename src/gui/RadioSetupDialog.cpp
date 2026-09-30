@@ -2737,7 +2737,7 @@ QWidget* RadioSetupDialog::buildCatServerTab()
         "and point that client at the port on localhost (or the matching "
         "virtual serial device on Linux/macOS).");
     intro->setWordWrap(true);
-    intro->setStyleSheet(kLabelStyle);
+    applyLabelStyle(intro);
     vbox->addWidget(intro);
 
     auto* enable = makeEnableCheck(QStringLiteral("Enable CAT server"),
@@ -2912,7 +2912,7 @@ QWidget* RadioSetupDialog::buildTciServerTab()
         "and spots over one connection — used by WSJT-X/JTDX in TCI mode, "
         "Log4OM, skimmers and StreamDeck tools.");
     intro->setWordWrap(true);
-    intro->setStyleSheet(kLabelStyle);
+    applyLabelStyle(intro);
     vbox->addWidget(intro);
 
     auto* enable = makeEnableCheck(QStringLiteral("Enable TCI server"),
@@ -2921,7 +2921,7 @@ QWidget* RadioSetupDialog::buildTciServerTab()
 
     auto* portRow = new QHBoxLayout;
     auto* portLbl = new QLabel(QStringLiteral("Port:"));
-    portLbl->setStyleSheet(kLabelStyle);
+    applyLabelStyle(portLbl);
     auto* port = new QSpinBox;
     port->setRange(1024, 65535);
     port->setValue(TciSettings::port());
@@ -2956,7 +2956,7 @@ QWidget* RadioSetupDialog::buildDaxServerTab()
         "digimode apps as a virtual audio device, and accepts their transmit "
         "audio back.");
     intro->setWordWrap(true);
-    intro->setStyleSheet(kLabelStyle);
+    applyLabelStyle(intro);
     vbox->addWidget(intro);
 
     auto* enable = makeEnableCheck(QStringLiteral("Enable DAX"),
@@ -2981,7 +2981,7 @@ QWidget* RadioSetupDialog::buildDaxIqServerTab()
         "DAX-IQ streams up to four raw I/Q channels (24–192 kHz) for skimmers "
         "and wide decoders.");
     intro->setWordWrap(true);
-    intro->setStyleSheet(kLabelStyle);
+    applyLabelStyle(intro);
     vbox->addWidget(intro);
 
     const QVector<int> rates = DaxSettings::iqChannelRatesHz();
@@ -2995,7 +2995,7 @@ QWidget* RadioSetupDialog::buildDaxIqServerTab()
 
     for (int i = 0; i < DaxSettings::kIqChannels; ++i) {
         auto* chLbl = new QLabel(QString("IQ %1").arg(i + 1));
-        chLbl->setStyleSheet(kLabelStyle);
+        applyLabelStyle(chLbl);
         grid->addWidget(chLbl, i + 1, 0);
 
         auto* rate = new QComboBox;
@@ -7573,7 +7573,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
             "On macOS, enabling will trigger an Input Monitoring permission "
             "prompt the first time AetherSDR scans for the device.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         gvbox->addWidget(note);
 
         auto* ulanziEnable = new QCheckBox("Enable Ulanzi Dial");
@@ -7736,9 +7736,9 @@ QWidget* RadioSetupDialog::buildSerialTab()
         auto* headerPin = new QLabel("Pin");
         auto* headerFn  = new QLabel("Function");
         auto* headerPol = new QLabel("Polarity");
-        headerPin->setStyleSheet(kLabelStyle);
-        headerFn->setStyleSheet(kLabelStyle);
-        headerPol->setStyleSheet(kLabelStyle);
+        applyLabelStyle(headerPin);
+        applyLabelStyle(headerFn);
+        applyLabelStyle(headerPol);
         grid->addWidget(headerPin, 0, 0);
         grid->addWidget(headerFn,  0, 1);
         grid->addWidget(headerPol, 0, 2);
@@ -8078,7 +8078,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
             "Assign an action to each of the 8 LCD buttons. "
             "The button label updates on the device to match.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 4);
 
         static const struct { const char* id; const char* label; } kKeyActions[] = {
@@ -8149,7 +8149,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
             "Assign an action to each encoder dial. "
             "Single-encoder devices (RC-28, PowerMate, ShuttleXpress) use Encoder 1 only.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 3);
 
         static const struct { const char* id; const char* label; } kEncoderActions[] = {
@@ -8210,7 +8210,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
             "Action when each encoder dial is pressed. "
             "Defaults: Enc 1 = Cycle Tuning Step, Enc 2 = Toggle RIT, Enc 3 = Toggle XIT.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 3);
 
         static const struct { const char* id; const char* label; } kPushActions[] = {
@@ -8265,7 +8265,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
 
         auto* note = new QLabel("Assign actions to the six TMate 2 function keys.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 4);
 
         static const struct { const char* id; const char* label; } kTMate2KeyActions[] = {
@@ -8336,7 +8336,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
 
         auto* note = new QLabel("Assign actions to the three TMate 2 encoder dials.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 3);
 
         static const struct { const char* id; const char* label; } kTMate2EncoderActions[] = {
@@ -8395,7 +8395,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
 
         auto* note = new QLabel("Action when each TMate 2 encoder is pressed.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 3);
 
         static const struct { const char* id; const char* label; } kTMate2PushActions[] = {
@@ -8452,7 +8452,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
             "Backlight colours and temporary display feedback. "
             "Overlay duration controls how long changed values are shown on the TMate 2 LCD.");
         note->setWordWrap(true);
-        note->setStyleSheet(kLabelStyle);
+        applyLabelStyle(note);
         grid->addWidget(note, 0, 0, 1, 7);
 
         static const struct {
@@ -8470,13 +8470,13 @@ QWidget* RadioSetupDialog::buildSerialTab()
         static const char* kLabels[3] = {"R:", "G:", "B:"};
         for (int row = 0; row < 2; ++row) {
             auto* rowLbl = new QLabel(QString::fromLatin1(kRows[row].rowLabel));
-            rowLbl->setStyleSheet(kLabelStyle);
+            applyLabelStyle(rowLbl);
             grid->addWidget(rowLbl, row + 1, 0);
             const char* keys[3] = {kRows[row].rKey, kRows[row].gKey, kRows[row].bKey};
             const char* dflts[3] = {kRows[row].rDflt, kRows[row].gDflt, kRows[row].bDflt};
             for (int ch = 0; ch < 3; ++ch) {
                 auto* lbl = new QLabel(QString::fromLatin1(kLabels[ch]));
-                lbl->setStyleSheet(kLabelStyle);
+                applyLabelStyle(lbl);
                 grid->addWidget(lbl, row + 1, 1 + ch * 2);
 
                 auto* spin = new QSpinBox;
@@ -8501,7 +8501,7 @@ QWidget* RadioSetupDialog::buildSerialTab()
         auto addTimingSpin = [&](int row, const QString& label, const QString& key,
                                  int dflt, int min, int max, int step) -> QSpinBox* {
             auto* lbl = new QLabel(label);
-            lbl->setStyleSheet(kLabelStyle);
+            applyLabelStyle(lbl);
             grid->addWidget(lbl, row, 0, 1, 2);
 
             auto* spin = new QSpinBox;
@@ -10592,7 +10592,7 @@ QWidget* RadioSetupDialog::buildHermesLiteOptionsTab()
     grid->addWidget(swapCheck, 3, 0);
 
     auto* latencyLabel = new QLabel(QStringLiteral("TX Latency"));
-    theme.applyStyleSheet(latencyLabel, kLabelStyle);
+    applyLabelStyle(latencyLabel);
     grid->addWidget(latencyLabel, 0, 1);
     auto* latencySpin = new QSpinBox;
     latencySpin->setRange(0, Hl2MiscOptionsSettings::kTxLatencyMax);
@@ -10605,7 +10605,7 @@ QWidget* RadioSetupDialog::buildHermesLiteOptionsTab()
     grid->addWidget(latencySpin, 0, 2);
 
     auto* hangLabel = new QLabel(QStringLiteral("PTT Hang"));
-    theme.applyStyleSheet(hangLabel, kLabelStyle);
+    applyLabelStyle(hangLabel);
     grid->addWidget(hangLabel, 1, 1);
     auto* hangSpin = new QSpinBox;
     hangSpin->setRange(0, Hl2MiscOptionsSettings::kPttHangMax);
@@ -10649,7 +10649,7 @@ QWidget* RadioSetupDialog::buildIoBoardTab()
     auto makeReadOnlyRow = [&theme](QGridLayout* grid, int row, const QString& label,
                                     int count, QVector<QCheckBox*>& out) {
         auto* lbl = new QLabel(label);
-        theme.applyStyleSheet(lbl, kLabelStyle);
+        applyLabelStyle(lbl);
         grid->addWidget(lbl, row, 0);
         for (int i = 0; i < count; ++i) {
             auto* cb = new QCheckBox;
@@ -10697,7 +10697,7 @@ QWidget* RadioSetupDialog::buildIoBoardTab()
 
     auto makeLabeledSpin = [&](const QString& text, int row, int max = 0xFF) {
         auto* lbl = new QLabel(text);
-        theme.applyStyleSheet(lbl, kLabelStyle);
+        applyLabelStyle(lbl);
         i2cGrid->addWidget(lbl, row, 0);
         auto* spin = new QSpinBox;
         spin->setRange(0, max);
@@ -11036,7 +11036,7 @@ QWidget* RadioSetupDialog::buildFilterBoardTab()
     QVector<QCheckBox*> hwPins;
     for (int pin = 1; pin <= 7; ++pin) {
         auto* lbl = new QLabel(QString::number(pin));
-        theme.applyStyleSheet(lbl, kLabelStyle);
+        applyLabelStyle(lbl);
         hwStateLayout->addWidget(lbl);
         auto* cb = new QCheckBox;
         cb->setEnabled(false);   // reflects live state; never operator-set directly

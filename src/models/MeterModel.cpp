@@ -222,6 +222,7 @@ void MeterModel::defineMeter(const MeterDef& def)
     if (isTxWaveformMeter(def) && def.name == "COMPPEAK") {
         logCompressionMeterMap(def);
     }
+    emit meterDefinitionChanged(def.index);
 }
 
 void MeterModel::removeMeter(int index)
@@ -502,6 +503,7 @@ void MeterModel::clear()
     m_ampFwdPwr = 0.0f;
     m_ampSwr = 1.0f;
     m_ampTemp = 0.0f;
+    emit metersCleared();
 }
 
 void MeterModel::setCompressionMaximumDb(float maximum)
