@@ -2067,6 +2067,15 @@ target_link_libraries(dvk_wav_transfer_generation_test PRIVATE aethercore Qt6::C
 add_test(NAME dvk_wav_transfer_generation_test COMMAND dvk_wav_transfer_generation_test)
 set_tests_properties(dvk_wav_transfer_generation_test PROPERTIES TIMEOUT 120)
 
+# #5662 — DVK exports stage into QSaveFile and atomically replace an existing
+# WAV only after the radio stream is complete. Socket-free injected coverage.
+add_executable(dvk_wav_transfer_test
+    tests/dvk_wav_transfer_test.cpp
+)
+target_include_directories(dvk_wav_transfer_test PRIVATE src)
+target_link_libraries(dvk_wav_transfer_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME dvk_wav_transfer_test COMMAND dvk_wav_transfer_test)
+
 # #5640 — QsoRecorder claims filename candidates atomically so a same-second
 # recording cannot truncate a populated WAV or a concurrently-created file.
 add_executable(qso_recorder_filename_collision_test
@@ -2338,6 +2347,14 @@ target_include_directories(scoped_child_widget_test PRIVATE src)
 target_link_libraries(scoped_child_widget_test PRIVATE Qt6::Widgets)
 add_test(NAME scoped_child_widget_test COMMAND scoped_child_widget_test)
 set_tests_properties(scoped_child_widget_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Socket-free serial selector refresh; injected port lists, real Qt widgets.
+add_executable(serial_port_combo_test tests/serial_port_combo_test.cpp)
+target_include_directories(serial_port_combo_test PRIVATE src)
+target_link_libraries(serial_port_combo_test PRIVATE Qt6::Widgets)
+add_test(NAME serial_port_combo_test COMMAND serial_port_combo_test)
+set_tests_properties(serial_port_combo_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(spectrum_preview_logic_test
@@ -4065,6 +4082,14 @@ add_test(NAME icom_settings_test COMMAND icom_settings_test)
 
 # ANAN-G2 settings ("Anan" root key, Principle V). Own process because
 # AppSettings is a process-wide singleton, same reasoning as icom_settings_test.
+# Compressor Drive and Phase survive a TX channel-strip preset round trip,
+# a preset from before they were stored leaves them alone, and imported values
+# are clamped (upstream 76da21b1). Isolated settings home; no audio device.
+add_executable(channel_strip_presets_comp_test tests/channel_strip_presets_comp_test.cpp)
+target_include_directories(channel_strip_presets_comp_test PRIVATE src tests)
+target_link_libraries(channel_strip_presets_comp_test PRIVATE aethercore Qt6::Core)
+add_test(NAME channel_strip_presets_comp_test COMMAND channel_strip_presets_comp_test)
+
 add_executable(anan_settings_test tests/anan_settings_test.cpp)
 target_include_directories(anan_settings_test PRIVATE src tests)
 target_link_libraries(anan_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
