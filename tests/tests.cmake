@@ -6007,6 +6007,16 @@ target_link_libraries(automation_menu_lookup_test PRIVATE aethercore Qt6::Widget
 add_test(NAME automation_menu_lookup_test COMMAND automation_menu_lookup_test)
 set_tests_properties(automation_menu_lookup_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# HL2 spots stay in this client: alwaysUseClientSideSpots must be true, or
+# every DX-cluster/RBN/WSJT-X/POTA/manual spot is sent as `spot add` wire text
+# that RadioModel::sendCmd drops for want of a command plane, and none is ever
+# drawn. Separate target for the same reason as the lines above: the fixture
+# that would have carried an HL2 seam assertion is retired.
+add_executable(hl2_client_side_spots_declaration_test tests/hl2_client_side_spots_declaration_test.cpp)
+target_include_directories(hl2_client_side_spots_declaration_test PRIVATE src tests)
+target_link_libraries(hl2_client_side_spots_declaration_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_client_side_spots_declaration_test COMMAND hl2_client_side_spots_declaration_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
@@ -6032,6 +6042,7 @@ set(AETHER_SETTINGS_CONSUMERS
     automation_persist_diagnostics_test
     weather_radar_loading_test
     hl2_gain_restore_test
+    hl2_client_side_spots_declaration_test
     icom_identity_test
     icom_control_profile_test
     control_resource_service_test
