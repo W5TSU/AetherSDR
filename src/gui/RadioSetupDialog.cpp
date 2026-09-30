@@ -10711,8 +10711,7 @@ QWidget* RadioSetupDialog::buildIoBoardTab()
     addressSpin->setValue(0x1D);
     controlSpin->setValue(0x08);
 
-    auto* resultLabel = new QLabel(QStringLiteral("—"));
-    theme.applyStyleSheet(resultLabel, kValueStyle);
+    auto* resultLabel = makeValueLabel(QStringLiteral("—"));
     resultLabel->setAccessibleName(QStringLiteral("I2C result"));
     i2cGrid->addWidget(new QLabel(QStringLiteral("Result")), 5, 0);
     i2cGrid->addWidget(resultLabel, 5, 1);
