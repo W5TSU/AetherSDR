@@ -4,7 +4,7 @@
 
 Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine-design.md) §2, §10). One row per engine header the UI includes; converting a touchpoint means the UI reaches that surface through the versioned protocol instead of the header.
 
-**Totals:** 224 touchpoint headers (193 core, 31 models) — 224/224 tagged, 0/224 converted.
+**Totals:** 225 touchpoint headers (194 core, 31 models) — 225/225 tagged, 0/225 converted.
 
 | Header | Includers | Tag | Status |
 |---|---:|---|---|
@@ -68,7 +68,6 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/FreeDvClient.h` | 4 | universal — FreeDV Reporter spot client (qso.freedv.org); radio-agnostic spotting fed by canonical freq/TX + RADE SNR | unconverted |
 | `core/GpuSelector.h` | 2 | ui-support — GPU enumeration + persisted QRhi render-adapter choice applied at app startup; pure client rendering plumbing | unconverted |
 | `core/GreenHeronProtocol.h` | 1 | peripheral(greenheron) — Pure framing/parsing/encoding for the Green Heron Everyware wire protocol — the antenna switches and the rotator both, which share one TCP connection. No sockets, no timers, so the parser can be tested against verbatim captured bytes. Peripheral accessory transport, NOT radio-family wire and NOT behind the IRadioBackend radio seam. See docs/green-heron-everyware.md. | unconverted |
-| `core/HackRfDiscovery.h` | 1 | vendor(hackrf) — HackRF USB device discovery that emits the shared RadioInfo shape (#42), same category as RtlSdrDiscovery.h. Family-specific discovery belongs below the HackRF backend seam. | unconverted |
 | `core/HidEncoderManager.h` | 2 | ui-support — USB HID control-surface driver (RC-28, StreamDeck+, TMate 2): desktop input device plumbing, not radio state | unconverted |
 | `core/HostVoiceChainPolicy.h` | 1 | mixed(flex) — Decides when the Flex-shaped voice controls (PROC, 8-band graphic EQ) may write the SHARED ClientComp/ClientEq objects the Aetherial strip also edits — two surfaces onto one object, so 'may we write' has a wrong answer (#4609). Universal DSP-ownership question, answered today from Flex-shaped state. | unconverted |
 | `core/IConnectionAutomation.h` | 1 | ui-support — Gui-free connect/disconnect/dialog hook the automation bridge drives; bridge plumbing, not radio state. | unconverted |
@@ -175,6 +174,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/aprs/AprsStationList.h` | 1 | universal — Heard-APRS-station model (calls/positions/last-heard); radio-agnostic spot-like data. | unconverted |
 | `core/backends/ConnectionSharingPolicy.h` | 2 | universal — Fail-closed discovery-time policy for whether a busy radio family permits another client. Canonical cross-family connection safety pending capability descriptors. | unconverted |
 | `core/backends/IRadioBackend.h` | 2 | universal — THE radio seam (RFC §5.5) — the canonical intent verbs, typed deltas and normalized signals every family implements. Universal by definition: the UI reaching this header is the seam working as designed, not coupling. Everything below it in core/backends/<family>/ is family-private. | unconverted |
+| `core/backends/LocalRadioDiscoveryMapping.h` | 1 | universal — Pure RadioInfo <-> DiscoveredRadio projection for the normalized discovery seam: family/transport labels, serial identity, endpoint only for LAN. No vendor payload crosses it and nothing here reaches a radio command. The inverse feeds the desktop picker for families it owns through RadioDiscoverySource (HackRF, #42). | unconverted |
 | `core/backends/RadioCapabilities.h` | 6 | universal — Backend-neutral capability descriptor consumed above the radio seam. Universal by definition; family implementations populate it. | unconverted |
 | `core/backends/anan/AnanDiscovery.h` | 2 | vendor(anan) — openHPSDR Protocol 2 discovery and ANAN-G2 identity handling. Family-specific discovery belongs below the ANAN backend seam. | unconverted |
 | `core/backends/anan/AnanSettings.h` | 1 | ui-support — Client-side connection and ADC configuration for the ANAN backend. Persisted setup plumbing, not live radio state. | unconverted |
@@ -192,6 +192,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/backends/icom/IcomSettings.h` | 1 | ui-support — Client-side connection configuration for the Icom backend (host, username, ports and CI-V selection), with credentials explicitly excluded. Connection plumbing, not live radio state. | unconverted |
 | `core/backends/sim/NoiseMixer.h` | 1 | vendor(sim) — Demo-mode synthetic AUDIO engine (RFC #4288 Phase 2b) — additive HF-noise and signal channels feeding SimBackend's audioFrameReady. Backend-internal generator reached from DemoApplet.cpp; family-specific below-seam code, frozen into the EB3 baseline. Demo-mode controls should reach it through an extension namespace, not the concrete type. | unconverted |
 | `core/backends/sim/SimBackend.h` | 3 | vendor(sim) — The synthetic demo backend (#4473) — a concrete IRadioBackend implementor that generates its own audio and spectrum, RX-only by construction (Principle VI). Reached today from ConnectionPanel.cpp, MainWindow.cpp and MainWindow_Session.cpp; pre-existing coupling, frozen into the EB3 baseline. The UI should select it through RadioModel::makeBackend()'s family string, never the concrete type. | unconverted |
+| `core/discovery/RadioDiscoverySource.h` | 1 | universal — QtCore normalized discovery/lifecycle seam; native implementations and vendor payloads stay below the backend boundary. | unconverted |
 | `core/pms/PmsMailbox.h` | 1 | universal — Packet personal-message-system mailbox store/logic; radio-agnostic operating feature. | unconverted |
 | `core/tnc/AetherAx25LibmodemShim.h` | 1 | universal — AX.25 modem shim bridging the client AFSK/libmodem demod to the TNC; radio-agnostic DSP glue. | unconverted |
 | `core/tnc/Ax25.h` | 1 | universal — AX.25 frame data types/constants; radio-agnostic protocol layer. | unconverted |

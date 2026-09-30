@@ -30,7 +30,33 @@ namespace AetherSDR::discovery {
         radio.port = info.port;
     }
     radio.inUse = info.inUse;
+    radio.serialIdentity = info.serialIdentity;
     return radio;
+}
+
+// The inverse, for a desktop consumer whose picker still speaks RadioInfo
+// (ConnectionPanel's onRadioDiscovered/onRadioUpdated). Exact for the USB and
+// simulator families, which set nothing normalize() drops except `status` --
+// and theirs is always derived from inUse, which is what is rebuilt here. A LAN
+// family's vendor fields (Flex multi-client, licensing) do not survive, by
+// design; those families are not routed through this.
+[[nodiscard]] inline RadioInfo toRadioInfo(const DiscoveredRadio& radio)
+{
+    RadioInfo info;
+    info.family = radio.family;
+    info.serial = radio.serial;
+    info.serialIdentity = radio.serialIdentity;
+    info.name = radio.name;
+    info.model = radio.model;
+    info.nickname = radio.nickname;
+    info.version = radio.version;
+    if (radio.transport == QStringLiteral("lan")) {
+        info.address = QHostAddress(radio.address);
+        info.port = radio.port;
+    }
+    info.inUse = radio.inUse;
+    info.status = radio.inUse ? QStringLiteral("In_Use") : QStringLiteral("Available");
+    return info;
 }
 
 } // namespace AetherSDR::discovery
