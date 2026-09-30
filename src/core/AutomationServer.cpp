@@ -557,6 +557,9 @@ QJsonObject describeWidget(const QWidget* w)
             range[QStringLiteral("yellowStart")] = w->property("gaugeYellowStart").toDouble();
             o[QStringLiteral("gaugeRange")] = range;
             o[QStringLiteral("gaugeTicks")] = w->property("gaugeTicks").toString();
+            o[QStringLiteral("gaugePeak")] = w->property("gaugePeak").toDouble();
+            o[QStringLiteral("gaugePeakEnabled")] =
+                w->property("gaugePeakEnabled").toBool();
         }
     }
 
@@ -1859,6 +1862,21 @@ QJsonObject vfoFlagSnapshot(QWidget* vfo, RadioModel* radio)
     return flag;
 }
 
+// EVALUATE THE OPTIONAL ONCE. Both …IfLive() accessors read the clock INSIDE
+// themselves and compare against a staleness window, so calling one twice --
+// once to test it, once to dereference it -- can find it engaged and then
+// disengaged, and dereferencing a disengaged optional is undefined behaviour.
+//
+// The window is sub-microsecond and was reasoned from the code rather than
+// observed. That is precisely the kind of race that is cheaper to remove than
+// to argue about, and a caller cannot be expected to know the accessor reads a
+// clock. (#5499 review)
+template <typename T>
+static QJsonValue jsonOrNull(std::optional<T> v)
+{
+    return v ? QJsonValue(*v) : QJsonValue();
+}
+
 QJsonObject radioSnapshot(const RadioModel* r)
 {
     // Multi-Flex slot occupancy across the radio's whole slice capacity: each
@@ -1892,8 +1910,39 @@ QJsonObject radioSnapshot(const RadioModel* r)
         {QStringLiteral("connectState"), r->connectState()},
         {QStringLiteral("fullDuplex"),   r->fullDuplexEnabled()},
         {QStringLiteral("transmitting"), r->isRadioTransmitting()},
-        {QStringLiteral("txPower"),      r->txPower()},
-        {QStringLiteral("paTemp"),       r->paTemp()},
+        // Qualified, not a dead scalar. This published RadioModel::m_txPower
+        // — declared, given a getter and a Q_PROPERTY(float txPower READ
+        // txPower NOTIFY metersChanged), and ASSIGNED NOWHERE IN THE TREE, from
+        // the commit that introduced it onwards. It answered 0 at every drive,
+        // keyed or not: with rfPower 10, the relay thrown and 0.153-0.184 W
+        // measurably entering a dummy load, every sample of this field read 0.
+        // A bench run then gated a transmit on setting a drive and reading it
+        // back here — the right shape of gate, and incapable of failing,
+        // because it compared 0 against 0.
+        //
+        // The member, its getter and its property are gone. The live quantity
+        // is the forward-power meter, which is what a field called txPower
+        // hanging off metersChanged always meant; `get transmit`.rfPower
+        // remains the REQUESTED drive, a different quantity that no longer
+        // claims to be this one. The freshness duration matches
+        // `get meters`.txMetersFresh, but this checks FWDPWR's own timestamp:
+        // fresh SWR or REFPWR cannot revive expired watts. (#5499 item 1)
+        {QStringLiteral("txPower"), jsonOrNull(r->meterModel().fwdPowerIfLive())},
+        // Qualified, not the scalar: an absent or stale sensor reads null here
+        // exactly as it does in `get meters`.
+        //
+        // Resolved through MeterModel's cached index rather than by building
+        // the whole annotated array for one scalar. `get radio` is polled in a
+        // loop while the transmitter may be keyed -- the TX harness reads
+        // `transmitting` every 50 ms waiting for the keyed edge -- and
+        // serialising every declared meter to answer that is the wrong cost on
+        // that path. Both routes share MeterModel::kVitalsFreshMs and the same
+        // declared/fed predicate, and automation_persist_diagnostics_test pins
+        // that they agree across unsupported, never-fed and fresh.
+        {QStringLiteral("paTemp"),
+         MeterModel::vitalIsFresh(r->meterModel().hasPaTemp(),
+                                  r->meterModel().paTempAgeMs())
+             ? QJsonValue(r->meterModel().paTemp()) : QJsonValue()},
         {QStringLiteral("sliceCount"),   r->slices().size()},
         {QStringLiteral("maxSlices"),    maxSlices},
         {QStringLiteral("slots"),        slotArr},
@@ -2217,6 +2266,80 @@ QString unreliableMeterNote(const QString& meterName, const QString& radioModel)
     return QString();
 }
 
+// A scalar constructor default is not a meter reading. Keep support, liveness
+// and units beside the value for the low-rate vitals as well as the TX meters.
+//
+// The budget matches FRESH_MS in tools/tx_meter_test.py, which reports the same
+// rows. It applies to the LOW-RATE vitals rather than the TX meters that
+// MeterModel::kTxMeterStaleMs governs: Icom polls "+13.8A" on a 1000 ms budget
+// (IcomMeters.cpp), so this leaves roughly half a poll interval of slack before
+// an ordinary scheduler delay reads as stale. Shorten it and a healthy radio
+// starts reporting `stale` between polls.
+constexpr qint64 kVitalsFreshMs = MeterModel::kVitalsFreshMs;
+
+QJsonObject meterObservation(const QJsonArray& meters, const QString& name)
+{
+    QJsonObject selected;
+    bool supported = false;
+    // ANY flagged row, not merely the freshest one. metersSnapshot's own
+    // contract says duplicate-named meters are routine ("one live, one
+    // floored"), so testing `reliable` on `selected` alone let a name whose
+    // flagged row was not the freshest come back `fresh` here while
+    // reported_meter() — which tests every row, before it picks one — answered
+    // `unreliable`. That is the bridge/harness disagreement this pair exists to
+    // prevent (#5516 review).
+    bool trusted = true;
+    for (const QJsonValue& item : meters) {
+        const QJsonObject row = item.toObject();
+        if (row.value(QStringLiteral("name")).toString() != name
+            || row.value(QStringLiteral("source")).toString() == QLatin1String("AMP")) {
+            continue;
+        }
+        supported = true;
+        if (row.value(QStringLiteral("reliable")) == QJsonValue(false)) {
+            trusted = false;
+        }
+        if (selected.isEmpty() || (row.value(QStringLiteral("has_value")).toBool()
+            && (!selected.value(QStringLiteral("has_value")).toBool()
+                || row.value(QStringLiteral("age_ms")).toDouble()
+                    < selected.value(QStringLiteral("age_ms")).toDouble()))) {
+            selected = row;
+        }
+    }
+    const qint64 age = selected.value(QStringLiteral("age_ms")).toInteger(-1);
+    // A FINITE NUMBER, not merely a flag. reported_meter() validates the value
+    // too, so a row carrying has_value with a NaN would have come back `fresh`
+    // here and `never-fed` there -- and a NaN serialises to JSON null, so the
+    // reply would have claimed a fresh reading whose value was null (#5516).
+    const QJsonValue reading = selected.value(QStringLiteral("value"));
+    const bool numeric = reading.isDouble() && std::isfinite(reading.toDouble());
+    const bool fed = selected.value(QStringLiteral("has_value")).toBool()
+        && age >= 0 && numeric;
+    // A meter this snapshot has itself just annotated `reliable:false` must not
+    // come back as a qualified reading: `reported_meter()` in
+    // tools/tx_meter_test.py rejects those first, and the two halves of one
+    // idea have to agree or the harness and the bridge disagree about one row.
+    // Today only PACURRENT on a FLEX-8xxx is ever flagged. `trusted` is
+    // accumulated across every matching row above, exactly as the twin does.
+    //
+    // `unit` and `ageMs` deliberately keep a placeholder ("" and -1) where the
+    // Python twin carries None: this is the bridge contract documented in
+    // docs/automation-bridge.md, where a key holds one type for every status.
+    const bool fresh = fed && trusted && age < kVitalsFreshMs;
+    // An undefined QJsonValue is DROPPED on insert rather than stored as null,
+    // so default the unit: otherwise an unsupported vital omits the key while
+    // its neighbours carry it, and a client doing obs["unit"] gets a KeyError
+    // on one meter and "" on the next.
+    const QJsonValue unit = selected.value(QStringLiteral("unit"));
+    return {{QStringLiteral("status"), !supported ? QStringLiteral("unsupported")
+        : !trusted ? QStringLiteral("unreliable")
+        : !fed ? QStringLiteral("never-fed")
+        : fresh ? QStringLiteral("fresh") : QStringLiteral("stale")},
+        {QStringLiteral("value"), fresh ? selected.value(QStringLiteral("value")) : QJsonValue()},
+        {QStringLiteral("unit"), unit.isUndefined() ? QJsonValue(QString()) : unit},
+        {QStringLiteral("ageMs"), age}};
+}
+
 // Live meter readout. The flat convenience fields are the headline TX meters
 // with their freshness age (ms since last update, -1 if never) so a reader can
 // reject stale values — critical because some meters (notably PACURRENT) are
@@ -2224,12 +2347,12 @@ QString unreliableMeterNote(const QString& meterName, const QString& radioModel)
 // per-meter index/source_index/age_ms so duplicate-named meters (one live, one
 // floored) are distinguishable, plus a `reliable:false`+`note` flag on meters
 // known-bad for the connected radio. (#3646, #3729)
-QJsonObject metersSnapshot(MeterModel* m, const QString& radioModel)
+// Every declared meter with the known-bad annotation already applied. Split out
+// of metersSnapshot so radioSnapshot qualifies its vitals against exactly the
+// same rows, `reliable` flag included.
+QJsonArray annotatedMeters(const MeterModel& m, const QString& radioModel)
 {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    auto age = [now](qint64 ts) -> qint64 { return ts > 0 ? now - ts : -1; };
-
-    QJsonArray all = m->allMeters();
+    QJsonArray all = m.allMeters();
     for (int i = 0; i < all.size(); ++i) {
         QJsonObject meter = all[i].toObject();
         const QString note = unreliableMeterNote(meter.value(QStringLiteral("name")).toString(),
@@ -2240,8 +2363,21 @@ QJsonObject metersSnapshot(MeterModel* m, const QString& radioModel)
             all[i] = meter;
         }
     }
+    return all;
+}
 
+QJsonObject metersSnapshot(MeterModel* m, const QString& radioModel)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    auto age = [now](qint64 ts) -> qint64 { return ts > 0 ? now - ts : -1; };
+
+    const QJsonArray all = annotatedMeters(*m, radioModel);
+
+    const QJsonObject temperature = meterObservation(all, QStringLiteral("PATEMP"));
+    const QJsonObject voltage = meterObservation(all, QStringLiteral("+13.8A"));
     return QJsonObject{
+        {QStringLiteral("temperature"), temperature},
+        {QStringLiteral("voltage"), voltage},
         {QStringLiteral("fwdPower"),        m->fwdPower()},           // Watts (smoothed)
         {QStringLiteral("fwdPowerInstant"), m->fwdPowerInstant()},    // Watts (peak)
         {QStringLiteral("fwdPowerAgeMs"),   age(m->fwdPowerUpdatedAtMs())},
@@ -2254,11 +2390,17 @@ QJsonObject metersSnapshot(MeterModel* m, const QString& radioModel)
         // the fwdPower/reflectedPower pair above — a client reading this scalar
         // must not get a different answer from the one reading the array
         // (#4533). swrAgeMs is still reported so a consumer can see WHY.
-        {QStringLiteral("swr"),
-         m->swrIfLive() ? QJsonValue(*m->swrIfLive()) : QJsonValue()},
+        // THE SAME DOUBLE EVALUATION, and the one the other two were copied
+        // from. swrIfLive() reads the clock inside itself like its two
+        // siblings, so testing and dereferencing are two different instants
+        // and a sample on the staleness edge can be engaged for the first and
+        // disengaged for the second. Pre-dates #5499 and is fixed with them
+        // rather than left one line away from two corrections, which is how a
+        // pattern gets copied forward.
+        {QStringLiteral("swr"), jsonOrNull(m->swrIfLive())},
         {QStringLiteral("swrAgeMs"),        age(m->swrUpdatedAtMs())},
-        {QStringLiteral("paTemp"),          m->paTemp()},             // °C
-        {QStringLiteral("supplyVolts"),     m->supplyVolts()},        // V
+        {QStringLiteral("paTemp"),          temperature.value(QStringLiteral("value"))},
+        {QStringLiteral("supplyVolts"),     voltage.value(QStringLiteral("value"))},
         {QStringLiteral("alc"), QJsonObject{
             {QStringLiteral("value"), m->alcUpdatedAtMs() > 0 ? QJsonValue(m->alcValue()) : QJsonValue()},
             {QStringLiteral("unit"), m->alcUnit()},
@@ -2270,7 +2412,15 @@ QJsonObject metersSnapshot(MeterModel* m, const QString& radioModel)
         {QStringLiteral("compPeak"),        m->compPeak()},           // dB compression (peak)
         {QStringLiteral("compLevel"),       m->compLevel()},          // dB compression
         {QStringLiteral("hasCompression"),  m->hasCompressionMeterValue()},
-        {QStringLiteral("sLevel"),          m->sLevel()},             // dBm
+        // Null rather than a fabricated floor, for the same reason and under the
+        // same rule as swr above (#4533). MeterModel::m_sLevel was written in
+        // exactly one place — clear(), to -130.0f — so this field answered
+        // -130 dBm for 1304 consecutive samples while the SLC:LEVEL row in
+        // `all`, the same quantity in the same reply, moved around a median of
+        // -83.9. sLevelIfLive() declines when more than one receiver declares a
+        // LEVEL meter, because then the scalar has no single answer and `all`
+        // is where a client names the receiver it means. (#5499 item 2)
+        {QStringLiteral("sLevel"), jsonOrNull(m->sLevelIfLive())},           // dBm
         // Same constant the SWR gate uses, so "the TX meters are fresh" and "the
         // SWR is live" cannot drift apart as two different literals.
         {QStringLiteral("txMetersFresh"),
@@ -2741,6 +2891,8 @@ bool isReadOnlyRequest(const QString& name, const QString& action)
         QStringLiteral("health"),   QStringLiteral("devices"),
         // Frame-rate readout; reads render stats and nothing else.
         QStringLiteral("perf"),
+        // Reads a meter's published state; moves nothing.
+        QStringLiteral("gauge"), QStringLiteral("gauges"),
     };
     if (kSafe.contains(name)) {
         return true;
@@ -2953,6 +3105,24 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
         add("floors", {}, "per-pan measured noise + display floor (dBm)",
             parseTargetPath,
             [](AutomationServer& s, A&, QLocalSocket*) { return s.doFloors(); });
+
+        // Monitoring a meter means sampling it repeatedly, and dumpTree is
+        // the whole widget tree -- hundreds of kilobytes for four numbers.
+        // This is the same state, for one gauge or all of them.
+        add("gauge", {QStringLiteral("gauges")},
+            "gauge [<target>] — value, peak and painted fraction of one gauge, "
+            "or every gauge when no target is given",
+            // Joins the rest of the line rather than taking one token: these
+            // are addressed by accessible name, and an accessible name is a
+            // phrase ("Forward power"). A single-token parse silently
+            // truncates it to "Forward" and reports the widget missing.
+            [](const QList<QByteArray>& p, A& a) -> QJsonObject {
+                a.target = vjoin(p, 1);
+                return {};
+            },
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doGauge(a.target);
+            });
 
         add("text", {QStringLiteral("getText")},
             "text <target> — full plain text of a QTextEdit/QPlainTextEdit view",
@@ -3985,6 +4155,70 @@ QJsonObject AutomationServer::doGrab(const QString& target, const QString& path)
                             QStringLiteral("widget not found: ") + target}};
     }
     return saveWidgetGrab(w, target, path);
+}
+
+// One JSON object per gauge. gaugeValue is what was last set; gaugeFraction
+// is what is actually painted, and the two disagree for the whole length of a
+// ballistics animation -- a monitor that reads only the former will report a
+// settled meter while the bar is still travelling (#3845).
+static QJsonObject gaugeStateOf(QWidget* w, const QString& name)
+{
+    QJsonObject o;
+    o[QStringLiteral("target")]   = name;
+    o[QStringLiteral("label")]    = w->property("gaugeLabel").toString();
+    o[QStringLiteral("unit")]     = w->property("gaugeUnit").toString();
+    o[QStringLiteral("value")]    = w->property("gaugeValue").toDouble();
+    o[QStringLiteral("fraction")] = w->property("gaugeFraction").toDouble();
+    o[QStringLiteral("peak")]     = w->property("gaugePeak").toDouble();
+    o[QStringLiteral("peakHeld")] = w->property("gaugePeakEnabled").toBool();
+    QJsonObject range;
+    range[QStringLiteral("min")]         = w->property("gaugeMin").toDouble();
+    range[QStringLiteral("max")]         = w->property("gaugeMax").toDouble();
+    range[QStringLiteral("redStart")]    = w->property("gaugeRedStart").toDouble();
+    range[QStringLiteral("yellowStart")] = w->property("gaugeYellowStart").toDouble();
+    o[QStringLiteral("range")] = range;
+    o[QStringLiteral("visible")] = w->isVisible();
+    return o;
+}
+
+QJsonObject AutomationServer::doGauge(const QString& target) const
+{
+    // A gauge is identified by carrying the published state, not by class:
+    // HGauge has no Q_OBJECT, so there is nothing to qobject_cast to, and a
+    // future meter that publishes the same properties should answer here too.
+    const auto isGauge = [](QWidget* w) {
+        return w->property("gaugeLabel").isValid();
+    };
+
+    if (!target.isEmpty()) {
+        QWidget* w = resolveWidget(target);
+        if (!w)
+            return err(QStringLiteral("widget not found: ") + target);
+        if (!isGauge(w))
+            return err(QStringLiteral("not a gauge: ") + target
+                       + QStringLiteral(" (") + shortClassName(w) + QLatin1Char(')'));
+        QJsonObject o = gaugeStateOf(w, target);
+        o[QStringLiteral("ok")] = true;
+        o[QStringLiteral("class")] = shortClassName(w);
+        return o;
+    }
+
+    // No target: every gauge currently constructed, named by whatever a
+    // driver could address it by. Accessible name first -- the object name is
+    // often unset on these, and the accessible name is what the a11y tree and
+    // the invoke verb already use.
+    QJsonArray all;
+    const auto widgets = QApplication::allWidgets();
+    for (QWidget* w : widgets) {
+        if (!w || !isGauge(w)) continue;
+        QString name = w->accessibleName();
+        if (name.isEmpty()) name = w->objectName();
+        if (name.isEmpty()) name = shortClassName(w);
+        all.append(gaugeStateOf(w, name));
+    }
+    return QJsonObject{{QStringLiteral("ok"), true},
+                       {QStringLiteral("count"), all.size()},
+                       {QStringLiteral("gauges"), all}};
 }
 
 // Full document for one resolved text view. dumpTree carries only a capped
@@ -6947,6 +7181,18 @@ QJsonObject AutomationServer::doTxTest(const QString& action)
         return QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("txtest"), QStringLiteral("off")}};
     }
     if (action == QLatin1String("twotone")) {
+        // CAPABILITY, NOT FAMILY (Constitution II/III). The question is whether
+        // the backend behind this verb has a two-tone generator, and only Flex
+        // does: `transmit set tune_mode=two_tone` is read by FlexBackend alone.
+        // Every other backend drives the same button into a single carrier —
+        // Icom's setTune(), the HL2's test tone at zero offset — so a family
+        // check written for Icom would have left HL2 certifying two-tone RF it
+        // never produced. Refuse before the TX gate: this is about what the
+        // evidence would claim, so it is wrong to key even when TX is allowed.
+        if (!m_radioModel->backendCapabilities().twoToneGenerator) {
+            return err(QStringLiteral("two-tone generation is not implemented on this radio; "
+                                      "use ordinary TUNE for a single tone"));
+        }
         if (!m_txAllowed)
             return err(QStringLiteral("blocked: txtest keys the transmitter — "
                                       "set AETHER_AUTOMATION_ALLOW_TX=1 to allow"));
@@ -8678,6 +8924,13 @@ QJsonObject AutomationServer::doRadioCert(const QString& phaseArg, const QString
             return err(QStringLiteral("radiocert persist takes no arguments; use tools/radiocert_persist.py"));
         }
         const RadioCapabilities caps = m_radioModel->backendCapabilities();
+        // ASK THE BACKEND, DO NOT SNIFF THE FAMILY -- the same rule this change
+        // applied to tools/tx_meter_test.py's unkey gate. doCiv() already
+        // reports an unimplemented verb rather than answering, so a backend
+        // with no CI-V diagnostics yields {} without a hardcoded family string,
+        // and a future CI-V backend under another family name still gets its
+        // diagnostics into the certification snapshot (#5516 review).
+        const QJsonObject civDiagnostics = doCiv(QStringLiteral("scheduler"), {});
         return QJsonObject{
             {QStringLiteral("ok"), true},
             {QStringLiteral("phase"), QStringLiteral("persist")},
@@ -8691,6 +8944,9 @@ QJsonObject AutomationServer::doRadioCert(const QString& phaseArg, const QString
             {QStringLiteral("settingsDirectory"), SettingsPaths::configDir()},
             {QStringLiteral("family"), m_radioModel->family()},
             {QStringLiteral("clientSettingsDomains"), static_cast<int>(caps.clientSettingsDomains)},
+            {QStringLiteral("backendDiagnostics"),
+             civDiagnostics.value(QStringLiteral("ok")).toBool() ? civDiagnostics
+                                                                 : QJsonObject{}},
             {QStringLiteral("radio"), radioSnapshot(m_radioModel)},
             {QStringLiteral("slices"), doGet(QStringLiteral("slices"), {}, {}).value(QStringLiteral("slices"))},
             {QStringLiteral("pans"), doGet(QStringLiteral("pans"), {}, {}).value(QStringLiteral("pans"))},

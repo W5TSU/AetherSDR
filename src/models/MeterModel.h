@@ -125,11 +125,53 @@ public:
     QJsonArray allMeters() const;
     QJsonArray metersForSource(const QString& source, int sourceIndex = -1) const;
 
-    // Convenience: S-meter (slice LEVEL meter) in dBm.
-    float sLevel() const { return m_sLevel; }
+    // Convenience: the S-meter (slice LEVEL meter) reading for ONE slice, in
+    // dBm — std::nullopt when that slice declares no LEVEL meter, when none has
+    // ever been fed, or when the last sample has fallen outside the shared
+    // vitals window.
+    //
+    // THIS REPLACES A SCALAR sLevel() THAT NOTHING WROTE. m_sLevel was assigned
+    // in exactly one place in the tree — clear(), to -130.0f — because #155
+    // moved the S-meter onto m_sLevelIdxBySlice (correctly: the single
+    // m_sLevelIdx made every slice show the newest slice's signal) and deleted
+    // the scalar's store in the same hunk. The getter and its two callers were
+    // left pointing at a member with no writer, so `get meters`.sLevel answered
+    // -130 dBm for 1304 consecutive samples and rigctl's `get_level STRENGTH`
+    // answered -57.0 dB to every hamlib client on every backend, forever
+    // (#5499 item 2).
+    //
+    // Per-slice BY CONSTRUCTION rather than by convention: the caller has to
+    // name a receiver, so there is no radio-wide scalar left for a future
+    // reader to resolve as "whichever slice updated last".
+    //
+    // sliceIndex is the meter's MeterDef::sourceIndex, which every backend
+    // keys by slice id: Flex carries the manifest's `num` straight into it,
+    // HL2 and Icom declare one S-meter and leave it at 0. That is why
+    // RigctlProtocol can pass slice->sliceId() here. The one place the two
+    // disagree today is HL2's second receiver, published as SLC1:LEVEL with
+    // no matching definition -- see #5852 and its fix, #5866.
+    std::optional<float> sLevelForSlice(int sliceIndex) const;
+
+    // The radio-wide S-meter reading — what `get meters` publishes as a scalar
+    // — WHEN THERE IS ONE. Exactly one slice declaring a LEVEL meter is the
+    // only case in which "the" S-level has a single answer; with two receivers
+    // this declines rather than picking one, because picking the most recently
+    // updated one is precisely the bug #155 fixed. A client that wants a named
+    // receiver reads it out of the per-meter `all` array, which carries a row
+    // per slice.
+    std::optional<float> sLevelIfLive() const;
 
     // Convenience: forward power in watts.
     float fwdPower() const { return m_fwdPower; }
+    // Forward power when the forward-power SAMPLE ITSELF is live, std::nullopt
+    // when it is not. Judged on its own timestamp rather than on the aggregate
+    // TX stamp, and against kTxMeterStaleMs — the same shape, and the same
+    // reason, as swrIfLive() (#4536): a radio that keeps streaming SWR but
+    // stops streaming FWDPWR must not report minutes-old watts as current.
+    // The duration is shared with `get meters`.txMetersFresh; the timestamp
+    // is not. Fresh SWR or REFPWR can keep that aggregate flag true while
+    // forward power is absent here.
+    std::optional<float> fwdPowerIfLive() const;
     float fwdPowerInstant() const { return m_fwdPowerInstant; }
     float reflectedPower() const { return m_reflectedPower; }
     float tgxlFwdPower() const { return m_tgxlFwdPwr; }
@@ -287,9 +329,29 @@ public:
     // Convenience: PA heatsink temperature (°C).
     float paTemp() const { return m_paTemp; }
     bool hasPaTemp() const { return m_hasPaTempValue; }
+    // Age of the low-rate vitals, -1 when the meter is undeclared. "Ever fed"
+    // is not "current": a radio that reported PA temperature once and stopped
+    // would otherwise keep that reading alive forever on every surface that
+    // gated on hasPaTemp() alone (#5516).
+    qint64 paTempAgeMs() const
+    { return m_paTempIdx >= 0 ? valueAgeMs(m_paTempIdx) : -1; }
+    qint64 supplyVoltsAgeMs() const
+    { return m_supplyIdx >= 0 ? valueAgeMs(m_supplyIdx) : -1; }
+    // The freshness window for those vitals, shared by every consumer so they
+    // cannot answer differently about one sensor. Matches FRESH_MS in
+    // tools/tx_meter_test.py; see AutomationServer's meterObservation().
+    static constexpr qint64 kVitalsFreshMs = 1500;
+    static bool vitalIsFresh(bool declaredAndFed, qint64 ageMs)
+    { return declaredAndFed && ageMs >= 0 && ageMs < kVitalsFreshMs; }
     float paCurrent() const { return m_paCurrent; }
     bool hasPaCurrentMeter() const { return m_paCurrentIdx >= 0; }
     bool hasPaCurrent() const { return m_hasPaCurrentValue; }
+    // True once a forward-power or SWR sample has arrived for the amplifier.
+    // ampMetersChanged also fires for TEMP and DRV, so a consumer choosing
+    // between the relayed meters and the amplifier's own socket must gate on
+    // this rather than on the signal alone — otherwise a temperature update
+    // reads as a live relay carrying 0 W and locks the socket out (#4805).
+    bool hasAmpPower() const { return m_hasAmpPwrValue; }
 
     // Convenience: supply voltage (Volts, from "+13.8A" meter — measurement point A, before fuse).
     float supplyVolts() const { return m_supplyVolts; }
@@ -373,8 +435,19 @@ signals:
     void hwTelemetryChanged(float paTemp, float supplyVolts);
     void paCurrentChanged(float amps);
 
-    // Emitted when amplifier meters change (PGXL fwd power, SWR, temp).
-    void ampMetersChanged(float fwdPower, float swr, float temp);
+    // Emitted when amplifier meters change (PGXL fwd power, SWR, temp, drive).
+    //
+    // `drivePower` is the exciter power measured AT THE AMPLIFIER'S INPUT --
+    // the PGXL's own "DRV" meter, relayed by the radio (declared 10..50 dBm,
+    // i.e. 10 mW..100 W). It is the amplifier's measurement, not the radio's
+    // FWDPWR: the pair (drive in, forward out) is the amplifier's gain, which
+    // is the one reading that says whether it is amplifying at all.
+    //
+    // driveValid=false means no DRV meter exists for this amplifier -- not
+    // every amp publishes one. The float alongside is 0.0f and MUST NOT be
+    // rendered, exactly as with txMetersChanged's swrValid.
+    void ampMetersChanged(float fwdPower, float swr, float temp,
+                          float drivePower, bool driveValid);
     void tgxlMetersChanged(float fwdPower, float swr);
 
     // Emitted when any meter value changes (for debug/generic display).
@@ -476,6 +549,7 @@ private:
     int m_supplyIdx{-1};     // "RAD" / "+13.8A" (supply voltage, point A = before fuse)
     int m_ampFwdPwrIdx{-1};  // "AMP" / "FWD" (PGXL)
     int m_ampSwrIdx{-1};     // "AMP" / "RL" (PGXL)
+    int m_ampDrvIdx{-1};     // "AMP" / "DRV" (PGXL — exciter power at the amp input)
     int m_ampTempIdx{-1};    // "AMP" / "TEMP"
     int m_tgxlFwdIdx{-1};   // "AMP" / "FWD" (TGXL — matched by handle)
     int m_tgxlSwrIdx{-1};   // "AMP" / "RL" (TGXL — matched by handle)
@@ -486,7 +560,6 @@ private:
     qint64 m_lastTgxlSwrUpdateMs{0};
 
     // Cached values
-    float m_sLevel{-130.0f};
     float m_fwdPower{0.0f};
     float m_fwdPowerInstant{0.0f};
     float m_reflectedPower{0.0f};
@@ -532,6 +605,16 @@ private:
     float m_ampFwdPwr{0.0f};
     float m_ampSwr{1.0f};
     float m_ampTemp{0.0f};
+    float m_ampDrv{0.0f};
+    // Set when a FWD or RL value packet lands for the amplifier. ampMetersChanged
+    // also fires for TEMP and DRV, and a consumer that arbitrates between the
+    // relay and the amplifier's own socket has to know whether a POWER sample
+    // actually arrived — otherwise a temperature update reads as a live relay
+    // carrying 0 W. See hasAmpPower().
+    bool m_hasAmpPwrValue{false};
+    // Set when a DRV value packet lands, cleared wherever m_ampDrvIdx is, so a
+    // drive reading can never outlive the meter it describes.
+    bool m_hasAmpDrvValue{false};
 };
 
 } // namespace AetherSDR

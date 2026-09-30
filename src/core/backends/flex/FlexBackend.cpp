@@ -154,6 +154,10 @@ RadioCapabilities FlexBackend::capabilities() const
     caps.txPowerBands = {};
     caps.declaredBandRanges = {};
     caps.family = QStringLiteral("flex");
+    // SmartSDR `transmit set tune_mode=two_tone` is a real on-radio two-tone
+    // generator; FlexBackend is the only consumer of that key.
+    caps.twoToneGenerator = RadioCapabilities::TwoToneGenerator{
+        QStringLiteral("transmit set tune_mode=two_tone")};
     caps.manufacturer = QStringLiteral("FlexRadio");
     caps.model = m_modelProvider ? m_modelProvider() : QString();
     caps.fmTonePresentation = FmTonePresentation::Legacy;
@@ -1064,6 +1068,29 @@ void FlexBackend::decodeTunerStatus(const QString& handle, const QMap<QString, Q
         d.model = kvs.value(QStringLiteral("model"));
     if (kvs.contains(QStringLiteral("ip")))
         d.ip = kvs.value(QStringLiteral("ip"));
+    // Per-port antenna, "ANT1,ANT2". Split exactly as FlexLib's
+    // Tuner.ParseAntenna does: first field is port A, second is port B, a
+    // missing second field leaves B empty, and anything past the second is
+    // ignored rather than treated as an error.
+    if (kvs.contains(QStringLiteral("ant"))) {
+        // split() always yields at least one element, so at(0) is safe.
+        const QStringList ants = kvs.value(QStringLiteral("ant")).split(QLatin1Char(','));
+        d.portAAnt = ants.at(0).trimmed();
+        d.portBAnt = ants.size() > 1 ? ants.at(1).trimmed() : QString();
+    }
+
+    // PTT-per-port. Casing unconfirmed — FlexLib lower-cases every key before
+    // matching, so its "ptta"/"pttb" cases do not pin the wire's spelling.
+    // Both are accepted; a string compare is cheaper than a lamp that stays
+    // dark with no way to tell why.
+    if (kvs.contains(QStringLiteral("pttA")))
+        d.pttA = (kvs.value(QStringLiteral("pttA")) == QLatin1String("1"));
+    else if (kvs.contains(QStringLiteral("ptta")))
+        d.pttA = (kvs.value(QStringLiteral("ptta")) == QLatin1String("1"));
+    if (kvs.contains(QStringLiteral("pttB")))
+        d.pttB = (kvs.value(QStringLiteral("pttB")) == QLatin1String("1"));
+    else if (kvs.contains(QStringLiteral("pttb")))
+        d.pttB = (kvs.value(QStringLiteral("pttb")) == QLatin1String("1"));
     if (kvs.contains(QStringLiteral("operate")))
         d.operate = (kvs.value(QStringLiteral("operate")) == QLatin1String("1"));
     if (kvs.contains(QStringLiteral("bypass")))

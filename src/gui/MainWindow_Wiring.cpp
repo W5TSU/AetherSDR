@@ -29,6 +29,7 @@
 #include "models/BandPlanManager.h"
 #include "DisplayStatusGate.h"       // #4261 adaptive-throttle echo gate
 #include "Ax25HfPacketDecodeDialog.h"
+#include "AccessoryPanelWidgets.h"   // kRelayMeterFreshnessMs
 #include "AppletPanel.h"
 #include "DbmRangeTransition.h"
 #include "MainWindowHelpers.h"
@@ -118,6 +119,11 @@ void MainWindow::wireStatusBarMessages()
             updateStatusBarMinimumWidth();
         }
     });
+    connect(&m_radioModel.transmitModel(), &TransmitModel::atuTuneFailed,
+            this, [this](ATUStatus, const QString& detail) {
+                statusBar()->showMessage(
+                    tr("ATU Tune Failed - %1").arg(detail), 5000);
+            });
 }
 
 
@@ -1674,6 +1680,23 @@ bool MainWindow::reattachSliceVisualsToPanadapter(SliceModel* s)
 }
 
 
+void MainWindow::refreshTunerPortFrequency()
+{
+    if (!m_appletPanel || !m_appletPanel->tunerApplet()) return;
+    // No radio, or no slice keyed for transmit, means there is no frequency
+    // on the port — which the strip renders as N/A. Reporting the last one
+    // seen would be worse than reporting nothing.
+    SliceModel* tx = m_radioModel.isConnected() ? m_radioModel.txSlice() : nullptr;
+    m_appletPanel->tunerApplet()->setPortAFrequencyMhz(tx ? tx->frequency() : 0.0);
+    // The same slice's antenna decides which port each applet outlines, so it
+    // is refreshed on every path that can change the transmit slice. The
+    // amplifier resolves it through its own antenna → output map rather than
+    // by a direct name comparison; both start from this one antenna.
+    const QString txAnt = tx ? tx->txAntenna() : QString();
+    m_appletPanel->tunerApplet()->setTxAntenna(txAnt);
+    if (m_appletPanel->ampApplet()) m_appletPanel->ampApplet()->setTxAntenna(txAnt);
+}
+
 void MainWindow::onSliceAdded(SliceModel* s)
 {
     // During layout transition, spectrums are being destroyed/recreated — skip
@@ -1834,7 +1857,14 @@ void MainWindow::onSliceAdded(SliceModel* s)
         // state via DAX2 — matches SmartSDR Console behavior. (#2315)
 #if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
         m_audio->setDaxTxMode(isDigital);
-        if (!profileLoadRadioStateWritesHeld()) {
+        // `transmit dax` and DAX TX streams belong to Flex's command plane.
+        // Icom and the other typed-seam backends carry their audio through the
+        // backend itself; pushing the Flex flag on connect or on a TX-mode
+        // change is both inert and an operator-facing unsupported-control
+        // warning. setDaxTxMode() above still switches the local TX feed, so
+        // TransmitModel's daxOn() does not follow digital modes on these
+        // backends.
+        if (m_radioModel.hasCommandPlane() && !profileLoadRadioStateWritesHeld()) {
             m_radioModel.transmitModel().setDax(isDigital);
             if (isDigital) {
                 m_radioModel.ensureDaxTxStream(DaxTxRequestReason::HostedDaxBridge);
@@ -2244,6 +2274,20 @@ void MainWindow::onSliceAdded(SliceModel* s)
     connect(s, &SliceModel::letterChanged, this,
             [this](const QString&) { refreshSliceLinkUi(); });
 
+    // Port A's readout follows the transmit slice, whichever slice that is
+    // and wherever it is tuned. Both edges matter: a retune moves the
+    // frequency, and the TX flag moving between slices changes which one to
+    // read. Bound here so a slice that band recall re-created is re-bound too.
+    connect(s, &SliceModel::frequencyChanged, this,
+            [this](double) { refreshTunerPortFrequency(); });
+    connect(s, &SliceModel::txSliceChanged, this,
+            [this](bool) { refreshTunerPortFrequency(); });
+    // Switching the transmit antenna moves which tuner port carries RF, with
+    // no change of slice or frequency to notice it by.
+    connect(s, &SliceModel::txAntennaChanged, this,
+            [this](const QString&) { refreshTunerPortFrequency(); });
+    refreshTunerPortFrequency();
+
     // Reset band-stack auto-save dwell timer on every active-slice tune
     connect(s, &SliceModel::frequencyChanged, this, [this, s]() {
         if (s->sliceId() != m_activeSliceId) return;
@@ -2321,6 +2365,10 @@ void MainWindow::onSliceRemoved(int id)
     if (m_applyingLayout) return;
 
     qDebug() << "MainWindow: slice removed" << id;
+
+    // The removed slice may have been the transmit one, leaving port A with
+    // no frequency to show.
+    refreshTunerPortFrequency();
 
     // #4558: any LIVE removal ends the last-session DAX restore window — from
     // here on, slice adds are mid-session (band-stack recreates included) and
@@ -2725,9 +2773,16 @@ void MainWindow::sendPanDimensionsToRadio(const QString& panId,
 
     const int xpix = panXpixelsFor(sw);
     const int ypix = panYpixelsFor(sw);
-    m_radioModel.sendCommand(
-        QString("display pan set %1 xpixels=%2 ypixels=%3")
-            .arg(panId).arg(xpix).arg(ypix));
+    // xpixels/ypixels is a Flex command-plane contract. In-process and CI-V
+    // backends publish their own fixed frame geometry; sending this text to
+    // them can only be dropped, which used to surface an unsupported-command
+    // status-bar warning during an otherwise successful Icom connect. Only the
+    // write is skipped: the local rescale below still runs for them (#4448).
+    if (m_radioModel.hasCommandPlane()) {
+        m_radioModel.sendCommand(
+            QString("display pan set %1 xpixels=%2 ypixels=%3")
+                .arg(panId).arg(xpix).arg(ypix));
+    }
 
     // Arm the DSS settle gate now, before the radio echo switches the local
     // decoder. The stream keeps decoding with the old y_pixels until the echo,
@@ -6108,6 +6163,40 @@ void MainWindow::wireModemAudioCompletion()
     });
 }
 
+// One owner for the amplifier's TX meters on the SHARED readouts — the
+// S-Meter, the cross-needle and the TMate2 — matching the rule the applet
+// gauges already follow.
+//
+// The radio-relayed AMP meters and the amplifier's own port-9008 status carry
+// the same forward power and SWR; on a steady carrier they agree to within
+// 0.05 dB. What differs is rate: the relay rides the radio's meter packets,
+// the socket is polled at 5 Hz. So the relay wins while its sample is fresh,
+// and the socket takes over about a second after the relay stops — which is
+// also what gives these readouts a value when no radio is relaying at all.
+//
+// Without this the two sources simply alternated, and the S-Meter jittered
+// between two slightly different numbers at the beat rate between them.
+void MainWindow::applyAmpTxMeters(float watts, float swr, bool fromRelay)
+{
+    if (fromRelay) {
+        m_ampRelayTxStamp.restart();
+    } else if (m_ampRelayTxStamp.isValid()
+                   && m_ampRelayTxStamp.elapsed() < kRelayMeterFreshnessMs) {
+        // Dropped, not applied-then-overwritten: applying it first is what
+        // made the needle visibly step back to the slower sample.
+        return;
+    }
+
+    m_appletPanel->setMeterTxValues(watts, swr);
+#ifdef HAVE_HIDAPI
+    m_tmate2TxWatts = watts;
+    if (m_radioModel.transmitModel().isTransmitting()) {
+        updateTMate2Display();
+        updateTMate2Indicators();
+    }
+#endif
+}
+
 void MainWindow::wireMeters()
 {
     // ── S-Meter: MeterModel → SMeterWidget (active slice only) ─────────────
@@ -6183,12 +6272,41 @@ void MainWindow::wireMeters()
     // ── Tuner: MeterModel TX meters → TunerApplet gauges ────────────────
     // Use TGXL-specific meters when available (disambiguated from PGXL by handle)
     connect(&m_radioModel.meterModel(), &MeterModel::tgxlMetersChanged,
-            m_appletPanel->tunerApplet(), &TunerApplet::updateMeters);
+            m_appletPanel->tunerApplet(), &TunerApplet::setRadioMeters);
     // Note: txMetersChanged NOT connected to TunerApplet — exciter power
-    // would overwrite TGXL readings. TGXL meters come from TunerModel
-    // via the direct TCP connection (port 9010). (#625)
+    // would overwrite TGXL readings.
+    //
+    // The tuner's own port-9010 status carries the same two readings and is
+    // wired in TunerApplet::setTunerModel. BOTH feeds are live, and they are
+    // the same measurement: on a steady carrier the relayed AMP/FWD meter and
+    // the device's `fwd` field agreed to within 0.05 dB. They are no longer
+    // last-writer-wins — each arrives through a stamped entry point and the
+    // relay wins while fresh, because it runs at the radio's meter rate while
+    // the socket is polled at 1 Hz. (#625)
     m_appletPanel->tunerApplet()->setTunerModel(&m_radioModel.tunerModel());
     m_appletPanel->tunerApplet()->setMeterModel(&m_radioModel.meterModel());
+
+    // ── Tuner: what is feeding port A ───────────────────────────────────
+    // The TGXL's status says nothing about each port's source, so the
+    // expanded front-panel presentation gets it from the radio this client
+    // is connected to. The model names the port; the frequency follows the
+    // TX slice via refreshTunerPortFrequency() (see onSliceAdded).
+    {
+        auto* tuner = m_appletPanel->tunerApplet();
+        auto pushModelName = [this, tuner]() {
+            tuner->setRadioModelName(m_radioModel.model());
+        };
+        connect(&m_radioModel, &RadioModel::infoChanged, this, pushModelName);
+        connect(&m_radioModel, &RadioModel::connectionStateChanged, this,
+                [this, tuner, pushModelName](bool connected) {
+                    tuner->setRadioConnected(connected);
+                    pushModelName();
+                    refreshTunerPortFrequency();
+                });
+        pushModelName();
+        tuner->setRadioConnected(m_radioModel.isConnected());
+        refreshTunerPortFrequency();
+    }
 
     // Show/hide TUNE button + applet based on TGXL presence
     connect(&m_radioModel.tunerModel(), &TunerModel::presenceChanged,
@@ -6222,6 +6340,12 @@ void MainWindow::wireMeters()
 
     // Wire TgxlConnection to TunerModel
     m_radioModel.tunerModel().setDirectConnection(&m_tgxlConn);
+    // Same for the PGXL: the per-port block, the state word and the alert
+    // channel live in the model rather than being decoded into the applet
+    // here, so the applet has one source for them whichever path they arrive
+    // on.
+    m_radioModel.amplifier().setDirectConnection(&m_pgxlConn);
+    m_appletPanel->ampApplet()->setAmpModel(&m_radioModel.amplifier());
     // ACOM deliberately does NOT route through AmpModel — it has its own
     // dedicated AcomApplet talking straight to AcomConnection (commands and
     // telemetry alike), so AmpModel stays 100% PGXL/Flex-relay-only. Wiring
@@ -6245,7 +6369,7 @@ void MainWindow::wireMeters()
             m_pgxlConn.disconnect();
         }
     });
-    // PGXL status → AmpApplet (direct telemetry: vac, vdd, id, temp, tempb, state, etc.)
+    // PGXL status → AmpApplet (direct telemetry: vac, vdd, id, temp, hltemp, state, etc.)
     connect(&m_pgxlConn, &PgxlConnection::statusUpdated, this, [this](const QMap<QString, QString>& kvs) {
         qCDebug(lcTuner) << "PGXL status:" << kvs;
         auto* amp = m_appletPanel->ampApplet();
@@ -6261,8 +6385,12 @@ void MainWindow::wireMeters()
                 amp->setTemp(tv.toFloat());
             }
         }
-        // Separate tempb field (firmware variant)
-        if (kvs.contains("tempb"))
+        // The second sensor. Firmware 3.8.9 sends it as `hltemp`; other builds
+        // use `tempb`, and some pack both into `temp` as "A/B" above. All
+        // three are the same reading, so whichever arrives wins.
+        if (kvs.contains("hltemp"))
+            amp->setTempB(kvs["hltemp"].toFloat());
+        else if (kvs.contains("tempb"))
             amp->setTempB(kvs["tempb"].toFloat());
         if (kvs.contains("id"))
             amp->setDrainCurrent(kvs["id"].toFloat());
@@ -6270,41 +6398,51 @@ void MainWindow::wireMeters()
             amp->setDrainVoltage(kvs["vdd"].toFloat());
         if (kvs.contains("vac"))
             amp->setMainsVoltage(kvs["vac"].toInt());
-        if (kvs.contains("state"))
-            amp->setState(kvs["state"]);
+        // The state word is NOT applied here: AmpModel owns it (it also has to
+        // derive the per-port keying from it) and the applet follows
+        // AmpModel::ampStateChanged on both paths.
         if (kvs.contains("fanmode"))
             amp->setFanMode(kvs["fanmode"]);
-        if (kvs.contains("meffa"))
-            amp->setMeff(kvs["meffa"]);
-        // Convert PGXL dBm to watts and feed S-Meter alongside radio meters.
-        // Use peakfwd (actual peak power) not fwd (floor/minimum).
-        // Skip when amp is STANDBY — peakfwd reads ~0 dBm in standby and would
-        // stomp on the exciter feed that should drive the barefoot scale.
-        if (kvs.contains("peakfwd") && m_radioModel.amplifier().present()
+        // MEffA is NOT set from here. On this path AmpModel owns it —
+        // AmpModel::meffaChanged carries the state AND whether the `setup`
+        // group is known well enough to write it, which the raw kv-set cannot
+        // say. setMeff() below is the relay-only path, where it is read-only.
+        // Ensure the S-Meter is in TX mode when the PGXL reports transmitting.
+        // The VALUES come from AmpModel::directMetersChanged below — this is
+        // the state word, which only the raw kv-set carries.
+        //
+        // Gated on the amplifier being in circuit, for the same reason the
+        // value feed is. In STANDBY the state word is STANDBY and never
+        // TRANSMIT_*, so an ungated push would force the S-Meter and the
+        // cross-needle out of TX mode five times a second for the whole of a
+        // barefoot transmission — the authoritative edge comes from
+        // TransmitModel::moxChanged, and this must not fight it.
+        if (kvs.contains("state")
+                && m_radioModel.amplifier().present()
                 && m_radioModel.amplifier().operate()) {
-            float dbm = kvs["peakfwd"].toFloat();
-            float watts = std::pow(10.0f, (dbm - 30.0f) / 10.0f);
-            qCDebug(lcTuner) << "PGXL→SMeter: peakfwd=" << dbm << "dBm =" << watts << "W";
-            float swr = 1.0f;
-            if (kvs.contains("swr")) {
-                float rl = std::abs(kvs["swr"].toFloat());
-                float rho = std::pow(10.0f, -rl / 20.0f);
-                swr = (rho < 0.999f) ? (1.0f + rho) / (1.0f - rho) : 99.0f;
-            }
-            // Ensure S-Meter is in TX mode when PGXL reports transmitting
-            if (kvs.value("state").startsWith("TRANSMIT"))
-                m_appletPanel->setMeterTransmitting(true);
-            else if (kvs.contains("state") && !kvs.value("state").startsWith("TRANSMIT"))
-                m_appletPanel->setMeterTransmitting(false);
-            m_appletPanel->setMeterTxValues(watts, swr);
-#ifdef HAVE_HIDAPI
-            m_tmate2TxWatts = watts;
-            if (m_radioModel.transmitModel().isTransmitting()) {
-                updateTMate2Display();
-                updateTMate2Indicators();
-            }
-#endif
+            m_appletPanel->setMeterTransmitting(
+                kvs.value("state").startsWith("TRANSMIT"));
         }
+    });
+    // The amplifier's own forward power and SWR, off its port-9008 status.
+    // AmpModel owns the dBm→watts and return-loss→ratio conversions so this
+    // path and the relayed meters cannot disagree about the arithmetic.
+    //
+    // This deliberately follows `fwd`, NOT `peakfwd`. peakfwd is a peak the
+    // DEVICE latches and never decays: an idle PGXL with its drain rail down
+    // (state=IDLE, vdd=0.0) was captured still reporting peakfwd=44.8 dBm —
+    // 30 W of forward power out of an amplifier that was not transmitting,
+    // pushed at the S-Meter five times a second. The gauges do their own
+    // peak-hold, with a timer that releases it.
+    connect(&m_radioModel.amplifier(), &AmpModel::directMetersChanged,
+            this, [this](float watts, float swr) {
+        m_appletPanel->ampApplet()->setDeviceMeters(watts, swr);
+        if (!m_radioModel.amplifier().present()
+                || !m_radioModel.amplifier().operate()) {
+            // Out of circuit: the barefoot exciter feed owns the scale.
+            return;
+        }
+        applyAmpTxMeters(watts, swr, /*fromRelay=*/false);
     });
     connect(&m_pgxlConn, &PgxlConnection::connected, this, [this]() {
         qDebug() << "PGXL direct connection established, version:" << m_pgxlConn.version();
@@ -6314,7 +6452,7 @@ void MainWindow::wireMeters()
         m_appletPanel->ampApplet()->setDirectConnected(false);
     });
     // Radio amplifier status → AmpApplet telemetry (fallback path).
-    // The radio proxies PGXL telemetry fields (id, vac, vdd, meffa, temp, tempb, state) in its
+    // The radio proxies PGXL telemetry fields (id, vac, vdd, meffa, temp, hltemp, state) in its
     // amplifier status messages, so the applet keeps updating even when the direct
     // PGXL TCP connection isn't established.  When direct TCP IS connected, that
     // path is faster and higher-precision (the radio rebroadcast may round/lag),
@@ -6334,7 +6472,9 @@ void MainWindow::wireMeters()
                 amp->setTemp(tv.toFloat());
             }
         }
-        if (kvs.contains("tempb"))
+        if (kvs.contains("hltemp"))
+            amp->setTempB(kvs["hltemp"].toFloat());
+        else if (kvs.contains("tempb"))
             amp->setTempB(kvs["tempb"].toFloat());
         if (kvs.contains("id"))
             amp->setDrainCurrent(kvs["id"].toFloat());
@@ -6342,15 +6482,24 @@ void MainWindow::wireMeters()
             amp->setDrainVoltage(kvs["vdd"].toFloat());
         if (kvs.contains("vac"))
             amp->setMainsVoltage(kvs["vac"].toInt());
-        if (kvs.contains("state"))
-            amp->setState(kvs["state"]);
+        // The RELAYED MEffA state. This is the only place it appears on a
+        // station with no direct port-9008 socket, so it reads out — but it
+        // stays inert, because a write needs the rest of the `setup` group and
+        // only the socket can read that. See AmpApplet::setMeff.
         if (kvs.contains("meffa"))
             amp->setMeff(kvs["meffa"]);
     });
-    // Fan mode cycle button → direct PGXL command (fan control is not in the radio API)
-    connect(m_appletPanel->ampApplet(), &AmpApplet::fanModeChanged, this, [this](const QString& mode) {
-        m_pgxlConn.sendCommand(QString("setup fanmode=%1").arg(mode));
-    });
+    // Fan mode cycle button → direct PGXL command (fan control is not in the
+    // radio API).
+    //
+    // Routed through AmpModel rather than sent straight down the socket. A
+    // `setup` write carries the whole configuration group — the vendor utility
+    // was captured sending `setup nickname=… meffa=… ledintens=… fanmode=…
+    // authcode=` as one line — and the single-key form this used to send names
+    // only fanmode, leaving the amplifier's nickname, LED intensity, MEffA
+    // state and auth code out of a write to the group that holds them.
+    // Both directions are wired in AmpApplet::setAmpModel, against the model
+    // that owns the configuration group. Nothing to do here.
     // OPERATE button → PGXL standby/operate command (relayed via the radio's
     // amplifier API by AmpModel::setOperate; no-op if no amp handle). #4094.
     connect(m_appletPanel->ampApplet(), &AmpApplet::operateToggled, this, [this](bool on) {
@@ -6894,43 +7043,43 @@ void MainWindow::wireMeters()
         else
             setIndicatorHtml(m_pgxlIndicator, m_pgxlStateLabel, "STANDBY", "#404858");
     };
-    connect(&m_radioModel.amplifier(), &AmpModel::stateChanged, this, [this, updatePgxlStyle]() {
-        updatePgxlStyle();
-        // Sync the AmpApplet button — the direct PGXL TCP path may not deliver
-        // a state update fast enough, leaving the button stuck on the old state.
-        // RadioModel is authoritative; use it to keep the button consistent.
-        m_appletPanel->ampApplet()->setState(
-            m_radioModel.amplifier().operate() ? QStringLiteral("OPERATE") : QStringLiteral("STANDBY"));
-    });
+    // The applet is NOT seeded from operate() here. That flag is derived from
+    // the state word and cannot say TRANSMIT_A or FAULT, so writing it back
+    // would overwrite the real word — and with it the port keying lamps the
+    // panel derives from it. AmpModel::ampStateChanged carries the word itself
+    // on both paths, which is what the applet follows.
+    connect(&m_radioModel.amplifier(), &AmpModel::stateChanged, this,
+            [updatePgxlStyle]() { updatePgxlStyle(); });
 
     connect(&m_radioModel.amplifier(), &AmpModel::presenceChanged, this, [this, updatePgxlStyle](bool present) {
         m_pgxlContainer->setVisible(present);
         m_pgxlSeparator->setVisible(present);
         m_appletPanel->setAmpVisible(present);
         updateStatusBarMinimumWidth();
-        if (present) {
-            updatePgxlStyle();
-            m_appletPanel->ampApplet()->setState(
-                m_radioModel.amplifier().operate() ? QStringLiteral("OPERATE") : QStringLiteral("STANDBY"));
-        }
+        if (present) updatePgxlStyle();
     });
     connect(&m_radioModel.meterModel(), &MeterModel::ampMetersChanged,
-            this, [this](float fwdPwr, float swr, float temp) {
-        m_appletPanel->ampApplet()->setFwdPower(fwdPwr);
-        m_appletPanel->ampApplet()->setSwr(swr);
+            this, [this](float fwdPwr, float swr, float temp,
+                         float drivePwr, bool driveValid) {
+        // hasAmpPower() says whether a forward-power or SWR sample has ever
+        // landed. ampMetersChanged also fires for TEMP and DRV, and the applet
+        // must not read those as the relay being the live source of power.
+        m_appletPanel->ampApplet()->setRadioMeters(
+            fwdPwr, swr, m_radioModel.meterModel().hasAmpPower());
         m_appletPanel->ampApplet()->setTemp(temp);
+        // Exciter power at the amplifier's input — the amp's own DRV meter,
+        // relayed by the radio. There is no second source for it: the PGXL's
+        // port-9008 status carries no drive field (probed on firmware 3.8.9;
+        // `drive`, `meter`, `meters` and `help` all answer 50000015, unknown
+        // command), so the relay is the only way to see it.
+        m_appletPanel->ampApplet()->setDrivePower(drivePwr, driveValid);
         // S-Meter TX power follows the scale: amp output when PGXL is OPERATE,
         // exciter output when it's STANDBY (txMetersChanged already handles that
         // path, so we just stop overriding it here).
-        if (m_radioModel.amplifier().present() && m_radioModel.amplifier().operate()) {
-            m_appletPanel->setMeterTxValues(fwdPwr, swr);
-#ifdef HAVE_HIDAPI
-            m_tmate2TxWatts = fwdPwr;
-            if (m_radioModel.transmitModel().isTransmitting()) {
-                updateTMate2Display();
-                updateTMate2Indicators();
-            }
-#endif
+        if (m_radioModel.meterModel().hasAmpPower()
+                && m_radioModel.amplifier().present()
+                && m_radioModel.amplifier().operate()) {
+            applyAmpTxMeters(fwdPwr, swr, /*fromRelay=*/true);
             static int ampDbg = 0;
             if (++ampDbg % 50 == 1)
                 qCDebug(lcTuner) << "AMP→SMeter: fwd=" << fwdPwr << "W swr=" << swr;

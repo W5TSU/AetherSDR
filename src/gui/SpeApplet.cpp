@@ -107,7 +107,7 @@ SpeApplet::SpeApplet(QWidget* parent)
     m_pwrLabel->setText("PWR");
     m_pwrGauge = new HGauge(0.0f, 1600.0f, 1500.0f, "", "",
         evenTicks(1600.0f), this, 1450.0f);
-    m_pwrGauge->setBallistics({0.030f, 0.800f});
+    m_pwrGauge->setWindowPeakEnabled(true);
     m_pwrGauge->setAccessibleName(tr("Output power"));
     auto* pwrRow = new QHBoxLayout;
     pwrRow->setSpacing(4);
@@ -362,14 +362,6 @@ SpeApplet::SpeApplet(QWidget* parent)
     connect(&m_labelTimer, &QTimer::timeout, this, &SpeApplet::updateValueLabels);
     m_labelTimer.start();
 
-    m_peakTimer = new QTimer(this);
-    m_peakTimer->setSingleShot(true);
-    m_peakTimer->setInterval(2500);
-    connect(m_peakTimer, &QTimer::timeout, this, [this]() {
-        m_peakFwd = 0.0f;
-        m_pwrGauge->clearPeak();
-    });
-
     applyDensity();
     setConnected(false);
 }
@@ -380,6 +372,10 @@ void SpeApplet::setFloating(bool floating)
         return;
     }
     m_floating = floating;
+    // A presentation switch starts the mirror over — whatever image is held
+    // is from the previous floating session, not merely stale, so drop it
+    // to the idle glass before the freshness gate re-applies.
+    m_lcd->clear();
     setLcdFresh(false);
     applyDensity();
     // The LCD mirror only exists in the floating presentation — start (or
@@ -394,10 +390,18 @@ void SpeApplet::setLcdFrame(const AetherSDR::Spe::Lcd::Frame& frame)
 
 void SpeApplet::setLcdFresh(bool fresh)
 {
+    // Freshness gates the FRONT PANEL keys and nothing else. The glass
+    // deliberately keeps its last image at full brightness: display frames
+    // stop for seconds at a time in routine operation (link stalls, the
+    // amp's own quiet spells around relay transitions, RF bursts on the
+    // serial run mid-transmit), and every attempt to mark those moments on
+    // the glass — blanking it, then dimming it — field-tested as the
+    // mirror visibly "switching off" over and over. The authoritative
+    // not-live signal is the disabled key group; the mirror, like the
+    // amplifier's own LCD, just shows the newest picture it has. Hard
+    // clears remain where the image is truly obsolete (disconnect,
+    // presentation switch).
     m_lcdFresh = fresh;
-    if (!fresh) {
-        m_lcd->clear();
-    }
     updateCommandsEnabled();
 }
 
@@ -481,11 +485,7 @@ void SpeApplet::setForwardPower(float watts)
 {
     m_fwdWatts = watts;
     m_pwrGauge->setValue(watts);
-    if (watts > m_peakFwd) {
-        m_peakFwd = watts;
-        m_pwrGauge->setPeakValue(watts);
-        m_peakTimer->start();
-    }
+    // Peak marker: HGauge's sliding window, fed by setValue (canon).
 }
 
 void SpeApplet::setSwrAnt(float swr)
@@ -655,7 +655,15 @@ void SpeApplet::updateCommandsEnabled()
 
 void SpeApplet::clearTelemetry()
 {
-    m_lcdFresh = false;
+    // Deliberately does NOT touch m_lcdFresh. Both callers —
+    // setConnected(false) and setResponding(false) — have already forced
+    // m_connected && m_responding false, which shuts the FRONT PANEL gate
+    // in updateCommandsEnabled() on its own, so writing the flag here
+    // bought nothing. What it cost: SpeConnection::setLcdFresh() returns
+    // early when the value is unchanged, so zeroing the applet's copy
+    // behind the connection's back meant lcdFreshChanged(true) never
+    // fired again and the menu keys stayed dead beside a live mirror.
+    // Freshness now has exactly one writer on this side: setLcdFresh().
     m_lcd->clear();
     setFaultText(QString());
     m_bandLabel->hide();
@@ -677,11 +685,9 @@ void SpeApplet::clearTelemetry()
     m_fwdWatts = 0.0f;
     m_swrAntVal = 1.0f;
     m_swrAtuVal = 1.0f;
-    // Clear the forward-power peak hold too — a stale peak would
-    // otherwise survive into the next session (same fix AcomApplet
-    // carries in its setConnected).
-    m_peakFwd = 0.0f;
-    if (m_peakTimer) m_peakTimer->stop();
+    // Clear the forward-power peak too — a stale marker would otherwise
+    // survive into the next session. clearPeak() drops the gauge's sliding
+    // window as well, which is what actually retires it now.
     m_pwrGauge->setValueImmediate(0.0f);
     m_pwrGauge->clearPeak();
     m_swrAntGauge->setValueImmediate(1.0f);

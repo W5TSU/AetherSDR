@@ -1,5 +1,6 @@
 #include "core/backends/anan/AnanBackend.h"
 #include "core/backends/anan/AnanDroopCalibrator.h"
+#include "core/backends/anan/AnanDroopDefaults.h"
 #include "core/backends/anan/AnanSettings.h"
 #include "core/AppSettings.h"
 #include "core/RadioSettingsScope.h"
@@ -7,6 +8,7 @@
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLoggingCategory>
 #include <QMetaObject>
 #include <QTimer>
 #include <QVariantList>
@@ -17,6 +19,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+
+Q_LOGGING_CATEGORY(lcAnanDefaults, "aether.anan.droopdefaults", QtWarningMsg)
 
 namespace AetherSDR::anan {
 
@@ -261,6 +265,14 @@ AnanBackend::AnanBackend(QObject* parent)
         // a receiver rather than going nowhere; a future commit can surface
         // it through IRadioBackend::linkStats().
     });
+    // Only DDC0 feeds this DSP. Like ddc0IqReady above, notification and
+    // processing run directly on the I/O thread, with the DSP as context.
+    // Invalidate its partial FFT before the discontinuous block arrives.
+    connect(m_client, &P2Client::ddcSequenceGap, m_dsp, [dsp = m_dsp](int ddcIndex) {
+        if (ddcIndex == 0) {
+            dsp->onSequenceGap();
+        }
+    }, Qt::DirectConnection);
     connect(m_client, &P2Client::discoveryInfoReceived, this,
             [this](quint8 boardId, quint8 firmwareVer, quint8 numDdc) {
         // See capabilities()'s own comment for where these surface. Reported
@@ -273,6 +285,33 @@ AnanBackend::AnanBackend(QObject* parent)
         m_discoveredFirmwareVer = firmwareVer;
         m_discoveredNumDdc = numDdc;
         m_discoveryInfoReceived = true;
+        // The shipped droop defaults are derived from ONE gateware's filter
+        // coefficients (AnanDroopDefaults.h). They are still applied on a
+        // mismatch -- a slightly-wrong correction beats none, and an operator
+        // who disagrees can sweep their own -- but say so, or a future
+        // re-tune presents as "the panadapter looks a bit off" with nothing
+        // anywhere connecting it to the defaults. Logged here rather than at
+        // the seed site because connectRadio() zeroes m_discoveredFirmwareVer
+        // and the discovery reply fills it in afterwards.
+        //
+        // firmwareVer only, deliberately: P2Protocol.h's own rule is that
+        // board type is a discovery-time picker filter and must not decide
+        // what the backend does. The honest limit of that is worth naming --
+        // the shipped curve comes from SATURN filter coefficients
+        // specifically, so a non-Saturn board reporting this same build
+        // number is the one mismatch this warning cannot see.
+        // Fires for an OLDER build as readily as a newer one, and says the
+        // same thing either way: this is "the curve was derived somewhere
+        // else", not "your gateware is wrong". It is informational only --
+        // the seeding above has already run by the time this arrives.
+        if (firmwareVer != kDefaultsGatewareVersion) {
+            qCWarning(lcAnanDefaults).nospace()
+                << "ANAN: radio reports gateware " << firmwareVer
+                << ", shipped droop defaults were derived against "
+                << kDefaultsGatewareVersion
+                << " -- applying them anyway; run the in-app droop sweep if "
+                   "the panadapter edges look wrong";
+        }
         emit capabilitiesChanged();
     });
 
@@ -332,6 +371,8 @@ RadioCapabilities AnanBackend::capabilities() const
 {
     RadioCapabilities c;
     c.family = QStringLiteral("anan");
+    // No setTune() implementation, so no tune generator to select a mode on.
+    c.twoToneGenerator = std::nullopt;
     c.hasAgcThreshold = true; // Host receiver DSP implements threshold/off gain.
     c.manufacturer = QStringLiteral("Apache Labs");
     c.model = QStringLiteral("ANAN-G2");
@@ -425,13 +466,36 @@ void AnanBackend::connectRadio(const RadioConnectRequest& request)
         // AnanRxDsp::clearDroopCorrectionTables().
         QMetaObject::invokeMethod(m_dsp, "clearDroopCorrectionTables",
                                   Qt::QueuedConnection);
+
+        auto pushTable = [this](int rateKsps, const DroopCorrectionTable& t) {
+            QMetaObject::invokeMethod(m_dsp, "setDroopCorrectionTable", Qt::QueuedConnection,
+                Q_ARG(int, rateKsps),
+                Q_ARG(std::vector<float>, std::vector<float>(t.begin(), t.end())));
+        };
+
+        // Shipped defaults FIRST, so an uncalibrated radio still gets a
+        // corrected panadapter on its first connect. One curve serves all six
+        // rates -- it is derived from the DDC's own filter coefficients rather
+        // than measured, so it is a property of the gateware, not of a unit.
+        // See AnanDroopDefaults.h.
+        // The null test never fires today -- both sides key off
+        // P2Protocol.h's kDdc0RatesKsps, so every rate this iterates has a
+        // table. It is kept as a structural guard, not live logic: if the two
+        // lists ever diverge, that rate ships with no default rather than
+        // dereferencing a null here.
+        for (const int rateKsps : defaultDroopRatesKsps()) {
+            if (const DroopCorrectionTable* t = defaultDroopTableForRate(rateKsps))
+                pushTable(rateKsps, *t);
+        }
+
+        // Then THIS radio's own bench calibration on top, per rate. An
+        // operator who measured their own hardware always outranks a shipped
+        // default, and a partial sweep only overrides the rates it actually
+        // covered rather than wiping the rest back to the default.
         const auto tables = AnanDroopCalibrator::loadTables(
             RadioSettingsScope(QStringLiteral("anan"), m_radioSerial));
-        for (auto it = tables.constBegin(); it != tables.constEnd(); ++it) {
-            QMetaObject::invokeMethod(m_dsp, "setDroopCorrectionTable", Qt::QueuedConnection,
-                Q_ARG(int, it.key()),
-                Q_ARG(std::vector<float>, std::vector<float>(it.value().begin(), it.value().end())));
-        }
+        for (auto it = tables.constBegin(); it != tables.constEnd(); ++it)
+            pushTable(it.key(), it.value());
     }
 
     m_pendingParams.host = request.host;
@@ -952,18 +1016,59 @@ void AnanBackend::finishRateChange(quint64 generation, bool ok, const QString& e
     // guarantees it lands on m_dsp before any new session's first frame can
     // possibly exist.
     QMetaObject::invokeMethod(m_dsp, "setAudioMuted", Qt::QueuedConnection, Q_ARG(bool, true));
-    QMetaObject::invokeMethod(m_client, "stop", Qt::QueuedConnection);
-    // Give the radio real idle time before asking it to restart -- see
-    // kRateChangeRestartSettleMs's own comment for why this is now needed
-    // on purpose (the background-rebuild fix removed the accidental delay
-    // the old synchronous rebuild used to leave here). Re-checks generation
-    // after the wait: a newer rate change/connect/disconnect during the
-    // settle window supersedes this one, same guard startP2ClientSession()
-    // itself already relies on for its own queued calls.
-    QTimer::singleShot(kRateChangeRestartSettleMs, this, [this, generation]() {
+
+    // LIVE rate change: tell the radio the new rate on the RUNNING session
+    // rather than stopping and restarting it. p2app services DDC-Specific in
+    // a continuous loop and applies a rate change with a direct FPGA
+    // register write, with no teardown of its own -- verified in its source,
+    // see P2Client::setDdcRateLive()'s own comment. That answers the
+    // question beginRateChange()'s comment left open, and removes the whole
+    // stop -> settle -> restart -> reconnect-timeout sequence (seconds) that
+    // made every zoom step visibly stall.
+    //
+    // The channel swap already happened (queued just above this call), so
+    // for a brief moment the NEW channel is fed samples still arriving at
+    // the OLD rate, until the radio's register write takes effect. That is
+    // what the mute above covers, and what the short settle below waits out
+    // -- a small fraction of the old restart's cost.
+    // Sent THREE times across the settle window, not once. This is
+    // fire-and-forget UDP and nothing re-asserts it -- onKeepaliveTick()
+    // resends High Priority every 100 ms but never DDC-Specific. A single
+    // lost datagram would leave the radio streaming at the old rate while
+    // the new WdspChannel, emitPanState() and AnanDroopCalibrator::
+    // setLandedRate() all record the new one: wrong span, wrong audio pitch,
+    // no error, until the next zoom. The restart path this replaces had
+    // implicit confirmation -- a lost packet meant no stream, and the
+    // 6000 ms connect timeout said so -- and that detection is gone.
+    //
+    // Repeating is safe because the packet is idempotent: p2app's
+    // WriteP2DDCRateRegister() fires on change and its companion
+    // HandlerCheckDDCSettings() is empty, so a duplicate at the same rate is
+    // a no-op on the radio. Cheaper than adding an ack this protocol does
+    // not offer. (aethersdr-agent, #5547 review, Blocker 1.)
+    const int rateKsps = m_pendingDspConfig.inputSampleRateHz / 1000;
+    auto sendRate = [this, rateKsps, generation]() {
         if (generation != m_connectGeneration)
             return;
-        startP2ClientSession(generation);
+        QMetaObject::invokeMethod(m_client, "setDdcRateLive", Qt::QueuedConnection,
+                                  Q_ARG(int, 0), Q_ARG(int, rateKsps));
+    };
+    sendRate();
+    for (const int delayMs : kRateChangeResendMs)
+        QTimer::singleShot(delayMs, this, sendRate);
+
+    QTimer::singleShot(kRateChangeLiveSettleMs, this, [this, generation]() {
+        // Same generation guard the restart path used: a newer rate
+        // change/connect/disconnect during the settle window supersedes this.
+        if (generation != m_connectGeneration)
+            return;
+        QMetaObject::invokeMethod(m_dsp, "setAudioMuted", Qt::QueuedConnection,
+                                  Q_ARG(bool, false));
+        m_rateChanging = false;
+        emitPanState();
+        // A zoom the operator kept turning while this ran: apply the latest
+        // request now rather than stranding the display a step behind.
+        retryPendingRateChange();
     });
 }
 
@@ -1024,13 +1129,34 @@ QString AnanBackend::persistDroopTables(const QMap<int, anan::DroopCorrectionTab
 
 QVariantMap AnanBackend::droopStatus() const
 {
+    // EVERY DDC0 rate, tagged with where its correction came from -- not just
+    // the swept ones. Reporting only measuredTables() told the operator
+    // "nothing measured" while the defaults connectRadio() seeds were live on
+    // the display, so a panadapter that looked wrong had no surface anywhere
+    // connecting it to a correction that was in fact being applied. The tag
+    // is what keeps "derived from the gateware" and "measured on this radio"
+    // distinguishable rather than collapsing them into one list.
     QVariantList corrections;
-    const auto& tables = m_droopCalibrator.measuredTables();
-    for (auto it = tables.constBegin(); it != tables.constEnd(); ++it) {
-        const auto [lo, hi] = std::minmax_element(it.value().begin(), it.value().end());
-        corrections.append(QVariantMap{{QStringLiteral("rateKsps"), it.key()},
-                                      {QStringLiteral("minDb"), *lo},
-                                      {QStringLiteral("maxDb"), *hi}});
+    const auto& measured = m_droopCalibrator.measuredTables();
+    for (const int rateKsps : defaultDroopRatesKsps()) {
+        const auto it = measured.constFind(rateKsps);
+        const bool isMeasured = it != measured.constEnd();
+        // A default is only live once connectRadio() has actually seeded it.
+        // Before that the rate genuinely carries no correction and must not
+        // claim one -- measured results, by contrast, outlive the connection
+        // because the calibrator holds them for the session.
+        const DroopCorrectionTable* table =
+            isMeasured ? &it.value()
+                       : (m_connected ? defaultDroopTableForRate(rateKsps) : nullptr);
+        if (!table)
+            continue;
+        const auto [lo, hi] = std::minmax_element(table->begin(), table->end());
+        corrections.append(QVariantMap{
+            {QStringLiteral("rateKsps"), rateKsps},
+            {QStringLiteral("minDb"), *lo},
+            {QStringLiteral("maxDb"), *hi},
+            {QStringLiteral("source"), isMeasured ? QStringLiteral("measured")
+                                                  : QStringLiteral("default")}});
     }
     return {{QStringLiteral("running"), m_droopCalibrator.isRunning()},
             {QStringLiteral("rateIndex"), m_droopCalibrator.rateIndex()},

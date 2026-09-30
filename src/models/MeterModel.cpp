@@ -86,6 +86,10 @@ void MeterModel::setTgxlHandle(quint32 handle)
     m_lastTgxlSwrUpdateMs = 0;
     m_ampFwdPwrIdx = -1;
     m_ampSwrIdx = -1;
+    m_ampDrvIdx = -1;
+    m_ampDrv = 0.0f;
+    m_hasAmpDrvValue = false;
+    m_hasAmpPwrValue = false;
     m_ampTempIdx = -1;
     for (auto it = m_defs.constBegin(); it != m_defs.constEnd(); ++it) {
         const auto& def = *it;
@@ -99,6 +103,13 @@ void MeterModel::setTgxlHandle(quint32 handle)
                 m_tgxlSwrIdx = def.index;
             else
                 m_ampSwrIdx = def.index;
+        } else if (def.source == "AMP" && def.name == "DRV" && def.unit == "dBm") {
+            // Handle-matched like FWD and RL even though only the PGXL
+            // publishes DRV today: the routing rule is "which device is this
+            // meter about", and answering it per-name would put a tuner's
+            // drive meter on the amplifier's panel the day one appears.
+            if (handle == 0 || def.sourceIndex != static_cast<int>(handle))
+                m_ampDrvIdx = def.index;
         } else if (def.source == "AMP" && def.name == "TEMP") {
             m_ampTempIdx = def.index;
         }
@@ -211,6 +222,12 @@ void MeterModel::defineMeter(const MeterDef& def)
         else
             m_ampSwrIdx = def.index;
     }
+    else if (def.source == "AMP" && def.name == "DRV" && def.unit == "dBm") {
+        // Exciter power measured at the amplifier's input. See setTgxlHandle
+        // for why this is handle-matched rather than name-matched.
+        if (m_tgxlHandle == 0 || def.sourceIndex != static_cast<int>(m_tgxlHandle))
+            m_ampDrvIdx = def.index;
+    }
     else if (def.source == "AMP" && def.name == "TEMP")
         m_ampTempIdx = def.index;
 
@@ -267,7 +284,28 @@ void MeterModel::removeMeter(int index)
     const bool removedCompSource = m_compPeakIdxByTxSource.removeIf(matchesIndex) > 0;
     const bool removedCompSlice = m_compPeakIdxBySlice.removeIf(matchesIndex) > 0;
     const bool compressionMapChanged = removedCompSource || removedCompSlice;
-    if (index == m_fwdPwrIdx) { m_fwdPwrIdx = -1; m_fwdPwrUnit.clear(); }
+    if (index == m_fwdPwrIdx) {
+        m_fwdPwrIdx = -1;
+        m_fwdPwrUnit.clear();
+        // AND THE SAMPLE, not only the route. Clearing the index alone left
+        // m_fwdPower and m_lastFwdPowerUpdateMs holding the departed meter's
+        // reading, and fwdPowerIfLive() gates on the STAMP: declare any FWDPWR
+        // meter again inside kTxMeterStaleMs -- which defineMeter() itself
+        // triggers when an index is reused for a different meter -- and
+        // `get radio`.txPower answers the previous meter's smoothed watts for
+        // one that has carried no packet. That is the declared-but-never-fed
+        // case this whole change exists to report as null. REFPWR immediately
+        // below already zeroed both of its members; this is that, for the
+        // reading that has two.
+        //
+        // Zeroing the stamp also puts swrSampleLive() back on its
+        // "backend never published forward power" branch, which is correct: a
+        // radio whose FWDPWR meter has been removed is a radio with no forward
+        // power to gate the ratio on, exactly like one that never declared it.
+        m_fwdPower = 0.0f;
+        m_fwdPowerInstant = 0.0f;
+        m_lastFwdPowerUpdateMs = 0;
+    }
     if (index == m_refPwrIdx) {
         m_refPwrIdx = -1;
         m_refPwrUnit.clear();
@@ -319,9 +357,39 @@ void MeterModel::removeMeter(int index)
         m_supplyIdx = -1;
         m_hasSupplyVoltsValue = false;   // the sample cannot outlive its meter
     }
-    if (index == m_ampFwdPwrIdx) m_ampFwdPwrIdx = -1;
-    if (index == m_ampSwrIdx)    m_ampSwrIdx = -1;
-    if (index == m_ampTempIdx)   m_ampTempIdx = -1;
+    bool ampMeterWithdrawn = false;
+    if (index == m_ampFwdPwrIdx) {
+        m_ampFwdPwrIdx = -1;
+        m_ampFwdPwr = 0.0f;
+        ampMeterWithdrawn = true;
+    }
+    if (index == m_ampSwrIdx) {
+        m_ampSwrIdx = -1;
+        m_ampSwr = 1.0f;
+        ampMeterWithdrawn = true;
+    }
+    if (m_ampFwdPwrIdx < 0 && m_ampSwrIdx < 0) m_hasAmpPwrValue = false;
+    if (index == m_ampDrvIdx) {
+        m_ampDrvIdx = -1;
+        m_ampDrv = 0.0f;
+        m_hasAmpDrvValue = false;
+        ampMeterWithdrawn = true;
+    }
+    if (index == m_ampTempIdx) {
+        m_ampTempIdx = -1;
+        m_ampTemp = 0.0f;
+        ampMeterWithdrawn = true;
+    }
+    // Announce the withdrawal. Clearing the cache is not enough on its own:
+    // the amplifier panel only ever hears about these meters through this
+    // signal, so without it the row keeps rendering the last reading of a
+    // meter that no longer exists — a drive figure, at full scale, for an
+    // amplifier nobody is talking to any more.
+    if (ampMeterWithdrawn) {
+        emit ampMetersChanged(m_ampFwdPwr, m_ampSwr, m_ampTemp,
+                              m_hasAmpDrvValue ? m_ampDrv : 0.0f,
+                              m_hasAmpDrvValue);
+    }
     if (index == m_tgxlFwdIdx) {
         m_tgxlFwdIdx = -1;
         m_tgxlFwdPwr = 0.0f;
@@ -470,6 +538,7 @@ void MeterModel::clear()
     m_hasSupplyVoltsValue = false;
     m_ampFwdPwrIdx = -1;
     m_ampSwrIdx = -1;
+    m_ampDrvIdx = -1;
     m_ampTempIdx = -1;
     m_tgxlFwdIdx = -1;
     m_tgxlSwrIdx = -1;
@@ -478,7 +547,6 @@ void MeterModel::clear()
     m_tgxlSwr = 1.0f;
     m_lastTgxlFwdPowerUpdateMs = 0;
     m_lastTgxlSwrUpdateMs = 0;
-    m_sLevel = -130.0f;
     m_fwdPower = 0.0f;
     m_fwdPowerInstant = 0.0f;
     m_reflectedPower = 0.0f;
@@ -502,6 +570,9 @@ void MeterModel::clear()
     m_supplyVolts = 0.0f;
     m_ampFwdPwr = 0.0f;
     m_ampSwr = 1.0f;
+    m_ampDrv = 0.0f;
+    m_hasAmpDrvValue = false;
+    m_hasAmpPwrValue = false;
     m_ampTemp = 0.0f;
     emit metersCleared();
 }
@@ -781,6 +852,57 @@ std::optional<float> MeterModel::swrIfLive() const
                                                : std::nullopt;
 }
 
+std::optional<float> MeterModel::sLevelForSlice(int sliceIndex) const
+{
+    const auto it = m_sLevelIdxBySlice.constFind(sliceIndex);
+    if (it == m_sLevelIdxBySlice.constEnd()) {
+        return std::nullopt;      // this receiver declares no LEVEL meter
+    }
+    const int index = it.value();
+    // DECLARED IS NOT FED AND FED IS NOT CURRENT. m_sLevelIdxBySlice is
+    // populated by the meter DEFINITION, so gating on the index alone would
+    // publish the m_values default for a meter no packet has ever carried —
+    // the fabricated-reading failure this whole issue is about, in a new
+    // place. vitalIsFresh is the predicate `get radio` already runs over
+    // PATEMP (#5516), reused here so one window governs both rather than a
+    // third literal appearing next to two existing ones. At the ~100 Hz the
+    // SLC:LEVEL row is fed while receiving, kVitalsFreshMs is 150 packets of
+    // slack; it bites only when the stream has actually stopped.
+    //
+    // The declared-and-fed argument is a literal true because valueAgeMs()
+    // already carries it: it returns -1 when the stamp is 0 or no value has
+    // been stored, and vitalIsFresh() rejects a negative age. Re-deriving the
+    // stamp here would be a second expression that has to agree with the
+    // first. (ten9876's review of #5499)
+    if (!vitalIsFresh(true, valueAgeMs(index))) {
+        return std::nullopt;
+    }
+    return m_values.value(index, 0.0f);
+}
+
+std::optional<float> MeterModel::sLevelIfLive() const
+{
+    // One receiver, one answer. See the header: with two LEVEL meters declared
+    // there is no single "the" S-level, and resolving it by recency would
+    // reintroduce #155 through the back door.
+    if (m_sLevelIdxBySlice.size() != 1) {
+        return std::nullopt;
+    }
+    return sLevelForSlice(m_sLevelIdxBySlice.constBegin().key());
+}
+
+std::optional<float> MeterModel::fwdPowerIfLive() const
+{
+    if (m_fwdPwrIdx < 0 || m_lastFwdPowerUpdateMs <= 0) {
+        return std::nullopt;      // undeclared, or declared and never fed
+    }
+    const qint64 age = QDateTime::currentMSecsSinceEpoch() - m_lastFwdPowerUpdateMs;
+    if (age < 0 || age > kTxMeterStaleMs) {
+        return std::nullopt;
+    }
+    return m_fwdPower;
+}
+
 bool MeterModel::hasRecentTxMeters(qint64 maxAgeMs) const
 {
     if (m_lastTxMeterUpdateMs <= 0 || maxAgeMs < 0)
@@ -1006,10 +1128,16 @@ void MeterModel::applyValues(const QVector<quint16>& ids, const QVector<Value>& 
             tgxlChanged = true;
         } else if (idx == m_ampFwdPwrIdx) {
             m_ampFwdPwr = std::pow(10.0f, v / 10.0f) / 1000.0f;  // dBm → watts
+            m_hasAmpPwrValue = true;
             ampChanged = true;
         } else if (idx == m_ampSwrIdx) {
             float rho = std::pow(10.0f, -v / 20.0f);
             m_ampSwr = (rho < 0.999f) ? (1.0f + rho) / (1.0f - rho) : 99.9f;
+            m_hasAmpPwrValue = true;
+            ampChanged = true;
+        } else if (idx == m_ampDrvIdx) {
+            m_ampDrv = std::pow(10.0f, v / 10.0f) / 1000.0f;  // dBm → watts
+            m_hasAmpDrvValue = true;
             ampChanged = true;
         } else if (idx == m_ampTempIdx) {
             m_ampTemp = v;
@@ -1088,7 +1216,9 @@ void MeterModel::applyValues(const QVector<quint16>& ids, const QVector<Value>& 
     if (hwChanged)
         emit hwTelemetryChanged(m_paTemp, m_supplyVolts);
     if (ampChanged)
-        emit ampMetersChanged(m_ampFwdPwr, m_ampSwr, m_ampTemp);
+        emit ampMetersChanged(m_ampFwdPwr, m_ampSwr, m_ampTemp,
+                              m_hasAmpDrvValue ? m_ampDrv : 0.0f,
+                              m_hasAmpDrvValue);
     if (tgxlChanged)
         emit tgxlMetersChanged(m_tgxlFwdPwr, m_tgxlSwr);
 }

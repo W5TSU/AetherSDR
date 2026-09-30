@@ -11,7 +11,9 @@ PgxlConnection::PgxlConnection(QObject* parent)
     connect(&m_socket, &QTcpSocket::readyRead, this, &PgxlConnection::onReadyRead);
     connect(&m_socket, &QTcpSocket::errorOccurred, this, &PgxlConnection::onError);
 
-    m_pollTimer.setInterval(200);  // 5 Hz for responsive metering
+    // Starts at the receive rate; status frames move it. See the header for
+    // where the two numbers come from -- both measured on this amplifier.
+    m_pollTimer.setInterval(kPollRxMs);
     connect(&m_pollTimer, &QTimer::timeout, this, &PgxlConnection::pollStatus);
 
     // Retries every 5s indefinitely until the device returns or the user disconnects.
@@ -34,11 +36,13 @@ void PgxlConnection::connectToPgxl(const QString& host, quint16 port)
     if (m_connected) {
         m_deliberateDisconnect = true;
         m_pollTimer.stop();
+    m_pollInFlight = false;
         m_connected = false;
         m_socket.abort();  // synchronous — onDisconnected will not fire
         m_deliberateDisconnect = false;
     }
     m_seq = 0;
+    m_setupReadSeq = 0;
     m_gotVersion = false;
     m_version.clear();
     m_readBuf.clear();
@@ -51,6 +55,7 @@ void PgxlConnection::disconnect()
     m_deliberateDisconnect = true;
     m_reconnectTimer.stop();
     m_pollTimer.stop();
+    m_pollInFlight = false;
     m_connected = false;
     m_socket.disconnectFromHost();
 }
@@ -64,6 +69,7 @@ void PgxlConnection::onDisconnected()
 {
     qCDebug(lcTuner) << "PgxlConnection: disconnected";
     m_pollTimer.stop();
+    m_pollInFlight = false;
     m_connected = false;
     emit disconnected();
     if (!m_deliberateDisconnect && m_autoReconnect && !m_lastHost.isEmpty()) {
@@ -111,6 +117,10 @@ void PgxlConnection::processLine(const QString& line)
         qCInfo(lcTuner) << "PgxlConnection: PGXL version" << m_version;
 
         sendCommand("info");
+        // Read the stored configuration up front. A `setup` write has to carry
+        // the whole group, so the values we are not changing have to be known
+        // before the operator can change the one they are.
+        m_setupReadSeq = sendCommand("setup read");
         sendCommand("status");
 
         m_connected = true;
@@ -119,12 +129,47 @@ void PgxlConnection::processLine(const QString& line)
         return;
     }
 
+    // Alert: M|<text>, or M| to clear. Its own frame type — the same one the
+    // tuner sends, on the same vendor's protocol. Unlike R and S it carries
+    // no sequence number, because there is no command to correlate it with:
+    // it is broadcast to every connected client rather than answering the one
+    // that acted. An empty body is the clear, not an alert whose text happens
+    // to be blank.
+    if (line.startsWith('M') && line.size() > 1 && line[1] == '|') {
+        const QString text = line.mid(2).trimmed();
+        qCDebug(lcTuner) << "PgxlConnection: alert" << (text.isEmpty() ? "(cleared)" : text);
+        emit alertChanged(text);
+        return;
+    }
+
     // Response: R<seq>|<code>|<body>
     if (line.startsWith('R')) {
         int pipe1 = line.indexOf('|');
         int pipe2 = (pipe1 >= 0) ? line.indexOf('|', pipe1 + 1) : -1;
         if (pipe2 >= 0) {
+            const quint32 seq = line.mid(1, pipe1 - 1).toUInt();
+            const QString code = line.mid(pipe1 + 1, pipe2 - pipe1 - 1).trimmed();
             QString body = line.mid(pipe2 + 1).trimmed();
+
+            // A refusal. The amplifier answers a bad parameter with 50000013
+            // and an unknown command with 50000015, both carrying an EMPTY
+            // body — so a reply that is only an error code reads as "nothing
+            // to parse" unless the code itself is looked at. Not looking is
+            // how a `setup` write that changed nothing went unnoticed through
+            // a whole round of testing.
+            if (!code.isEmpty() && code != QLatin1String("0")) {
+                qCWarning(lcTuner)
+                    << "PgxlConnection: command" << seq << "refused, code" << code;
+                // Release an outstanding `setup read`. Left armed it would
+                // never be answered, canWriteSetup() would stay false forever,
+                // and both MEffA and fan mode would be silently inert for the
+                // life of the connection.
+                if (m_setupReadSeq != 0 && seq == m_setupReadSeq)
+                    m_setupReadSeq = 0;
+                emit commandRefused(seq, code);
+                return;
+            }
+
             if (!body.isEmpty()) {
                 QMap<QString, QString> kvs;
                 const auto parts = body.split(' ', Qt::SkipEmptyParts);
@@ -133,8 +178,19 @@ void PgxlConnection::processLine(const QString& line)
                     if (eq > 0)
                         kvs.insert(part.left(eq), part.mid(eq + 1));
                 }
-                if (!kvs.isEmpty())
-                    emit statusUpdated(kvs);
+                if (!kvs.isEmpty()) {
+                    // A `setup read` reply looks exactly like a status reply —
+                    // key/value pairs in an R frame — so it is told apart by
+                    // the sequence number that asked for it, not by shape.
+                    if (m_setupReadSeq != 0 && seq == m_setupReadSeq) {
+                        m_setupReadSeq = 0;
+                        emit setupRead(kvs);
+                    } else {
+                        m_pollInFlight = false;   // reply landed
+                    applyPollRateFor(kvs);
+                        emit statusUpdated(kvs);
+                    }
+                }
             }
         }
         return;
@@ -164,9 +220,36 @@ void PgxlConnection::processLine(const QString& line)
             if (eq > 0)
                 kvs.insert(part.left(eq), part.mid(eq + 1));
         }
-        if (!kvs.isEmpty())
+        if (!kvs.isEmpty()) {
+            m_pollInFlight = false;   // reply landed
+                    applyPollRateFor(kvs);
             emit statusUpdated(kvs);
+        }
         return;
+    }
+}
+
+// TRANSMIT_A / TRANSMIT_B are the amplifier's keyed states; IDLE, STANDBY and
+// POWERUP are not. Anything unrecognised is treated as not transmitting, so a
+// new state string cannot pin the poll rate high forever.
+void PgxlConnection::applyPollRateFor(const QMap<QString, QString>& kvs)
+{
+    if (!kvs.contains(QStringLiteral("state"))) return;
+    const QString st = kvs.value(QStringLiteral("state"));
+    setTransmitting(st == QLatin1String("TRANSMIT_A")
+                    || st == QLatin1String("TRANSMIT_B"));
+}
+
+void PgxlConnection::setTransmitting(bool tx)
+{
+    if (m_transmitting == tx) return;
+    m_transmitting = tx;
+    const int interval = tx ? kPollTxMs : kPollRxMs;
+    if (m_pollTimer.interval() != interval) {
+        m_pollTimer.setInterval(interval);
+        // Restart so the new rate applies now rather than after the remainder
+        // of a 250 ms receive tick.
+        if (m_pollTimer.isActive()) m_pollTimer.start();
     }
 }
 
@@ -181,8 +264,14 @@ quint32 PgxlConnection::sendCommand(const QString& cmd)
 
 void PgxlConnection::pollStatus()
 {
-    if (m_connected)
-        sendCommand("status");
+    if (!m_connected) return;
+    if (m_pollInFlight && m_pollSent.isValid()
+        && m_pollSent.elapsed() < kPollStaleMs) {
+        return;   // previous poll still outstanding
+    }
+    m_pollInFlight = true;
+    m_pollSent.restart();
+    sendCommand("status");
 }
 
 } // namespace AetherSDR

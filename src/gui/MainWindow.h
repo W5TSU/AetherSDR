@@ -347,6 +347,11 @@ private slots:
     void onRadioMessage(const QString& text, MessageSeverity severity);
     void onSliceAdded(SliceModel* slice);
     void onSliceRemoved(int id);
+    // Push the transmit slice's frequency into TunerApplet's expanded port-A
+    // strip. Re-derived from scratch on every call rather than cached against
+    // a slice pointer: band recall DROPS and RE-CREATES the slice (keeping its
+    // id), so anything bound to the old object goes quietly stale.
+    void refreshTunerPortFrequency();
     // Ordinary RX close from the VFO ✕ / "Close Slice" menu (RFC #5468 P01).
     void requestSliceClose(int sliceId);
 
@@ -963,7 +968,7 @@ private:
     // Settle the bookkeeping for an auto-connect that has reached a terminal
     // state. A no-op when the connect in question was a manual one.
     void noteAutoConnectFinished(bool ok);
-    void updateExperimentalRadioSupport(bool connected);
+    void updateExperimentalRadioSupport(bool connected, bool identityWaitExpired = false);
     bool confirmClientSlotAvailability(const WanRadioInfo& info, QList<quint32>* disconnectHandles);
     bool sendWanRadioClientDisconnects(const QString& serial, const QList<quint32>& handles);
     void disconnectWanRadioClients(const WanRadioInfo& info);
@@ -1102,6 +1107,8 @@ private:
     // Only one radio session can own a live notice. Per-family suppression is
     // separate and lives under the Icom/HL2 keys in ExperimentalRadioSupport.
     QPointer<QMessageBox> m_experimentalRadioNotice;
+    QString m_experimentalRadioSupportIdentityKey;
+    quint64 m_experimentalRadioSupportGeneration{0};
     // Show a non-blocking recorder notice, deduped on `key`. Non-blocking is
     // the load-bearing part: the blocking form stalls the caller, which for
     // this signal is either the automation bridge's reply path or the MOX
@@ -1326,6 +1333,15 @@ private:
     QMetaObject::Connection m_tmate2RitConn;
     QMetaObject::Connection m_tmate2XitConn;
 #endif
+
+    // The amplifier's forward power and SWR reach the S-Meter, the cross-needle
+    // and the TMate2 from TWO sources — the radio-relayed AMP meters and the
+    // amplifier's own port-9008 status. They are the same measurement, so the
+    // choice is rate, not truth, and the rule has to be the same one the
+    // applet gauges use or the shared meters go back to last-writer-wins.
+    // See applyAmpTxMeters() and kRelayMeterFreshnessMs.
+    QElapsedTimer m_ampRelayTxStamp;
+    void applyAmpTxMeters(float watts, float swr, bool fromRelay);
 #ifdef Q_OS_LINUX
     EvdevEncoderManager*       m_dialBackend{nullptr};
 #elif defined(Q_OS_WIN) && defined(HAVE_HIDAPI)

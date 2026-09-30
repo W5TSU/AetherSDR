@@ -371,6 +371,18 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         }
     }, Qt::DirectConnection);
 
+    // EP6 interleaves every active DDC. Invalidate each partial FFT before
+    // the discontinuous datagram's samples arrive, including rewinds and
+    // duplicates. Like iqBlocksReady above, this runs on the I/O thread and
+    // uses its published DSP list (not the GUI thread's m_rx).
+    connect(m_metis, &MetisClient::rxSequenceGap, this, [this](quint32) {
+        for (auto* dsp : m_ioDsps) {
+            if (dsp) {
+                dsp->onSequenceGap();
+            }
+        }
+    }, Qt::DirectConnection);
+
     // Link lifecycle: first EP6 -> connected; stop -> disconnected.
     connect(m_metis, &MetisClient::linkUp, this, [this] {
         m_connected = true;
@@ -1610,6 +1622,9 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.txPowerBands = {};
     c.declaredBandRanges = {};
     c.family = QStringLiteral("hl2");
+    // setTune() is the built-in test tone at ZERO offset — a single carrier
+    // exactly on the TX NCO. Nothing here can produce a second tone.
+    c.twoToneGenerator = std::nullopt;
     c.manufacturer = QStringLiteral("Hermes-Lite");
     c.model = QStringLiteral("Hermes-Lite 2");
     c.fmTonePresentation = FmTonePresentation::Legacy;
@@ -5418,10 +5433,16 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
 
     // DRIVE: WHAT WAS ASKED FOR, AND WHAT WAS WRITTEN (#4912).
     //
-    // Nothing anywhere reported the APPLIED drive. `get transmit` has rfPower
-    // and `get radio` has txPower, but both read TransmitModel — the operator's
-    // request — which is exactly the readback-shares-the-failure problem this
-    // section exists to solve. Worse, applyDrive()'s transmit gate forces the
+    // Nothing anywhere reported the APPLIED drive. `get transmit` has rfPower,
+    // which reads TransmitModel — the operator's request — which is exactly
+    // the readback-shares-the-failure problem this section exists to solve.
+    // (This used to name `get radio`.txPower alongside it as a second reader of
+    // TransmitModel. It was neither: it read a RadioModel member nothing in the
+    // tree assigned, so it was worse than the readback this paragraph warns
+    // about. It now carries the measured forward power, qualified — see
+    // AutomationServer's radioSnapshot, #5499 item 1.)
+    //
+    // Worse, applyDrive()'s transmit gate forces the
     // register to 0 while the requested percent reads back untouched, so
     // "commanded but never applied" was invisible to automation in the one area
     // where it is safety-adjacent.
@@ -5668,6 +5689,24 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
         static_cast<qulonglong>(m_silenceRecoveryAttempts));
     put("silenceRecoveriesCompleted", QStringLiteral("EP6 silence recoveries completed"),
         static_cast<qulonglong>(m_silenceRecoveriesCompleted));
+    // Partial FFT windows discarded at discontinuities, including accepted
+    // rewinds and duplicates. Poll each DSP's atomic like the ADC peak rows;
+    // its lifetime is protected by the GUI-owned receiver list.
+    for (const auto& ids : m_ids.all()) {
+        const Receiver* r = rx(ids.ddcIndex);
+        // Guarded on `!r` alone, like the sibling loops: a receiver with no DSP
+        // chain is one between rebuilds, and that is "not reported" rather than
+        // a zero that would read as "the panadapter is clean".
+        if (!r)
+            continue;
+        const QString suffix = m_ids.size() > 1
+                                   ? QStringLiteral(" (RX%1)").arg(ids.uiNumber + 1)
+                                   : QString();
+        put(QStringLiteral("spectrumGapDiscards%1").arg(ids.uiNumber).toUtf8().constData(),
+            QStringLiteral("Panadapter frames discarded at a sequence gap") + suffix,
+            r->dsp ? QVariant(static_cast<qulonglong>(r->dsp->spectrumGapDiscards()))
+                   : QVariant());
+    }
     // The wideband bandscope. Reported unconditionally rather than only when it
     // is on, because "off" is the answer the reader of a health dialog needs
     // first — an absent row would leave "is this costing me link budget?"

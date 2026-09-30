@@ -890,6 +890,16 @@ target_include_directories(hl2_spectrum_test PRIVATE src ${FFTW3_INCLUDE_DIRS})
 target_link_libraries(hl2_spectrum_test PRIVATE aethercore Qt6::Core ${FFTW3_LIBRARIES})
 add_test(NAME hl2_spectrum_test COMMAND hl2_spectrum_test)
 
+# Transport discontinuities must invalidate partial FFTs before IQ delivery.
+# Covers both spectrum classes, both DSP stages, and both production ingest
+# handlers through socket-free friend seams. Qt6::Network is needed by the
+# clients, but neither client is started and no socket is created or bound.
+add_executable(spectrum_sequence_gap_test tests/spectrum_sequence_gap_test.cpp)
+target_include_directories(spectrum_sequence_gap_test PRIVATE src tests)
+target_link_libraries(spectrum_sequence_gap_test
+    PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME spectrum_sequence_gap_test COMMAND spectrum_sequence_gap_test)
+
 # HL2 RX DSP — IQ -> WdspChannel demod + Hl2Spectrum. Links aethercore (WDSP+FFTW).
 add_executable(hl2_rxdsp_test tests/hl2_rxdsp_test.cpp)
 target_include_directories(hl2_rxdsp_test PRIVATE src)
@@ -2406,6 +2416,15 @@ target_include_directories(kiwi_sdr_waterfall_setup_test PRIVATE src)
 target_link_libraries(kiwi_sdr_waterfall_setup_test PRIVATE aethercore Qt6::Core)
 add_test(NAME kiwi_sdr_waterfall_setup_test COMMAND kiwi_sdr_waterfall_setup_test)
 
+# Socket-free regression: KiwiSDR zoom_cap (request ceiling) must not replace
+# zoom_max (start fixed-point scale); v1.900 shared waterfalls send both.
+add_executable(kiwi_sdr_waterfall_zoom_cap_test
+    tests/kiwi_sdr_waterfall_zoom_cap_test.cpp
+)
+target_include_directories(kiwi_sdr_waterfall_zoom_cap_test PRIVATE src)
+target_link_libraries(kiwi_sdr_waterfall_zoom_cap_test PRIVATE aethercore Qt6::Core)
+add_test(NAME kiwi_sdr_waterfall_zoom_cap_test COMMAND kiwi_sdr_waterfall_zoom_cap_test)
+
 add_executable(kiwi_sdr_trace_math_test
     tests/kiwi_sdr_trace_math_test.cpp
 )
@@ -2469,6 +2488,28 @@ add_executable(anan_droop_correction_test
 )
 target_include_directories(anan_droop_correction_test PRIVATE src)
 add_test(NAME anan_droop_correction_test COMMAND anan_droop_correction_test)
+
+add_executable(anan_droop_defaults_test
+    tests/anan_droop_defaults_test.cpp
+    src/core/backends/anan/AnanDroopDefaults.cpp
+    src/core/backends/anan/AnanDroopCorrection.cpp
+)
+target_include_directories(anan_droop_defaults_test PRIVATE src)
+add_test(NAME anan_droop_defaults_test COMMAND anan_droop_defaults_test)
+
+# What the shipped droop defaults do to the NOISE-FLOOR AUTO-ADJUST -- a
+# different consumer from the panadapter trace, and the one #5726 opened for
+# this radio. Drives the real applyDroopCorrectionDb/applyEdgeFade and the real
+# estimateNoiseFloorDbm (NoiseFloorEstimator.h, header-only and Qt-free for
+# exactly this reason), so it cannot drift from what the widget runs.
+# No socket, no Qt, no radio.
+add_executable(anan_droop_noise_floor_test
+    tests/anan_droop_noise_floor_test.cpp
+    src/core/backends/anan/AnanDroopDefaults.cpp
+    src/core/backends/anan/AnanDroopCorrection.cpp
+)
+target_include_directories(anan_droop_noise_floor_test PRIVATE src)
+add_test(NAME anan_droop_noise_floor_test COMMAND anan_droop_noise_floor_test)
 
 # AnanDroopCalibrator's pure math (median-in-power averaging, central-window
 # reference, clamp) -- no live radio needed. Ported from this feature's
@@ -3230,6 +3271,146 @@ set_tests_properties(relay_bar_a11y_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     SKIP_RETURN_CODE 77)
 
+# TGXL front-panel widgets — the presentation TunerApplet switches to when
+# popped out or placed on the canvas. Pins that a missing reading renders as
+# N/A rather than stale, and that RelayDial carries RelayBar's announcement
+# debounce (#4565). ThemeManager is linked for the dial's painted colours.
+add_executable(tgxl_panel_widgets_test
+    tests/tgxl_panel_widgets_test.cpp
+    src/gui/AccessoryPanelWidgets.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+)
+target_include_directories(tgxl_panel_widgets_test PRIVATE src)
+target_link_libraries(tgxl_panel_widgets_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets
+)
+set_target_properties(tgxl_panel_widgets_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_panel_widgets_test COMMAND tgxl_panel_widgets_test)
+# Exit 77 == no accessibility backend; see relay_bar_a11y_test above.
+set_tests_properties(tgxl_panel_widgets_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    SKIP_RETURN_CODE 77)
+
+# The PGXL's direct port-9008 protocol — the per-port block (band, bias
+# profile, source radio), the state word the keying lamps are derived from,
+# and the `M|<text>` alert frame — against a stub amplifier on loopback.
+add_executable(pgxl_direct_protocol_test
+    tests/pgxl_direct_protocol_test.cpp
+    src/core/PgxlConnection.cpp
+    src/models/AmpModel.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(pgxl_direct_protocol_test PRIVATE src)
+target_link_libraries(pgxl_direct_protocol_test PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+set_target_properties(pgxl_direct_protocol_test PROPERTIES AUTOMOC ON)
+add_test(NAME pgxl_direct_protocol_test COMMAND pgxl_direct_protocol_test)
+# Exit 77 == no loopback bind available in the sandbox.
+set_tests_properties(pgxl_direct_protocol_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# The PGXL front-panel presentation: which controls each presentation shows,
+# what the port strips report, and that the panel's floor does not ratchet.
+add_executable(pgxl_panel_test
+    tests/pgxl_panel_test.cpp
+    src/gui/AmpApplet.cpp
+    src/gui/AccessoryPanelWidgets.cpp
+    src/gui/DragValuePopup.cpp
+    src/models/AmpModel.cpp
+    src/core/PgxlConnection.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(pgxl_panel_test PRIVATE src tests)
+target_link_libraries(pgxl_panel_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Test
+)
+set_target_properties(pgxl_panel_test PROPERTIES AUTOMOC ON)
+add_test(NAME pgxl_panel_test COMMAND pgxl_panel_test)
+# Exit 77 == no loopback bind available in the sandbox.
+set_tests_properties(pgxl_panel_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    SKIP_RETURN_CODE 77)
+
+# The TGXL's direct port-9010 protocol — alert frames (`M|<text>`, empty body
+# clears) and the per-port status block — against a stub tuner on loopback.
+# Frames are verbatim from a TunerGeniusDesk capture (fw 1.2.17).
+add_executable(tgxl_direct_protocol_test
+    tests/tgxl_direct_protocol_test.cpp
+    src/core/TgxlConnection.cpp
+    src/models/TunerModel.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(tgxl_direct_protocol_test PRIVATE src)
+target_link_libraries(tgxl_direct_protocol_test PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+set_target_properties(tgxl_direct_protocol_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_direct_protocol_test COMMAND tgxl_direct_protocol_test)
+# Exit 77 == no loopback bind available; see relay_bar_a11y_test above.
+set_tests_properties(tgxl_direct_protocol_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# Docked/expanded parity for the TGXL applet: the split is presentation only,
+# so the rail tile must still gain STOP-while-tuning and the full-width alert
+# banner. What the rail deliberately omits is not asserted.
+add_executable(tgxl_docked_parity_test
+    tests/tgxl_docked_parity_test.cpp
+    src/gui/TunerApplet.cpp
+    src/gui/AccessoryPanelWidgets.cpp
+    src/gui/DragValuePopup.cpp
+    src/models/TunerModel.cpp
+    src/models/MeterModel.cpp
+    src/models/BandSettings.cpp
+    src/core/TgxlConnection.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(tgxl_docked_parity_test PRIVATE src)
+target_link_libraries(tgxl_docked_parity_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
+)
+set_target_properties(tgxl_docked_parity_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_docked_parity_test COMMAND tgxl_docked_parity_test)
+set_tests_properties(tgxl_docked_parity_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# TGXL applet port strips and STANDBY ordering: the relay path claims no
+# trigger mode it cannot know ("RF SENSE"), and BYPASS -> STANDBY commands
+# operate first so the radio's in-between status already reads STANDBY.
+add_executable(tgxl_applet_ports_test
+    tests/tgxl_applet_ports_test.cpp
+    src/gui/TunerApplet.cpp
+    src/gui/AccessoryPanelWidgets.cpp
+    src/gui/DragValuePopup.cpp
+    src/models/TunerModel.cpp
+    src/models/MeterModel.cpp
+    src/models/BandSettings.cpp
+    src/core/TgxlConnection.cpp
+    src/core/ThemeManager.cpp
+    src/core/ThemeSeedGenerated.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(tgxl_applet_ports_test PRIVATE src)
+target_link_libraries(tgxl_applet_ports_test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
+)
+set_target_properties(tgxl_applet_ports_test PROPERTIES AUTOMOC ON)
+add_test(NAME tgxl_applet_ports_test COMMAND tgxl_applet_ports_test)
+set_tests_properties(tgxl_applet_ports_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(fm_tone_presentation_test
     tests/fm_tone_presentation_test.cpp
 )
@@ -3321,6 +3502,16 @@ add_test(NAME automation_json_id_test COMMAND automation_json_id_test)
 # Read-only external-device diagnostic registry and provider dispatch. The
 # platform-specific Ulanzi HID snapshot is supplied by MainWindow on macOS;
 # this test pins the bridge contract without requiring physical hardware.
+add_executable(automation_gauge_verb_test
+    tests/automation_gauge_verb_test.cpp
+    # HGauge.h's hover popup is header-inline and calls into this.
+    src/gui/DragValuePopup.cpp
+)
+target_include_directories(automation_gauge_verb_test PRIVATE src)
+target_link_libraries(automation_gauge_verb_test PRIVATE aethercore Qt6::Widgets)
+add_test(NAME automation_gauge_verb_test COMMAND automation_gauge_verb_test)
+set_tests_properties(automation_gauge_verb_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(automation_device_diagnostics_test
     tests/automation_device_diagnostics_test.cpp
 )
@@ -3826,6 +4017,26 @@ target_compile_definitions(meter_surfaces_test PRIVATE
 target_link_libraries(meter_surfaces_test PRIVATE Qt6::Core)
 add_test(NAME meter_surfaces_test COMMAND meter_surfaces_test)
 
+# #5499 item 2: socket-free rigctl STRENGTH. Two slice fixtures, two SLC:LEVEL
+# meters carrying different values, and an injected backend that only reports a
+# connection state — nothing is bound, opened or keyed.
+add_executable(rigctl_strength_slevel_test tests/rigctl_strength_slevel_test.cpp)
+target_include_directories(rigctl_strength_slevel_test PRIVATE src tests)
+target_link_libraries(rigctl_strength_slevel_test PRIVATE
+    aethercore Qt6::Core Qt6::Network)
+add_test(NAME rigctl_strength_slevel_test COMMAND rigctl_strength_slevel_test)
+
+# #5499 item 3: the noise-blanker hold invariant, read out of WdspChannel.cpp as
+# TEXT (same limitation, and same reason, as meter_surfaces_test above — the
+# facts never meet at compile time). Links nothing but Qt6::Core: it opens the
+# source file, it does not run the DSP.
+add_executable(wdsp_nb_hold_invariant_test tests/wdsp_nb_hold_invariant_test.cpp)
+target_include_directories(wdsp_nb_hold_invariant_test PRIVATE src)
+target_compile_definitions(wdsp_nb_hold_invariant_test PRIVATE
+    AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(wdsp_nb_hold_invariant_test PRIVATE Qt6::Core)
+add_test(NAME wdsp_nb_hold_invariant_test COMMAND wdsp_nb_hold_invariant_test)
+
 add_executable(health_applet_test
     tests/health_applet_test.cpp
     src/gui/HealthApplet.cpp
@@ -4253,6 +4464,23 @@ add_executable(icom_settings_test tests/icom_settings_test.cpp)
 target_include_directories(icom_settings_test PRIVATE src tests)
 target_link_libraries(icom_settings_test PRIVATE aethercore Qt6::Core Qt6::Test)
 add_test(NAME icom_settings_test COMMAND icom_settings_test)
+
+# One real IcomCredentials implementation with an injected, in-memory QtKeychain
+# job. Proves concurrent startup callers share one OS credential read without
+# touching a keychain, socket or radio.
+add_executable(icom_credentials_singleflight_test
+    tests/icom_credentials_singleflight_test.cpp
+    tests/fakes/qt6keychain/keychain.h
+    src/core/backends/icom/IcomCredentials.cpp
+)
+target_include_directories(icom_credentials_singleflight_test BEFORE PRIVATE
+    tests/fakes src)
+target_compile_definitions(icom_credentials_singleflight_test PRIVATE HAVE_KEYCHAIN)
+target_link_libraries(icom_credentials_singleflight_test PRIVATE Qt6::Core)
+set_target_properties(icom_credentials_singleflight_test PROPERTIES AUTOMOC ON)
+add_test(NAME icom_credentials_singleflight_test
+         COMMAND icom_credentials_singleflight_test)
+set_tests_properties(icom_credentials_singleflight_test PROPERTIES TIMEOUT 10)
 
 # ANAN-G2 settings ("Anan" root key, Principle V). Own process because
 # AppSettings is a process-wide singleton, same reasoning as icom_settings_test.
@@ -4847,6 +5075,20 @@ add_test(NAME connection_panel_size_test COMMAND connection_panel_size_test)
 set_tests_properties(connection_panel_size_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Leaving minimal mode after a launch in it must not draw the spectrum's first
+# QRhi frame inside the exit's resize cascade (#5915; #4363, #4990). Plain
+# widgets, offscreen, no GPU; the MainWindow ordering is read from the source,
+# since MainWindow is not linked into test targets.
+add_executable(minimal_mode_exit_order_test
+    tests/minimal_mode_exit_order_test.cpp
+)
+target_link_libraries(minimal_mode_exit_order_test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_compile_definitions(minimal_mode_exit_order_test PRIVATE
+    AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME minimal_mode_exit_order_test COMMAND minimal_mode_exit_order_test)
+set_tests_properties(minimal_mode_exit_order_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # A startup auto-connect that gives up must reopen the connection dialog rather
 # than leave the "Looking for your radio…" overlay up with no way back.
 #
@@ -5163,6 +5405,11 @@ target_link_libraries(backend_slice_lifecycle_test PRIVATE
     aethercore Qt6::Core Qt6::Test
 )
 add_test(NAME backend_slice_lifecycle_test COMMAND backend_slice_lifecycle_test)
+# Socket-free bridge diagnostics: injected backend and meter model, no server/peer.
+add_executable(automation_persist_diagnostics_test tests/automation_persist_diagnostics_test.cpp)
+target_include_directories(automation_persist_diagnostics_test PRIVATE src tests)
+target_link_libraries(automation_persist_diagnostics_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME automation_persist_diagnostics_test COMMAND automation_persist_diagnostics_test)
 # Socket-free HL2 gain persistence: boardMaxRx bypasses discovery; the test
 # never pumps events and cancels DSP setup before it can start Metis UDP.
 add_executable(hl2_gain_restore_test tests/hl2_gain_restore_test.cpp)
@@ -5372,7 +5619,10 @@ set_tests_properties(filter_passband_widget_test PROPERTIES
 add_executable(amp_applet_test
     tests/amp_applet_test.cpp
     src/gui/AmpApplet.cpp
+    src/gui/AccessoryPanelWidgets.cpp
     src/gui/DragValuePopup.cpp
+    src/models/AmpModel.cpp
+    src/core/PgxlConnection.cpp
     ${AETHER_SETTINGS_SOURCES}
     src/core/ThemeManager.cpp
     src/core/ThemeSeedGenerated.cpp
@@ -5381,7 +5631,7 @@ add_executable(amp_applet_test
 )
 target_include_directories(amp_applet_test PRIVATE src)
 target_link_libraries(amp_applet_test PRIVATE
-    Qt6::Core Qt6::Widgets Qt6::Test
+    Qt6::Core Qt6::Widgets Qt6::Network Qt6::Test
 )
 set_target_properties(amp_applet_test PROPERTIES AUTOMOC ON)
 add_test(NAME amp_applet_test COMMAND amp_applet_test)
@@ -5629,7 +5879,6 @@ set(AETHER_SETTINGS_CONSUMERS
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test
-    tx_operation_integration_test
     backend_slice_lifecycle_test
     waterfall_time_marker_settings_test
     extended_tnf_settings_test
@@ -5637,6 +5886,7 @@ set(AETHER_SETTINGS_CONSUMERS
     gui_nested_lifetime_test
     rx_applet_squelch_reconciliation_test
     rtl_slice_settings_test
+    automation_persist_diagnostics_test
     weather_radar_loading_test
     hl2_gain_restore_test
     icom_identity_test
@@ -5710,6 +5960,12 @@ set(AETHER_SETTINGS_CONSUMERS
     vkamp_connection_test
     system_info_dialog_test
     spectrum_overlay_band_highlight_test
+    tgxl_panel_widgets_test
+    tgxl_direct_protocol_test
+    tgxl_docked_parity_test
+    tgxl_applet_ports_test
+    pgxl_direct_protocol_test
+    pgxl_panel_test
 )
 foreach(_settings_consumer IN LISTS AETHER_SETTINGS_CONSUMERS)
     if(TARGET ${_settings_consumer})
@@ -5723,6 +5979,10 @@ endforeach()
 # leave these harnesses with unresolved bridge symbols.
 set(AETHER_AUTOMATION_SERVER_TESTS
     automation_audio_analyze_test   # fork-only; not in upstream's list
+    automation_gauge_verb_test
+
+    automation_persist_diagnostics_test
+
     automation_server_gesture_test
     automation_device_diagnostics_test
     automation_json_id_test
