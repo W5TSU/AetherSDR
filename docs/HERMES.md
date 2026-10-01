@@ -655,7 +655,7 @@ modulation ratio through the real chain, the closed-form `|H(f)|` at three audio
 rates, and the unconfigured bypass. Six 4 s bursts through the real chain cost
 2.5 s, so it is a cheap test. It used to take 178 s cold, because WDSP's first
 `OpenChannel` measures FFTW `PATIENT` plans (see `WdspChannel::open()`, cached
-at `$XDG_CACHE_HOME/aethersdr/wdsp-fftw-wisdom-<fftw version>`) and a CI container starts cold
+at `$XDG_CACHE_HOME/aethersdr/wdsp-fftw-wisdom-<key>`) and a CI container starts cold
 every run — which is why it sat at 188-190 s on the per-PR gate and came off it.
 
 **That is fixed, and not by caching the file.** Caching was the obvious move and
@@ -1004,8 +1004,11 @@ AETHER_AUTOMATION=1 AETHER_AUTOMATION_SOCKET=aethersdr-hl2 \
 
   After the explicit `AETHER_WDSP_WISDOM_DIR` override, macOS/Linux resolve
   `WdspChannel::wisdomPath()` through `$XDG_CACHE_HOME`, **else** `$HOME/.cache`,
-  with `/aethersdr/wdsp-fftw-wisdom-<fftw version>` appended, e.g.
-  `wdsp-fftw-wisdom-3.3.10-sse2-avx` (`WdspChannel::wisdomCacheFile()`).
+  with `/aethersdr/wdsp-fftw-wisdom-<key>` appended, e.g.
+  `wdsp-fftw-wisdom-3.3.10-d9276020`: the FFTW version and a hash of the
+  planner signature, both read from the header of FFTW's own wisdom export
+  (`WdspChannel::wisdomCacheFile()` / `wisdomCacheKeyFromHeader()`). Not from
+  the `fftw_version` data symbol, which the Windows FFTW DLL does not export.
   Windows uses `LOCALAPPDATA` instead of those two variables. An empty resolved
   directory falls back to the system temporary directory. Wisdom is imported
   before the channels are built and exported after.

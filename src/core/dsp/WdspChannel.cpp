@@ -8,6 +8,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <mutex>
@@ -119,22 +121,28 @@ std::filesystem::path wisdomDir()
 // upgrade costs nobody a re-measure, never written again.
 constexpr const char* kLegacyWisdomFile = "wdsp-fftw-wisdom";
 
-// "wdsp-fftw-wisdom-3.3.10-sse2-avx": FFTW's own version string, which names
-// both the release and the codelet set it was configured with -- exactly the
-// two things that decide whether FFTW will accept the file. Anything outside a
-// conservative filename alphabet becomes '_', so no build string can produce a
-// path separator.
+// "wdsp-fftw-wisdom-3.3.10-1a2b3c4d": the FFTW version and a hash of the
+// planner signature, read from the header of FFTW's own wisdom export, which
+// is exactly what FFTW checks before it accepts a wisdom file.
+//
+// Read through fftw_export_wisdom_to_string(), a FUNCTION, not the data symbol
+// fftw_version: the Windows FFTW DLL does not export fftw_version, and
+// referencing it broke the Windows link. Computed once per process. The export
+// reads FFTW's global wisdom store, so the first call must come from a caller
+// holding the FFTW planner lock; every caller does (loadWisdomOnce and
+// exportWisdomNow run under it, and wisdomCacheFile() takes it).
 std::string wisdomPath()
 {
-    std::string tag = fftw_version;
-    if (tag.rfind("fftw-", 0) == 0)
-        tag.erase(0, 5);
-    for (char& c : tag) {
-        const bool safe = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
-                       || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_';
-        if (!safe)
-            c = '_';
-    }
+    static std::once_flag once;
+    static std::string tag;
+    std::call_once(once, [] {
+        std::string header;
+        if (char* s = fftw_export_wisdom_to_string()) {
+            header = s;
+            fftw_free(s);
+        }
+        tag = WdspChannel::wisdomCacheKeyFromHeader(header);
+    });
     return (wisdomDir() / (std::string(kLegacyWisdomFile) + "-" + tag)).string();
 }
 
@@ -1088,7 +1096,42 @@ void WdspChannel::setWorkerHandoffPauseForTest(unsigned microseconds) noexcept
 
 std::string WdspChannel::wisdomCacheFile()
 {
+    auto lock = AetherSDR::fftwPlannerLock();
     return wisdomPath();
+}
+
+std::string WdspChannel::wisdomCacheKeyFromHeader(std::string_view header)
+{
+    // "(fftw-<version> fftw_wisdom <signature...>\n"
+    constexpr std::string_view kPrefix = "(fftw-";
+    constexpr std::string_view kMarker = " fftw_wisdom ";
+    if (header.substr(0, kPrefix.size()) != kPrefix)
+        return "unknown";
+    const std::size_t markerAt = header.find(kMarker);
+    if (markerAt == std::string_view::npos || markerAt <= kPrefix.size())
+        return "unknown";
+    std::string version(header.substr(kPrefix.size(), markerAt - kPrefix.size()));
+    const std::size_t sigAt = markerAt + kMarker.size();
+    const std::size_t lineEnd = header.find('\n', sigAt);
+    const std::string_view signature = header.substr(
+        sigAt, lineEnd == std::string_view::npos ? std::string_view::npos : lineEnd - sigAt);
+
+    // Filename-safe version: nothing outside this alphabet can become a path.
+    for (char& c : version) {
+        const bool safe = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
+                       || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_';
+        if (!safe)
+            c = '_';
+    }
+    // FNV-1a: stable across runs and platforms, unlike std::hash.
+    std::uint32_t h = 2166136261u;
+    for (const char c : signature) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 16777619u;
+    }
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08x", h);
+    return version + "-" + hex;
 }
 
 std::unique_lock<std::mutex> WdspChannel::fftwSetupLock()

@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Owns one complete WDSP channel and hides WDSP's process-global numeric
@@ -602,8 +603,16 @@ public:
     // The FFTW wisdom cache this process reads and writes: keyed by the FFTW
     // build it is linked against, so builds that link different FFTWs never
     // overwrite each other's plans (see wisdomPath() in WdspChannel.cpp).
-    // Honours AETHER_WDSP_WISDOM_DIR. For logs and tests.
+    // Honours AETHER_WDSP_WISDOM_DIR. For logs and tests. Takes the FFTW
+    // planner lock, so never call it while holding that lock.
     [[nodiscard]] static std::string wisdomCacheFile();
+
+    // The cache key for an FFTW wisdom header, e.g. "(fftw-3.3.10 fftw_wisdom
+    // #x458a31c8 #x92381c4c ...": "<version>-<8 hex of the signature>". The
+    // header is exactly what FFTW checks before accepting wisdom, so builds that
+    // would reject each other's plans get different files. "unknown" when the
+    // text is not a wisdom header. Pure; public for tests.
+    [[nodiscard]] static std::string wisdomCacheKeyFromHeader(std::string_view header);
 
 private:
     explicit WdspChannel(int channelId, const Config& config) noexcept;
