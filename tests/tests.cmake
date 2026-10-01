@@ -2755,6 +2755,14 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
 
+    # HackRF's receive chain on its own thread behind a bounded queue: the
+    # caller never runs the DSP, a busy DSP drops instead of piling up. No
+    # hardware.
+    add_executable(hackrf_rx_dsp_test tests/hackrf_rx_dsp_test.cpp)
+    target_include_directories(hackrf_rx_dsp_test PRIVATE src)
+    target_link_libraries(hackrf_rx_dsp_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_rx_dsp_test COMMAND hackrf_rx_dsp_test)
+
     # A cold HackRF connect must not freeze the GUI while WDSP plans its FFTs.
     # Needs a real HackRF and AETHER_HACKRF_HW_TEST=1; exits 77 (skipped)
     # otherwise, so CI and ordinary local runs never touch the device.

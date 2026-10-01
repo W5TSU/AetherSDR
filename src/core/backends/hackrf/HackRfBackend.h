@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/backends/hackrf/HackRfDdc.h"
+#include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
 #include "core/backends/hl2/Hl2Spectrum.h"
@@ -12,6 +13,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QString>
+#include <QThread>
 #include <QTimer>
 
 #include <complex>
@@ -158,7 +160,7 @@ public:
 
     // Single-slice DDC, exposed for real-hardware verification (mirrors
     // RtlSdrBackend::ddc()).
-    HackRfDdc* ddc() const { return m_ddc.get(); }
+    HackRfDdc* ddc() const { return &m_rxDsp->ddc(); }
 
     // Operator mode string -> WDSP demod mode. Delegates to
     // hl2::modeFromString for every name the two backends share (it is
@@ -194,8 +196,6 @@ private slots:
     void onArbiterTimedOut(HackRfTxRxArbiter::State pendingState);
     void onArbiterTick();
     void onWorkerStreamStopped(bool wasRx, const QString& reason);
-    void onWorkerRxIqReady(QVector<std::complex<float>> iq);
-    void onDdcAudioIqReady(QVector<std::complex<float>> iq);
     void onTxDspIqReady(QVector<std::complex<float>> iq);
 
 private:
@@ -222,13 +222,8 @@ private:
     bool tuneHardware(double trueHz);
     void applyFreqCalPpb(int ppb, bool persist);
     qint64 nowMs() const { return m_clock.elapsed(); }
-    // Gates the wideband spectrum FFT the same way Hl2RxDsp::spectrumFrameDue()
-    // does — see the class comment.
-    bool spectrumFrameDue() const
-    {
-        return m_spectrumIntervalMs <= 0
-            || (nowMs() - m_lastSpectrumMs) >= m_spectrumIntervalMs;
-    }
+    // The demodulator settings as they stand, for HackRfRxDsp.
+    HackRfRxDsp::RxSettings rxSettings() const;
 
     bool m_connected{false};
     QString m_serial;
@@ -271,14 +266,13 @@ private:
     QString m_calibrationId;
 
     std::unique_ptr<HackRfWorker> m_worker;
-    std::unique_ptr<HackRfDdc> m_ddc;
-    std::unique_ptr<hl2::Hl2Spectrum> m_spectrum;
-    std::vector<float> m_specBins;   // reused output buffer for m_spectrum->process()
-    int m_spectrumIntervalMs{33};    // ~30 fps default, matches RtlSdrDdc's own default
-    qint64 m_lastSpectrumMs{0};
+    // The receive chain (DDC, spectrum, WDSP demod) runs on m_rxDspThread, fed
+    // straight from the libhackrf callback through a bounded queue. Nothing on
+    // the GUI thread waits on it: see HackRfRxDsp.
+    QThread* m_rxDspThread{nullptr};
+    HackRfRxDsp* m_rxDsp{nullptr};
 
-    // RX audio (WDSP RXA channel) — see the class comment.
-    std::shared_ptr<WdspChannel> m_rxChannel;
+    // RX demodulator settings (the channel itself lives in m_rxDsp).
     int m_agcModeIndex{3};       // WDSP AGC mode; 3 = medium, WDSP's own default
     // 0..100 threshold * 1.0 dB, at the slice default of 65 -- NOT Hl2Backend's
     // 0.6 map. Measured on real hardware (#42): the WBFM discriminator's own
@@ -291,9 +285,6 @@ private:
     // per-mode (narrow modes may want HL2's original map back) once a WDSP
     // RXA channel exists for more than WFM to compare against.
     double m_agcMaxGainDb{65.0};
-    std::vector<std::complex<float>> m_audioIqBuffer;  // awaiting a full WDSP block
-    std::vector<float> m_audioI, m_audioQ;             // deinterleaved input scratch
-    std::vector<float> m_audioLeft, m_audioRight;      // WdspChannel output scratch
 
     // FM voice TX audio — see the class comment and HackRfTxDsp.h.
     std::unique_ptr<HackRfTxDsp> m_txDsp;
