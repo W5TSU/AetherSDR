@@ -112,7 +112,7 @@ jobs:
             libfuse2 file desktop-file-utils imagemagick \
             python3-pip autoconf automake libtool libasound2-dev \
             libfftw3-dev libhidapi-dev portaudio19-dev \
-            libhackrf-dev libusb-1.0-0-dev
+            libhackrf-dev libusb-1.0-0-dev librtlsdr-dev
 
       # glslc — the SPIR-V shader compiler whisper's Vulkan backend needs at
       # BUILD time (CMake resolves it via find_package(Vulkan COMPONENTS glslc),
@@ -263,6 +263,7 @@ jobs:
             -DREQUIRE_SERIALPORT=ON \
             -DREQUIRE_KEYCHAIN=ON \
             -DREQUIRE_HACKRF=ON \
+            -DREQUIRE_RTL=ON \
             -DREQUIRE_ASR_ONNX=ON \
             -DREQUIRE_ASR_SHERPA=ON \
             -DREQUIRE_ASR_GPU=${{ matrix.require_gpu }} \
@@ -474,23 +475,27 @@ jobs:
           echo "Wayland integration plugin dirs:"
           find "$plugins" -maxdepth 1 -type d -name 'wayland-*' | sort
 
-      # The app links libhackrf (REQUIRE_HACKRF=ON above), so the AppImage must
-      # carry it: libhackrf is not on linuxdeploy's excludelist, but if it ever
-      # went unbundled the AppImage would fail to START on every machine without
-      # libhackrf0, not merely lack HackRF. libusb-1.0 comes from the host
-      # (linuxdeploy excludes it; every desktop distro ships it). Reaching a
-      # HackRF without root still needs its udev rule, which no AppImage can
-      # install; that is a documentation matter, not a bundling one.
-      - name: Assert libhackrf was bundled
+      # The app links libhackrf and librtlsdr (REQUIRE_HACKRF/REQUIRE_RTL above),
+      # so the AppImage must carry both: neither is on linuxdeploy's excludelist,
+      # but if either ever went unbundled the AppImage would fail to START on
+      # every machine without it, not merely lack that radio. libusb-1.0 comes
+      # from the host (linuxdeploy excludes it; every desktop distro ships it).
+      # Reaching either device without root still needs its udev rule, which no
+      # AppImage can install; that is a documentation matter, not a bundling one.
+      - name: Assert libhackrf and librtlsdr were bundled
         run: |
-          lib=$(find AppDir -name 'libhackrf.so*' 2>/dev/null | sort || true)
-          if [ -z "$lib" ]; then
-            echo "ERROR: AetherSDR links libhackrf but the AppDir has no libhackrf.so*."
-            echo "This AppImage would not start without the host's libhackrf0."
-            exit 1
-          fi
-          echo "Bundled:"
-          echo "$lib"
+          fail=0
+          for pattern in 'libhackrf.so*' 'librtlsdr.so*'; do
+            lib=$(find AppDir -name "$pattern" 2>/dev/null | sort || true)
+            if [ -z "$lib" ]; then
+              echo "ERROR: AetherSDR links $pattern but the AppDir has none."
+              echo "This AppImage would not start on a host without that library."
+              fail=1
+            else
+              echo "$lib"
+            fi
+          done
+          exit $fail
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

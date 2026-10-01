@@ -1,6 +1,6 @@
 #!/bin/bash
-# setup-macos-deps.sh — Build fftw, portaudio, hidapi, libusb and libhackrf
-# from source at a pinned macOS deployment target, for the release DMG.
+# setup-macos-deps.sh — Build fftw, portaudio, hidapi, libusb, libhackrf and
+# librtlsdr from source at a pinned macOS deployment target, for the release DMG.
 #
 # ── Why this exists instead of `brew install fftw portaudio hidapi` ──────
 #
@@ -47,7 +47,9 @@
 # hackrf bottle has the same runner-OS floor as the three above, and v26.9.10's
 # DMGs simply shipped without HackRF because nothing supplied libhackrf at all.
 # Only host/libhackrf is built: Homebrew's fftw dependency for hackrf is for
-# the hackrf_sweep tool, which the app does not use.
+# the hackrf_sweep tool, which the app does not use. librtlsdr followed for the
+# RTL-SDR backend, which every DMG through v26.9.10 shipped without for the
+# same reason; its other dependency, single-precision FFTW, is built above.
 #
 # Usage: MACOS_DEPLOYMENT_TARGET=12.0 ./scripts/setup/setup-macos-deps.sh
 
@@ -92,11 +94,15 @@ HACKRF_VERSION="2026.01.3"
 HACKRF_URL="https://github.com/greatscottgadgets/hackrf/releases/download/v${HACKRF_VERSION}/hackrf-${HACKRF_VERSION}.tar.xz"
 HACKRF_SHA256="d2b76a1115d9b4df648c29efb2f3c8e80009b7cf9a8adf37abbfdba72101b086"
 
+RTLSDR_VERSION="2.0.3"
+RTLSDR_URL="https://github.com/steve-m/librtlsdr/archive/refs/tags/v${RTLSDR_VERSION}.tar.gz"
+RTLSDR_SHA256="851b87a62e548470c287c26669b83abb665d83bccb8d8492d07a697c7b9c4e37"
+
 OUT_DIR="third_party/macos-deps"
 PREFIX="$(pwd)/$OUT_DIR"
 WORK_DIR="$(pwd)/.macos-deps-build"
 STAMP="$OUT_DIR/.build-stamp"
-STAMP_CONTENT="target=$TARGET fftw=$FFTW_VERSION portaudio=$PORTAUDIO_VERSION hidapi=$HIDAPI_VERSION libusb=$LIBUSB_VERSION hackrf=$HACKRF_VERSION arch=$(uname -m)"
+STAMP_CONTENT="target=$TARGET fftw=$FFTW_VERSION portaudio=$PORTAUDIO_VERSION hidapi=$HIDAPI_VERSION libusb=$LIBUSB_VERSION hackrf=$HACKRF_VERSION rtlsdr=$RTLSDR_VERSION arch=$(uname -m)"
 
 # ── Already set up? (lets CI cache third_party/macos-deps) ───────────────
 # The stamp carries the deployment target, so a local rebuild at a different
@@ -126,6 +132,7 @@ fetch "$PORTAUDIO_URL" "$PORTAUDIO_SHA256" portaudio.tgz
 fetch "$HIDAPI_URL"    "$HIDAPI_SHA256"    hidapi.tar.gz
 fetch "$LIBUSB_URL"    "$LIBUSB_SHA256"    libusb.tar.bz2
 fetch "$HACKRF_URL"    "$HACKRF_SHA256"    hackrf.tar.xz
+fetch "$RTLSDR_URL"    "$RTLSDR_SHA256"    rtlsdr.tar.gz
 
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
 
@@ -237,6 +244,33 @@ if otool -L "$PREFIX/lib/libhackrf.dylib" | grep -q "libusb" \
    && ! otool -L "$PREFIX/lib/libhackrf.dylib" | grep -q "$PREFIX/lib/libusb-1.0"; then
     echo "ERROR: libhackrf links a libusb outside $PREFIX:" >&2
     otool -L "$PREFIX/lib/libhackrf.dylib" >&2
+    exit 1
+fi
+
+# ── librtlsdr ───────────────────────────────────────────────────────────
+# Unlike libhackrf, librtlsdr finds libusb ONLY through pkg-config, with no
+# variable to override it. PKG_CONFIG_LIBDIR replaces pkg-config's default
+# search path for this one configure, so Homebrew's libusb is not merely
+# outranked but invisible. Upstream always builds the static archive and the
+# rtl_* tools alongside the dylib; the archive is deleted so the app can only
+# link the dylib, and the tools under $PREFIX/bin never reach the bundle.
+tar xzf "$WORK_DIR/rtlsdr.tar.gz" -C "$WORK_DIR"
+echo "Building librtlsdr $RTLSDR_VERSION for macOS $TARGET..."
+PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
+cmake -B "$WORK_DIR/rtlsdr-build" -S "$WORK_DIR/librtlsdr-$RTLSDR_VERSION" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$TARGET" \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_INSTALL_NAME_DIR="$PREFIX/lib" \
+    -DINSTALL_UDEV_RULES=OFF >/dev/null
+cmake --build "$WORK_DIR/rtlsdr-build" -j"$JOBS" >/dev/null
+cmake --install "$WORK_DIR/rtlsdr-build" >/dev/null
+rm -f "$PREFIX/lib/librtlsdr.a"
+
+if ! otool -L "$PREFIX/lib/librtlsdr.dylib" | grep -q "$PREFIX/lib/libusb-1.0"; then
+    echo "ERROR: librtlsdr does not link the libusb built in $PREFIX:" >&2
+    otool -L "$PREFIX/lib/librtlsdr.dylib" >&2
     exit 1
 fi
 

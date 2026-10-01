@@ -393,6 +393,9 @@ jobs:
           # compiles the backend out silently, which is how v26.9.10's DMGs
           # shipped without it.
           HACKRF_FLAG="-DREQUIRE_HACKRF=ON"
+          # RTL-SDR likewise: setup-macos-deps.sh builds librtlsdr against the
+          # same libusb, and fftw3f (its other dependency) was already there.
+          RTL_FLAG="-DREQUIRE_RTL=ON"
           cmake -B build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -403,6 +406,7 @@ jobs:
             $ASR_FLAGS \
             $KEYCHAIN_FLAG \
             $HACKRF_FLAG \
+            $RTL_FLAG \
             $GPU_FLAG 2>&1 | tee configure.log
 
       # Apple Silicon only — the Intel leg asks for OFF on purpose (see above).
@@ -553,16 +557,17 @@ jobs:
           bash scripts/build/assert-macos-deployment-floor.sh \
             build/AetherSDR.app "${{ matrix.deploy_target }}"
 
-      # The app links libhackrf (REQUIRE_HACKRF=ON), so the bundle must carry it
-      # and its libusb: if macdeployqt ever left either behind, dyld would refuse
-      # to launch the app at all on a Mac without them, not merely drop HackRF.
+      # The app links libhackrf and librtlsdr (REQUIRE_HACKRF/REQUIRE_RTL), so the
+      # bundle must carry both and their libusb: if macdeployqt ever left one
+      # behind, dyld would refuse to launch the app at all on a Mac without it,
+      # not merely drop that radio.
       # The floor check above only inspects what IS bundled, so it cannot see
       # a library that is missing.
-      - name: Assert libhackrf and libusb were bundled
+      - name: Assert libhackrf, librtlsdr and libusb were bundled
         run: |
           fw=build/AetherSDR.app/Contents/Frameworks
           fail=0
-          for pattern in 'libhackrf*.dylib' 'libusb-1.0*.dylib'; do
+          for pattern in 'libhackrf*.dylib' 'librtlsdr*.dylib' 'libusb-1.0*.dylib'; do
             found=$(find "$fw" -maxdepth 1 -name "$pattern" 2>/dev/null | sort || true)
             if [ -z "$found" ]; then
               echo "ERROR: no $pattern in $fw"
@@ -571,8 +576,8 @@ jobs:
               echo "$found"
             fi
           done
-          if otool -L build/AetherSDR.app/Contents/MacOS/AetherSDR | grep -E 'hackrf|libusb' | grep -vE '@executable_path|@rpath|@loader_path'; then
-            echo "ERROR: the app still references libhackrf/libusb by a build-machine path (above)."
+          if otool -L build/AetherSDR.app/Contents/MacOS/AetherSDR | grep -E 'hackrf|rtlsdr|libusb' | grep -vE '@executable_path|@rpath|@loader_path'; then
+            echo "ERROR: the app still references libhackrf/librtlsdr/libusb by a build-machine path (above)."
             fail=1
           fi
           exit $fail
