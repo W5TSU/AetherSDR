@@ -38,6 +38,13 @@ RUN apt-get update && apt-get install -y \
     libhidapi-dev \
     portaudio19-dev \
     libpipewire-0.3-dev \
+    # QtMultimedia's PipeWire audio backend (Qt 6.10+, so the TSan image's Qt
+    # 6.12 build on top of this one) segfaults in QPlatformAudioDevices::create()
+    # if it cannot create a PipeWire client context, which it cannot without
+    # /usr/share/pipewire/client.conf. That file ships in pipewire-bin, not in
+    # libpipewire. No daemon is needed: with the config present and nothing
+    # listening, Qt finds no devices and carries on. (upstream c50a2d37)
+    pipewire-bin \
     autoconf \
     automake \
     libtool \
