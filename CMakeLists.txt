@@ -140,6 +140,10 @@ if(NOT AETHERSDR_SANITIZER STREQUAL "none")
     unset(_aether_san_list)
 endif()
 option(ENABLE_RTL "Enable the experimental receive-only RTL-SDR backend" ON)
+# Release guard, like REQUIRE_HACKRF below: the RTL-SDR backend compiles out
+# without an error when librtlsdr or fftw3f is missing, which is how every
+# release through v26.9.10 shipped without it.
+option(REQUIRE_RTL "Fail if the RTL-SDR backend would be compiled out (use for release builds)" OFF)
 # Gates the HackRF backend (#42), which compiles in only when libhackrf is
 # found. REQUIRE_HACKRF is the release guard, like REQUIRE_KEYCHAIN: without
 # it a runner with no libhackrf compiles the backend out without an error,
@@ -2517,6 +2521,14 @@ if(ENABLE_RTL AND NOT RTL_FFTW3F_FOUND)
     endif()
 else()
     set(RTL_FFTW3F_TARGET PkgConfig::RTL_FFTW3F)
+endif()
+
+if(REQUIRE_RTL AND NOT (ENABLE_RTL AND RTLSDR_FOUND AND RTL_FFTW3F_FOUND))
+    message(FATAL_ERROR "REQUIRE_RTL=ON but the RTL-SDR backend would be compiled out "
+        "(ENABLE_RTL=${ENABLE_RTL}, librtlsdr found: ${RTLSDR_FOUND}, fftw3f found: "
+        "${RTL_FFTW3F_FOUND}). Install librtlsdr and fftw3f (Linux: librtlsdr-dev "
+        "libfftw3-dev; macOS release: scripts/setup/setup-macos-deps.sh builds both) "
+        "or drop REQUIRE_RTL.")
 endif()
 
 if(NOT ENABLE_RTL)
