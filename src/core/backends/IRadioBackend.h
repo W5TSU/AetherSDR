@@ -986,6 +986,25 @@ signals:
     void disconnected();
     void connectionError(const QString& reason);
 
+    // Connect-time progress for a CLIENT-SIDE DSP build: a family that opens
+    // WDSP channels on this host, where a first open on a machine measures its
+    // FFTW plans and can take up to a minute. connected() waits for it, so
+    // MainWindow uses this pair to explain the wait instead of letting
+    // "Connecting…" look hung. Families with no host DSP (Flex demodulates in
+    // firmware) never emit it, and that costs nothing.
+    //
+    // It lived on Hl2Backend alone while WDSP was HL2's alone. HackRF builds its
+    // receive chain the same way, and reaching it there meant a second
+    // dynamic_cast and a GUI include of a vendor header, so it moved here.
+    //
+    // `stage` is operator-facing text with NO counter of its own; `done`/`total`
+    // are the counter (WDSP channel opens), so the label owns how a fraction is
+    // rendered. dspSetupFinished fires exactly once per phase, whether the
+    // connect completes, fails or is abandoned. Both are emitted on the GUI
+    // thread, so a slot may touch widgets directly.
+    void dspSetupProgress(const QString& stage, int done, int total);
+    void dspSetupFinished();
+
     // A problem with the RADIO'S CONFIGURATION that the operator should fix,
     // but which does not end the session. Distinct from connectionError, which
     // every consumer treats as fatal: RadioModel starts its reconnect timer on

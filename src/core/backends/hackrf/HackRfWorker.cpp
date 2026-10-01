@@ -1,4 +1,5 @@
 #include "HackRfWorker.h"
+#include "HackRfLibraryLock.h"
 
 #include <hackrf.h>
 
@@ -36,6 +37,8 @@ bool HackRfWorker::open(const QString& serial)
         qCWarning(lcHackRf) << "HackRfWorker: open() called while already open";
         return false;
     }
+    // init..open (or init..exit on failure) as one step: see HackRfLibraryLock.h.
+    const std::lock_guard<std::mutex> lock(libraryMutex());
 
     // Process-wide init — see the header comment on the single-instance
     // assumption this relies on.
@@ -71,6 +74,7 @@ bool HackRfWorker::openByIndex(int index)
         qCWarning(lcHackRf) << "HackRfWorker: openByIndex() requires a non-negative index";
         return false;
     }
+    const std::lock_guard<std::mutex> lock(libraryMutex());   // see HackRfLibraryLock.h
 
     const int initRc = hackrf_init();
     if (initRc != HACKRF_SUCCESS) {
@@ -116,6 +120,9 @@ void HackRfWorker::close()
     if (m_rxStreaming.load(std::memory_order_relaxed)) stopRx();
     if (m_txStreaming.load(std::memory_order_relaxed)) stopTx();
 
+    // close..exit as one step, so a discovery scan cannot exit the shared
+    // libusb context in between: see HackRfLibraryLock.h.
+    const std::lock_guard<std::mutex> lock(libraryMutex());
     const int rc = hackrf_close(m_device);
     if (rc != HACKRF_SUCCESS) {
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_close failed:" << errName(rc);

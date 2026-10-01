@@ -190,22 +190,9 @@ public:
     // built before the service exists simply does not drive it.
     void setTelemetryService(Hl2TelemetryService* svc) { m_telemetryService = svc; }
 
-signals:
-    // Connect-time progress for the CLIENT-SIDE DSP build, and deliberately not
-    // on the IRadioBackend seam: WDSP is this backend's alone (a Flex
-    // demodulates in firmware, an Icom does not use WDSP at all), so a neutral
-    // signal would be one every other family had to ignore.
-    //
-    // `stage` is already operator-facing text, and carries NO counter of its own
-    // — `done`/`total` are the counter, so the label owns how (or whether) a
-    // fraction is rendered. They count WDSP channel opens, which means receivers
-    // and only receivers: the transmit chain designs FIR kernels and opens
-    // nothing, so it is not a step and is not in `total`.
-    //
-    // Emitted from the GUI thread, including the terminal one, so a slot may
-    // touch widgets directly.
-    void dspSetupProgress(const QString& stage, int done, int total);
-    void dspSetupFinished();
+    // dspSetupProgress/dspSetupFinished are IRadioBackend's (see there). Here
+    // `done`/`total` count receivers and only receivers: the transmit chain
+    // designs FIR kernels and opens no WDSP channel, so it is not a step.
 
 private:
     friend struct Hl2DspReadbackTestAccess;

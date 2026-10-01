@@ -599,6 +599,12 @@ public:
     // planner. Width is per call site and the allocations belong inside.
     [[nodiscard]] static std::unique_lock<std::mutex> fftwSetupLock();
 
+    // The FFTW wisdom cache this process reads and writes: keyed by the FFTW
+    // build it is linked against, so builds that link different FFTWs never
+    // overwrite each other's plans (see wisdomPath() in WdspChannel.cpp).
+    // Honours AETHER_WDSP_WISDOM_DIR. For logs and tests.
+    [[nodiscard]] static std::string wisdomCacheFile();
+
 private:
     explicit WdspChannel(int channelId, const Config& config) noexcept;
 

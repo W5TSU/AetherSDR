@@ -117,6 +117,8 @@ inline void attachAllSeamSignals(SeamThreadAffinityProbe& p)
     AETHER_SEAM_PROBE(connected);
     AETHER_SEAM_PROBE(disconnected);
     AETHER_SEAM_PROBE(connectionError);
+    AETHER_SEAM_PROBE(dspSetupProgress);
+    AETHER_SEAM_PROBE(dspSetupFinished);
     AETHER_SEAM_PROBE(configurationWarning);
     AETHER_SEAM_PROBE(capabilitiesChanged);
     AETHER_SEAM_PROBE(transmitFrequencyCheckChanged);

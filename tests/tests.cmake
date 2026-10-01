@@ -564,6 +564,12 @@ add_executable(wdsp_channel_test tests/wdsp_channel_test.cpp)
 target_link_libraries(wdsp_channel_test PRIVATE aethercore)
 add_test(NAME wdsp_channel_test COMMAND wdsp_channel_test)
 
+# The WDSP wisdom cache name is keyed by the FFTW build, so builds linking
+# different FFTWs stop overwriting each other's plans. Opens no channel.
+add_executable(wdsp_wisdom_cache_name_test tests/wdsp_wisdom_cache_name_test.cpp)
+target_link_libraries(wdsp_wisdom_cache_name_test PRIVATE aethercore)
+add_test(NAME wdsp_wisdom_cache_name_test COMMAND wdsp_wisdom_cache_name_test)
+
 # Socket-free lifetime checks for the two process-global FFTW planners.
 # Uses real NR2/NR4/RTL constructors and destructors, without radio sockets.
 add_executable(fftw_planner_lock_test tests/fftw_planner_lock_test.cpp)
@@ -2748,6 +2754,15 @@ if(AETHER_BACKEND_HACKRF)
     target_include_directories(hackrf_backend_test PRIVATE src)
     target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
+
+    # A cold HackRF connect must not freeze the GUI while WDSP plans its FFTs.
+    # Needs a real HackRF and AETHER_HACKRF_HW_TEST=1; exits 77 (skipped)
+    # otherwise, so CI and ordinary local runs never touch the device.
+    add_executable(hackrf_cold_connect_hw_test tests/hackrf_cold_connect_hw_test.cpp)
+    target_include_directories(hackrf_cold_connect_hw_test PRIVATE src)
+    target_link_libraries(hackrf_cold_connect_hw_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Concurrent)
+    add_test(NAME hackrf_cold_connect_hw_test COMMAND hackrf_cold_connect_hw_test)
+    set_tests_properties(hackrf_cold_connect_hw_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 endif()
 
 add_executable(n1mm_spot_client_test

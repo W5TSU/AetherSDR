@@ -3,6 +3,7 @@
 #include "core/backends/hl2/Hl2ModeTable.h"
 
 #include <QJsonObject>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QLoggingCategory>
 
 #include <algorithm>
@@ -101,11 +102,19 @@ HackRfBackend::HackRfBackend(QObject* parent)
     // hangs or a confirm never arrives, not for the common path.
     m_arbiterTickTimer.setInterval(50);
     connect(&m_arbiterTickTimer, &QTimer::timeout, this, &HackRfBackend::onArbiterTick);
+
+    // Delivered on this (the GUI) thread: the watcher lives here, and only the
+    // build itself runs on the pool.
+    connect(&m_rxChannelBuild, &QFutureWatcherBase::finished,
+            this, &HackRfBackend::onRxChannelBuilt);
 }
 
 HackRfBackend::~HackRfBackend()
 {
-    if (m_connected) disconnectRadio();
+    // Also covers a connect still building its channel: that closes the
+    // device. The build itself touches nothing of this object, so it may
+    // outlive it; its channel is released when the abandoned future is.
+    if (m_connected || m_connectPending) disconnectRadio();
 }
 
 RadioCapabilities HackRfBackend::capabilities() const
@@ -232,7 +241,7 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
 
 void HackRfBackend::connectRadio(const RadioConnectRequest& request)
 {
-    if (m_connected) disconnectRadio();
+    if (m_connected || m_connectPending) disconnectRadio();
 
     m_serial = request.serial.trimmed();
 
@@ -285,8 +294,79 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     // Not HackRfDdc's own 48 kHz default — see kAudioDdcRateHz's comment on
     // why WFM needs a wider slice than WDSP's usual 48 kHz input.
     m_ddc->setOutputSampleRateHz(kAudioDdcRateHz);
-    rebuildRxChannel();
 
+    // THE RECEIVE CHAIN IS BUILT OFF THE GUI THREAD, and connected() waits for
+    // it. Opening a WDSP channel measures FFTW_PATIENT plans unless the wisdom
+    // cache already has them: ~30 s on a cold cache here, "up to a minute" by
+    // MainWindow's own dialog copy. This used to run inline, so the whole app
+    // froze for that long with "connecting" as the last log line, and an
+    // operator who reasonably closed it was back to a cold cache next time:
+    // the freeze repeated on every attempt and read as "cannot connect".
+    // Hl2Backend learned this first (beginDspSetup); this is the same shape
+    // without its multi-receiver and wire-pacing machinery, which HackRF lacks.
+    //
+    // The hardware is already open and configured, so a failure there is still
+    // reported synchronously above. Nothing streams until completeConnect().
+    m_connectPending = true;
+    const quint64 generation = ++m_connectGeneration;
+    const WdspChannel::Config cfg = rxChannelConfig();
+    emit dspSetupProgress(tr("Preparing the receive chain…"), 0, 1);
+    // Mirrored to the log: dspSetupProgress has one consumer, MainWindow, so a
+    // headless run would otherwise show nothing between here and connected().
+    qCInfo(lcHackRf) << "HackRF DSP setup: opening the receive chain";
+    m_rxChannelBuild.setFuture(QtConcurrent::run([generation, cfg] {
+        // ---- POOL THREAD ---- Touches nothing of the backend: only cfg, by
+        // value. WdspChannel::create serialises on the process-wide FFTW
+        // planner lock itself.
+        QElapsedTimer clock;
+        clock.start();
+        RxChannelBuild build;
+        build.generation = generation;
+        std::string error;
+        build.channel = WdspChannel::create(cfg, &error);
+        build.error = QString::fromStdString(error);
+        build.elapsedMs = clock.elapsed();
+        return build;
+    }));
+}
+
+void HackRfBackend::onRxChannelBuilt()
+{
+    const RxChannelBuild build = m_rxChannelBuild.result();
+    // Superseded or abandoned: a disconnect (or a newer connect) bumped the
+    // generation after this build started. Its channel is released with
+    // `build`. That disconnect already emitted dspSetupFinished.
+    if (!m_connectPending || build.generation != m_connectGeneration) {
+        qCInfo(lcHackRf) << "HackRF DSP setup: discarding a receive chain built for"
+                         << "an abandoned connect";
+        return;
+    }
+    m_connectPending = false;
+    emit dspSetupFinished();
+
+    if (!build.channel) {
+        qCWarning(lcHackRf) << "HackRfBackend: failed to create RX WDSP channel:" << build.error;
+        m_worker->close();
+        emit connectionError(tr("HackRF opened but its receive chain could not be prepared: %1")
+                                 .arg(build.error));
+        return;
+    }
+    qCInfo(lcHackRf) << "HackRF DSP setup: receive chain ready in" << build.elapsedMs << "ms";
+
+    // The channel was built from the state at connectRadio(). Re-apply the
+    // live values in case anything changed while it was building; each call is
+    // a cheap no-op when it did not.
+    m_rxChannel = build.channel;
+    m_rxChannel->setMode(wdspModeFromString(m_sliceMode));
+    m_rxChannel->setFilter(m_sliceFilterLow, m_sliceFilterHigh);
+    m_rxChannel->setAgc(m_agcModeIndex, m_agcMaxGainDb);
+    m_audioIqBuffer.clear();
+
+    completeConnect();
+}
+
+void HackRfBackend::completeConnect()
+{
     HackRfTxDsp::Config txCfg;
     txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
     m_txDsp->configure(txCfg);
@@ -295,10 +375,10 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     m_clock.start();
     m_arbiterTickTimer.start();
     // A fresh instance, not a reset on the old one — QObject subclasses
-    // aren't copy-assignable, and this also means each connectRadio() call
-    // gets its own arbiter with no risk of double-connecting signals onto
-    // one that's already wired (the old instance, and its connections,
-    // are simply destroyed here).
+    // aren't copy-assignable, and this also means each connect gets its own
+    // arbiter with no risk of double-connecting signals onto one that's
+    // already wired (the old instance, and its connections, are simply
+    // destroyed here).
     m_arbiter = std::make_unique<HackRfTxRxArbiter>();
     connect(m_arbiter.get(), &HackRfTxRxArbiter::wantRxStart, this, &HackRfBackend::onArbiterWantRxStart);
     connect(m_arbiter.get(), &HackRfTxRxArbiter::wantRxStop,  this, &HackRfBackend::onArbiterWantRxStop);
@@ -323,6 +403,20 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
 
 void HackRfBackend::disconnectRadio()
 {
+    // Every disconnect invalidates a channel build still in flight; it cannot
+    // be cancelled (WDSP's OpenChannel does not return early), so it runs to
+    // completion and onRxChannelBuilt() discards it.
+    ++m_connectGeneration;
+    if (m_connectPending) {
+        // Abandoned mid-setup: the device is open but never streamed. Close it,
+        // end the setup phase the dialog is showing, and report the session
+        // over, as Hl2Backend does for a disconnect during its DSP setup.
+        m_connectPending = false;
+        m_worker->close();
+        emit dspSetupFinished();
+        emit disconnected();
+        return;
+    }
     if (!m_connected) return;
     m_arbiterTickTimer.stop();
     m_worker->close();  // also stops any active RX/TX — see HackRfWorker::close()
@@ -682,7 +776,7 @@ void HackRfBackend::emitInitialState()
     emit sliceChanged(0, sDelta);
 }
 
-void HackRfBackend::rebuildRxChannel()
+WdspChannel::Config HackRfBackend::rxChannelConfig() const
 {
     WdspChannel::Config cfg;
     cfg.direction = WdspChannel::Direction::Receive;
@@ -709,17 +803,7 @@ void HackRfBackend::rebuildRxChannel()
     // the reported "over modulated"/distorted sound at an otherwise healthy
     // signal level and clean spectrum shape.
     cfg.blockForOutput = true;
-
-    std::string error;
-    auto channel = WdspChannel::create(cfg, &error);
-    if (!channel) {
-        qCWarning(lcHackRf) << "HackRfBackend: failed to create RX WDSP channel:"
-                            << QString::fromStdString(error);
-        m_rxChannel.reset();
-        return;
-    }
-    m_rxChannel = std::move(channel);
-    m_audioIqBuffer.clear();
+    return cfg;
 }
 
 void HackRfBackend::onDdcAudioIqReady(QVector<std::complex<float>> iq)

@@ -9,6 +9,7 @@
 #include "core/dsp/WdspChannel.h"
 
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -172,6 +173,9 @@ public:
     // above.
     static std::pair<int, int> defaultPassbandForMode(const QString& mode) noexcept;
 
+    // Emits IRadioBackend::dspSetupProgress/dspSetupFinished around the one
+    // receive chain a connect builds off the GUI thread (connectRadio).
+
 private slots:
     void onArbiterWantRxStart();
     void onArbiterWantRxStop();
@@ -186,11 +190,24 @@ private slots:
 
 private:
     void emitInitialState();
-    // (Re)builds m_rxChannel from the current mode/filter/AGC state. Called
-    // on connect and on any mode change — WdspChannel::setMode() handles a
-    // mode change at runtime, so this full rebuild is for the one time a
-    // fresh channel must exist at all (connect), not the ongoing path.
-    void rebuildRxChannel();
+    // The RX WDSP channel's Config from the current mode/filter/AGC state.
+    // A channel is built once per connect, off the GUI thread (connectRadio);
+    // after that, WdspChannel::setMode/setFilter/setAgc carry every change.
+    WdspChannel::Config rxChannelConfig() const;
+
+    // What the worker thread hands back from a connect's channel build.
+    // shared_ptr, not unique_ptr, because QFuture results must be copyable.
+    struct RxChannelBuild {
+        quint64 generation = 0;
+        std::shared_ptr<WdspChannel> channel;
+        QString error;
+        qint64 elapsedMs = 0;
+    };
+    // GUI thread, when the build finishes: installs the channel and completes
+    // the connect, or discards a build its connect no longer wants.
+    void onRxChannelBuilt();
+    // The second half of a connect, once the receive chain exists.
+    void completeConnect();
     qint64 nowMs() const { return m_clock.elapsed(); }
     // Gates the wideband spectrum FFT the same way Hl2RxDsp::spectrumFrameDue()
     // does — see the class comment.
@@ -202,6 +219,15 @@ private:
 
     bool m_connected{false};
     QString m_serial;
+
+    // A connect whose hardware is open and whose RX channel is still being
+    // built. connectRadio() returns at once; onRxChannelBuilt() finishes it.
+    bool m_connectPending{false};
+    // Bumped by every connect and disconnect. A build carries the value it was
+    // started under, so one that finishes after its connect was abandoned or
+    // superseded is recognised and discarded rather than installed.
+    quint64 m_connectGeneration{0};
+    QFutureWatcher<RxChannelBuild> m_rxChannelBuild;
 
     // Slice 0 / pan state — single slice for now, see the class comment.
     double m_sliceFreqHz{100'000'000.0};   // 100.0 MHz FM broadcast — safe RX default
@@ -221,7 +247,7 @@ private:
     qint64 m_lastSpectrumMs{0};
 
     // RX audio (WDSP RXA channel) — see the class comment.
-    std::unique_ptr<WdspChannel> m_rxChannel;
+    std::shared_ptr<WdspChannel> m_rxChannel;
     int m_agcModeIndex{3};       // WDSP AGC mode; 3 = medium, WDSP's own default
     // 0..100 threshold * 1.0 dB, at the slice default of 65 -- NOT Hl2Backend's
     // 0.6 map. Measured on real hardware (#42): the WBFM discriminator's own

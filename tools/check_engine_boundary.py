@@ -179,7 +179,7 @@ KNOWN_VENDOR_INCLUDE_BASELINE = {
     "src/gui/DvkPanel.cpp": ["DvkWavTransfer"],
     "src/gui/KiwiPublicReceiverPicker.h": ["KiwiPublicDirectory"],
     "src/gui/KiwiSdrApplet.h": ["KiwiSdrClient"],
-    "src/gui/MainWindow.cpp": ["DvkWavTransfer", "Hl2Backend", "KiwiSdrManager", "PanadapterStream", "RadioStatusOwnership", "SimBackend", "StreamStatus"],
+    "src/gui/MainWindow.cpp": ["DvkWavTransfer", "KiwiSdrManager", "PanadapterStream", "RadioStatusOwnership", "SimBackend", "StreamStatus"],
     "src/gui/MainWindow.h": ["AnanDiscovery", "Hl2Discovery", "RtlSdrDiscovery", "SmartLinkClient", "WanConnection"],
     "src/gui/MainWindowHelpers.cpp": ["PanadapterStream", "SmartLinkClient"],
     "src/gui/MainWindow_Controllers.cpp": ["KiwiSdrProtocol"],
