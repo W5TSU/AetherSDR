@@ -8,6 +8,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.9.11] — 2026-09-30
+
+### HackRF and RTL-SDR are now in the downloads (#56, #57)
+
+v26.9.10 added the experimental **HackRF One** backend, but only in the
+source: the AppImages and DMGs were built without `libhackrf`. The
+receive-only **RTL-SDR** backend had been missing from every release build
+for the same reason. Both are now in the **Linux AppImages** (x86_64 and
+aarch64) and the **macOS DMGs** (Apple Silicon and Intel), with their
+libraries bundled. A release build now fails rather than quietly shipping
+without either one. Windows is unchanged: neither backend is available
+there yet.
+
+HackRF is still highly experimental: RX, the panadapter and FM voice TX
+work, CW TX does not yet, and it is single-slice. See v26.9.10 for details.
+
+> **Linux: one-time device setup.** An AppImage cannot install system
+> files, so to use either radio without root:
+>
+> - **udev rules.** Install your distribution's `hackrf` and `rtl-sdr`
+>   packages, whose libraries bring the rules with them (e.g.
+>   `sudo apt install hackrf rtl-sdr`), then unplug and replug the device.
+> - **RTL-SDR only:** the kernel's DVB-T driver claims most dongles first.
+>   Blacklist it: `echo 'blacklist dvb_usb_rtl28xxu' | sudo tee
+>   /etc/modprobe.d/blacklist-rtlsdr.conf`, then unplug and replug (or
+>   reboot).
+>
+> macOS needs no setup.
+
+### Release notes on every release (#55)
+
+GitHub releases now carry their changelog section as the release notes,
+published automatically when the tag is pushed. Releases v26.9.2 to
+v26.9.9, which said only "Release vX", have been backfilled.
+
 ## [v26.9.10] — 2026-09-30
 
 ### HackRF backend — highly experimental, source builds only (#43, #44, #45)
