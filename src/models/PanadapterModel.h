@@ -147,6 +147,16 @@ public:
     int attenuatorStep() const { return m_attenuatorStep; }
     void setAttenuatorLabels(const QStringList& labels);
     void setAttenuatorStep(int step);
+    // A second continuous gain stage (IRadioBackend::panIfGainInfoChanged).
+    // An EMPTY label means the radio has none and its control does not appear;
+    // the label is the radio's own name for the stage ("LNA" on a HackRF).
+    QString ifGainLabel() const { return m_ifGainLabel; }
+    int ifGain() const { return m_ifGain; }
+    int ifGainLow() const { return m_ifGainLow; }
+    int ifGainHigh() const { return m_ifGainHigh; }
+    int ifGainStep() const { return m_ifGainStep; }
+    void setIfGainInfo(int low, int high, int step, const QString& label);
+    void setIfGain(int gainDb);
     // Normalized setters driven by the backend (aetherd RFC 2.3 — rfgain +
     // antenna promoted to universal typed signals). Each emits its existing
     // change-signal only on an actual change; the wire decode lives in
@@ -243,6 +253,8 @@ signals:
     void preampStepChanged(int step);
     void attenuatorLabelsChanged(const QStringList& labels);
     void attenuatorStepChanged(int step);
+    void ifGainInfoChanged(int low, int high, int step, const QString& label);
+    void ifGainChanged(int gainDb);
     void wnbChanged(bool active, int level);
     void wnbStateChanged(bool active, int level, bool updating);
     void wideChanged(bool active);
@@ -287,6 +299,11 @@ private:
     int         m_rfGainHigh{32};
     int         m_rfGainStep{8};
     QString     m_rfGainUnitSuffix{QStringLiteral(" dB")};
+    QString     m_ifGainLabel;
+    int         m_ifGain{0};
+    int         m_ifGainLow{0};
+    int         m_ifGainHigh{0};
+    int         m_ifGainStep{1};
     QStringList m_preampLabels;
     int         m_preampStep{0};
     QStringList m_attenuatorLabels;

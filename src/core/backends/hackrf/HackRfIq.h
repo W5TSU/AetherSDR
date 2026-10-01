@@ -45,4 +45,20 @@ int clampVgaGainDb(int requestedDb);
 // TX IF ("VGA") gain: 0-47 dB in 1 dB steps (i.e. a plain range clamp).
 int clampTxVgaGainDb(int requestedDb);
 
+// RF Power slider percent (0-100) -> TX VGA gain in dB (0-47). Linear, rounded
+// to the nearest dB so the top of the slider reaches the top of the range.
+int txVgaGainDbForPowerPercent(int percent);
+
+// The RF amp is a single switch shared by receive and transmit. Receive gets
+// the operator's Preamp setting; transmit always runs with it OFF, because the
+// amp's ~14 dB on top of TX VGA is easy to overdrive into whatever follows.
+bool ampEnabledFor(bool preampSetting, bool transmitting);
+
+// Hardware tune command for a TRUE frequency, given the crystal's error in ppb.
+// Convention shared with Hl2FreqCal and the Calibration page: ppb > 0 means the
+// crystal is fast, so the hardware lands at commanded * (1 + e); commanding
+// trueHz / (1 + e) lands it on trueHz. RX and TX share the one reference, so
+// the same correction serves both. Never negative.
+std::uint64_t correctedTuneHz(double trueHz, int ppb);
+
 } // namespace AetherSDR::hackrf

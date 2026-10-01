@@ -1,6 +1,9 @@
 #include "HackRfBackend.h"
+#include "core/backends/hackrf/HackRfIq.h"
 #include "core/backends/hackrf/HackRfWorker.h"
+#include "core/backends/hl2/Hl2FreqCal.h"
 #include "core/backends/hl2/Hl2ModeTable.h"
+#include "core/RadioSettingsScope.h"
 
 #include <QJsonObject>
 #include <QtConcurrent/QtConcurrentRun>
@@ -170,6 +173,11 @@ RadioCapabilities HackRfBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::RfGain
                             | RadioCapabilities::ClientSettingsDomain::Memories;
 
+    // A free-running crystal (+-20 ppm on a stock HackRF One, ~8.7 kHz at
+    // 435 MHz) with no calibration register: correcting it is the client's job,
+    // so the Calibration page applies. hackrf.freqcal.* implements it.
+    c.hostFrequencyCalibration = true;
+
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};
 
@@ -271,8 +279,18 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         return;
     }
 
+    // This device's frequency calibration, keyed by its serial: it describes
+    // one physical crystal, so a second HackRF must not inherit the first's.
+    // Loaded before the first tune so no session starts uncorrected.
+    m_calibrationId = request.serialIdentity.indexLocator ? QString() : m_serial;
+    m_freqCalPpb = m_calibrationId.isEmpty()
+        ? 0
+        : Hl2FreqCal::loadPpb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId));
+    if (m_freqCalPpb != 0)
+        qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
+
     if (!m_worker->setSampleRateHz(m_sampleRateHz)
-        || !m_worker->setFreqHz(static_cast<std::uint64_t>(m_sliceFreqHz))
+        || !tuneHardware(m_sliceFreqHz)
         || !m_worker->setVgaGainDb(m_vgaGainDb)
         || !m_worker->setLnaGainDb(m_lnaGainDb)
         || !m_worker->setAmpEnable(m_ampEnabled)) {
@@ -370,6 +388,11 @@ void HackRfBackend::completeConnect()
     HackRfTxDsp::Config txCfg;
     txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
     m_txDsp->configure(txCfg);
+    // The RF Power slider's drive. RadioModel also pushes it on connect, but
+    // the value it last set is applied here so the first key-down never runs
+    // at libhackrf's default TX gain.
+    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    m_transmitting = false;
 
     m_connected = true;
     m_clock.start();
@@ -434,7 +457,7 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     Q_UNUSED(sliceId);  // single slice
     if (!m_connected) return;
     m_sliceFreqHz = hz;
-    m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
+    tuneHardware(hz);
     m_ddc->setCenterFrequencyHz(hz);
     m_ddc->setSliceFrequencyHz(hz);
     // Single-slice/single-pan: every VFO retune moves the ENTIRE captured
@@ -535,7 +558,7 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     Q_UNUSED(intent);  // this pan's window is not slaved to the VFO independently of it (single slice == the pan)
     if (!m_connected) return;
     m_sliceFreqHz = hz;
-    m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
+    tuneHardware(hz);
     m_ddc->setCenterFrequencyHz(hz);
     m_ddc->setSliceFrequencyHz(hz);
     emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6, m_sampleRateHz / 1e6);
@@ -563,9 +586,56 @@ void HackRfBackend::setPanPreamp(const QString& panId, int step)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_ampEnabled = (step != 0);
-    if (m_worker->setAmpEnable(m_ampEnabled)) {
+    // While transmitting the amp stays off (ampEnabledFor); the setting is kept
+    // and the next RX start applies it.
+    if (m_transmitting || m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, false))) {
         emit panPreampChanged(QString::fromLatin1(kPanId), m_ampEnabled ? 1 : 0);
     }
+}
+
+void HackRfBackend::setPanIfGain(const QString& panId, int gainDb)
+{
+    Q_UNUSED(panId);
+    if (!m_connected) return;
+    m_lnaGainDb = clampLnaGainDb(gainDb);
+    if (m_worker->setLnaGainDb(m_lnaGainDb)) {
+        emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
+    }
+}
+
+void HackRfBackend::setTxPower(int percent)
+{
+    m_txPowerPercent = std::clamp(percent, 0, 100);
+    if (!m_connected) return;   // applied in completeConnect()
+    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+}
+
+bool HackRfBackend::tuneHardware(double trueHz)
+{
+    return m_worker->setFreqHz(correctedTuneHz(trueHz, m_freqCalPpb));
+}
+
+// Same shape as Hl2Backend::applyFreqCalPpb: clamp, persist per device unless
+// this is a live trim, then re-tune so the change is heard at once instead of
+// at the next dial movement.
+void HackRfBackend::applyFreqCalPpb(int ppb, bool persist)
+{
+    const int clamped = Hl2FreqCal::clampPpb(ppb);
+    if (persist) {
+        if (m_calibrationId.isEmpty()) {
+            qCWarning(lcHackRf) << "HackRF: not persisting frequency calibration —"
+                                << "no stable device serial; applying for this session only";
+        } else {
+            Hl2FreqCal::savePpb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId),
+                                clamped);
+        }
+    }
+    if (clamped == m_freqCalPpb)
+        return;
+    m_freqCalPpb = clamped;
+    qCInfo(lcHackRf) << "HackRF: frequency calibration" << clamped << "ppb";
+    if (m_connected)
+        tuneHardware(m_sliceFreqHz);
 }
 
 void HackRfBackend::setKeying(bool key)
@@ -642,8 +712,10 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
             emit extensionError(requestId, tr("lna.set requires an integer dB value"));
             return;
         }
-        m_lnaGainDb = db;  // HackRfWorker::setLnaGainDb clamps to the valid 0-40/8dB steps
+        // Clamped HERE so the reply and the slider report what the hardware took.
+        m_lnaGainDb = clampLnaGainDb(db);
         if (m_worker->setLnaGainDb(m_lnaGainDb)) {
+            emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
             emit extensionResult(requestId, m_lnaGainDb);
         } else {
             emit extensionError(requestId, tr("Failed to set LNA gain"));
@@ -652,6 +724,19 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
     }
     if (verb == QLatin1String("lna.get")) {
         emit extensionResult(requestId, m_lnaGainDb);
+        return;
+    }
+    // Frequency calibration, the same verbs and ppb units Hl2Backend serves, so
+    // the Calibration page and the `freqcal` bridge verb drive either family.
+    if (verb == QLatin1String("freqcal.set") || verb == QLatin1String("freqcal.set_live")) {
+        applyFreqCalPpb(arg.toInt(), /*persist=*/verb == QLatin1String("freqcal.set"));
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariant(m_freqCalPpb));
+        return;
+    }
+    if (verb == QLatin1String("freqcal.get")) {
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariantMap{{QStringLiteral("ppb"), m_freqCalPpb}});
         return;
     }
     emit extensionError(requestId, tr("Unknown verb %1.%2").arg(ns, verb));
@@ -668,6 +753,8 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
 
 void HackRfBackend::onArbiterWantRxStart()
 {
+    m_transmitting = false;
+    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/false));
     m_worker->startRx();
     // No separate "confirm" needed on the way INTO Idle/RxStreaming — only
     // the pending (TxPending/RxPending) states wait for a confirmRxStopped/
@@ -682,6 +769,10 @@ void HackRfBackend::onArbiterWantRxStop()
 
 void HackRfBackend::onArbiterWantTxStart()
 {
+    // Amp OFF before the first TX sample: it is one switch for both
+    // directions, and the operator's RX Preamp must not add ~14 dB to TX.
+    m_transmitting = true;
+    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/true));
     m_worker->startTx();
 }
 
@@ -760,6 +851,8 @@ void HackRfBackend::emitInitialState()
     emit panRfGainChanged(panId, m_vgaGainDb);
     emit panPreampInfoChanged(panId, {QStringLiteral("OFF"), QStringLiteral("ON")});
     emit panPreampChanged(panId, m_ampEnabled ? 1 : 0);
+    emit panIfGainInfoChanged(panId, 0, 40, 8, QStringLiteral("LNA"));
+    emit panIfGainChanged(panId, m_lnaGainDb);
 
     SliceDelta sDelta;
     sDelta.frequency = m_sliceFreqHz / 1e6;

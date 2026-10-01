@@ -5241,6 +5241,41 @@ add_test(NAME spectrum_overlay_band_highlight_test
 set_tests_properties(spectrum_overlay_band_highlight_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# The ANT panel's second continuous gain row (HackRF's LNA): hidden until a
+# radio publishes it, snapped to the radio's step, emitting only real changes.
+add_executable(spectrum_overlay_if_gain_test
+    tests/spectrum_overlay_if_gain_test.cpp
+    src/gui/SpectrumOverlayMenu.cpp
+    src/gui/SpectrumOverlayWheelGuard.cpp
+    src/gui/MemoryBrowsePanel.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/DspParamPopup.cpp
+)
+target_include_directories(spectrum_overlay_if_gain_test PRIVATE src)
+if(DEBIAN_GPU_FIX_REQUIRED)
+    target_include_directories(spectrum_overlay_if_gain_test PRIVATE
+        "${DEBIAN_PRIVATE_INC}"
+        "${DEBIAN_PRIVATE_INC}/QtGui"
+    )
+endif()
+if(QT_FRAMEWORK_PRIVATE_INC)
+    target_include_directories(spectrum_overlay_if_gain_test PRIVATE
+        "${QT_FRAMEWORK_PRIVATE_INC}"
+        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
+    )
+endif()
+target_link_libraries(spectrum_overlay_if_gain_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+)
+if(TARGET Qt6::GuiPrivate)
+    target_link_libraries(spectrum_overlay_if_gain_test PRIVATE Qt6::GuiPrivate)
+endif()
+set_target_properties(spectrum_overlay_if_gain_test PROPERTIES AUTOMOC ON)
+add_test(NAME spectrum_overlay_if_gain_test
+         COMMAND spectrum_overlay_if_gain_test)
+set_tests_properties(spectrum_overlay_if_gain_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(device_diagnostics_test
     tests/device_diagnostics_test.cpp
 )

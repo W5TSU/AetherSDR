@@ -159,6 +159,8 @@ inline void attachAllSeamSignals(SeamThreadAffinityProbe& p)
     AETHER_SEAM_PROBE(panPreampChanged);
     AETHER_SEAM_PROBE(panAttenuatorInfoChanged);
     AETHER_SEAM_PROBE(panAttenuatorChanged);
+    AETHER_SEAM_PROBE(panIfGainInfoChanged);
+    AETHER_SEAM_PROBE(panIfGainChanged);
     AETHER_SEAM_PROBE(panRxAntennaChanged);
     AETHER_SEAM_PROBE(panAntennaListChanged);
     AETHER_SEAM_PROBE(panWaterfallLineDurationChanged);

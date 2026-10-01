@@ -721,10 +721,13 @@ void SpectrumOverlayMenu::buildAntPanel()
     });
 
     // RF Gain row
+    // The gain rows' labels (RF Gain and the second stage under it) share one
+    // styling site rather than one setStyleSheet() call each.
+    const auto styleGainLabel = [](QLabel* label) { label->setStyleSheet(kLabelStyle); };
     auto* gainRow = new QHBoxLayout;
     gainRow->setSpacing(4);
     auto* gainLabel = new QLabel("RF Gain:");
-    gainLabel->setStyleSheet(kLabelStyle);
+    styleGainLabel(gainLabel);
     gainLabel->setFixedWidth(kLabelW);
     gainRow->addWidget(gainLabel);
     m_rfGainSlider = new GuardedSlider(Qt::Horizontal);
@@ -740,7 +743,7 @@ void SpectrumOverlayMenu::buildAntPanel()
                                "Step size is determined by radio hardware.");
     gainRow->addWidget(m_rfGainSlider, 1);
     m_rfGainLabel = new QLabel("0 dB");
-    m_rfGainLabel->setStyleSheet(kLabelStyle);
+    styleGainLabel(m_rfGainLabel);
     m_rfGainLabel->setFixedWidth(36);
     m_rfGainLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     gainRow->addWidget(m_rfGainLabel);
@@ -768,6 +771,51 @@ void SpectrumOverlayMenu::buildAntPanel()
                 m_slice->setRfGain(static_cast<float>(snapped));
         }
     });
+
+    // Second continuous gain stage, directly under RF Gain and in its shape.
+    // A container so it can hide on its own: only a radio that publishes a
+    // label for it (IRadioBackend::panIfGainInfoChanged) shows it, and the
+    // label is that radio's name for the stage ("LNA" on a HackRF).
+    {
+        m_ifGainRow = new QWidget;
+        applyTransparentStyle(m_ifGainRow, QStringLiteral("antennaIfGainRow"));
+        auto* ifRow = new QHBoxLayout(m_ifGainRow);
+        ifRow->setContentsMargins(0, 0, 0, 0);
+        ifRow->setSpacing(4);
+        m_ifGainNameLabel = new QLabel;
+        styleGainLabel(m_ifGainNameLabel);
+        m_ifGainNameLabel->setFixedWidth(kLabelW);
+        ifRow->addWidget(m_ifGainNameLabel);
+        m_ifGainSlider = new GuardedSlider(Qt::Horizontal);
+        m_ifGainSlider->setObjectName(QStringLiteral("antennaIfGainSlider"));
+        m_ifGainSlider->setTickPosition(QSlider::TicksBelow);
+        applyPrimarySliderStyle(m_ifGainSlider);
+        ifRow->addWidget(m_ifGainSlider, 1);
+        m_ifGainValueLabel = new QLabel(QStringLiteral("0 dB"));
+        styleGainLabel(m_ifGainValueLabel);
+        m_ifGainValueLabel->setFixedWidth(36);
+        m_ifGainValueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        ifRow->addWidget(m_ifGainValueLabel);
+        m_ifGainRow->setVisible(false);
+        vbox->addWidget(m_ifGainRow);
+
+        // Same snap-and-dedupe as RF Gain: a drag fires valueChanged on every
+        // pixel, and only a new STEP is worth a hardware command (#1498).
+        connect(m_ifGainSlider, &QSlider::valueChanged, this, [this](int v) {
+            const int step = std::max(1, m_ifGainSlider->singleStep());
+            const int snapped = m_ifGainSlider->minimum()
+                + qRound(static_cast<double>(v - m_ifGainSlider->minimum()) / step) * step;
+            if (snapped != v) {
+                QSignalBlocker sb(m_ifGainSlider);
+                m_ifGainSlider->setValue(snapped);
+            }
+            m_ifGainValueLabel->setText(QStringLiteral("%1 dB").arg(snapped));
+            if (!m_updatingFromModel && snapped != m_lastEmittedIfGain) {
+                m_lastEmittedIfGain = snapped;
+                emit ifGainChanged(snapped);
+            }
+        });
+    }
 
     // Discrete front-end stages — the preamp and the attenuator, one row each,
     // in the same label + control shape as RX ANT and RF Gain above. Both rows
@@ -2960,6 +3008,33 @@ void SpectrumOverlayMenu::setRfGainRange(int low, int high, int step,
         m_rfGainLabel->setText(
             QString("%1%2").arg(m_rfGainSlider->value()).arg(m_rfGainUnitSuffix));
     }
+}
+
+void SpectrumOverlayMenu::setIfGainRange(int low, int high, int step, const QString& label)
+{
+    if (!m_ifGainRow) return;
+    const bool present = !label.isEmpty() && step > 0 && high > low;
+    m_ifGainRow->setVisible(present);
+    if (!present) return;
+    m_ifGainNameLabel->setText(label + QLatin1Char(':'));
+    m_ifGainSlider->setAccessibleName(label);
+    QSignalBlocker b(m_ifGainSlider);
+    m_ifGainSlider->setRange(low, high);
+    m_ifGainSlider->setSingleStep(step);
+    m_ifGainSlider->setPageStep(step);
+    m_ifGainSlider->setTickInterval(step);
+    m_ifGainSlider->setToolTip(
+        QStringLiteral("%1: %2 to %3 dB (%4 dB steps)\nRange and step are reported by the radio.")
+            .arg(label).arg(low).arg(high).arg(step));
+}
+
+void SpectrumOverlayMenu::setIfGain(int gainDb)
+{
+    if (!m_ifGainSlider) return;
+    QSignalBlocker b(m_ifGainSlider);
+    m_ifGainSlider->setValue(gainDb);
+    m_ifGainValueLabel->setText(QStringLiteral("%1 dB").arg(gainDb));
+    m_lastEmittedIfGain = gainDb;   // an external update is not the operator's change
 }
 
 // ── Discrete receive front-end stages ────────────────────────────────────────

@@ -43,4 +43,23 @@ int clampLnaGainDb(int requestedDb)   { return clampStep(requestedDb, 40, 8); }
 int clampVgaGainDb(int requestedDb)   { return clampStep(requestedDb, 62, 2); }
 int clampTxVgaGainDb(int requestedDb) { return clampStep(requestedDb, 47, 1); }
 
+int txVgaGainDbForPowerPercent(int percent)
+{
+    const int p = std::clamp(percent, 0, 100);
+    return static_cast<int>(std::lround(p * 47.0 / 100.0));
+}
+
+bool ampEnabledFor(bool preampSetting, bool transmitting)
+{
+    return preampSetting && !transmitting;
+}
+
+std::uint64_t correctedTuneHz(double trueHz, int ppb)
+{
+    const double commanded = trueHz / (1.0 + static_cast<double>(ppb) * 1.0e-9);
+    if (!(commanded > 0.0))
+        return 0;
+    return static_cast<std::uint64_t>(std::llround(commanded));
+}
+
 } // namespace AetherSDR::hackrf

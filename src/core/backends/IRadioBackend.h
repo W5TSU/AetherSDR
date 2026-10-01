@@ -336,6 +336,20 @@ public:
         Q_UNUSED(panId);
         Q_UNUSED(step);
     }
+
+    // A SECOND continuous receive gain stage, for a radio with two (HackRF:
+    // VGA on setPanRfGain, LNA here). Same contract as setPanRfGain: dB in the
+    // range the backend advertised on panIfGainInfoChanged, clamped rather than
+    // refused, and what the hardware took comes back on panIfGainChanged.
+    //
+    // Default no-op AND no capability flag, like the discrete stages above: a
+    // backend that never publishes panIfGainInfoChanged leaves the control
+    // hidden, so a family with one gain stage needs no declaration.
+    virtual void setPanIfGain(const QString& panId, int gainDb)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(gainDb);
+    }
     virtual void setSliceRxAntenna(int sliceId, const QString& antenna)
     {
         Q_UNUSED(sliceId);
@@ -1262,6 +1276,14 @@ signals:
     void panPreampChanged(const QString& panId, int step);
     void panAttenuatorInfoChanged(const QString& panId, const QStringList& labels);
     void panAttenuatorChanged(const QString& panId, int step);
+
+    // The second continuous gain stage (setPanIfGain). `label` is the stage's
+    // operator-facing name as the RADIO calls it ("LNA" on a HackRF), because
+    // the seam cannot know what a family's second stage is. Publishing it is
+    // what shows the control; a non-positive step is ignored, as for RF gain.
+    void panIfGainInfoChanged(const QString& panId, int low, int high, int step,
+                              const QString& label);
+    void panIfGainChanged(const QString& panId, int gainDb);
 
     // Panadapter antenna selection (universal). Two signals because the wire may
     // report the selected RX antenna and the available list independently.

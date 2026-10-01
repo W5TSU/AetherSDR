@@ -1042,6 +1042,17 @@ void RadioModel::setupBackend(const QString& family)
             [this](const QString& panId, int step) {
         if (auto* pan = resolveBackendPan(panId)) pan->setAttenuatorStep(step);
     });
+    // The second continuous gain stage. Same zero-step guard as RF gain above.
+    connect(m_backend.get(), &IRadioBackend::panIfGainInfoChanged, this,
+            [this](const QString& panId, int low, int high, int step, const QString& label) {
+        if (step <= 0)
+            return;
+        if (auto* pan = resolveBackendPan(panId)) pan->setIfGainInfo(low, high, step, label);
+    });
+    connect(m_backend.get(), &IRadioBackend::panIfGainChanged, this,
+            [this](const QString& panId, int gainDb) {
+        if (auto* pan = resolveBackendPan(panId)) pan->setIfGain(gainDb);
+    });
     connect(m_backend.get(), &IRadioBackend::panRxAntennaChanged, this,
             [this](const QString& panId, const QString& ant) {
         if (auto* pan = resolveBackendPan(panId)) pan->setRxAntenna(ant);
@@ -6389,6 +6400,13 @@ void RadioModel::setPanAttenuatorFor(const QString& panId, int step)
 {
     if (panId.isEmpty() || !m_backend) return;
     m_backend->setPanAttenuator(backendPanIdFor(panId), step);
+}
+
+// Seam-only for the same reason: no Flex publishes a second gain stage.
+void RadioModel::setPanIfGainFor(const QString& panId, int gainDb)
+{
+    if (panId.isEmpty() || !m_backend) return;
+    m_backend->setPanIfGain(backendPanIdFor(panId), gainDb);
 }
 
 // ── Display controls — FFT ─────────────────────────────────────────────────

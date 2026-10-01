@@ -206,6 +206,50 @@ void testClampTxVgaGain()
     expectEqual("20 -> 20 (1 dB steps: no rounding)", clampTxVgaGainDb(20), 20);
 }
 
+// RF Power slider (0-100 %) -> TX VGA dB (0-47, 1 dB steps), linear and
+// rounded to the nearest dB so 100 % really reaches the 47 dB top.
+void testTxVgaForPowerPercent()
+{
+    expectEqual("0 % -> 0 dB", txVgaGainDbForPowerPercent(0), 0);
+    expectEqual("100 % -> 47 dB (full scale reached)", txVgaGainDbForPowerPercent(100), 47);
+    expectEqual("50 % -> 24 dB (23.5 rounds to nearest)", txVgaGainDbForPowerPercent(50), 24);
+    expectEqual("1 % -> 0 dB (0.47 rounds down)", txVgaGainDbForPowerPercent(1), 0);
+    expectEqual("2 % -> 1 dB (0.94 rounds up)", txVgaGainDbForPowerPercent(2), 1);
+    expectEqual("-10 % clamps to 0 dB", txVgaGainDbForPowerPercent(-10), 0);
+    expectEqual("150 % clamps to 47 dB", txVgaGainDbForPowerPercent(150), 47);
+}
+
+// The RF amp is one switch for both directions. Receive gets the operator's
+// Preamp setting; transmit always gets it OFF.
+void testAmpForDirection()
+{
+    expectTrue("RX, preamp on -> amp on", ampEnabledFor(true, /*transmitting=*/false));
+    expectTrue("RX, preamp off -> amp off", !ampEnabledFor(false, false));
+    expectTrue("TX, preamp on -> amp OFF", !ampEnabledFor(true, true));
+    expectTrue("TX, preamp off -> amp off", !ampEnabledFor(false, true));
+}
+
+// Frequency correction. Convention (Hl2FreqCal's, shared by the Calibration
+// page): ppb > 0 means the crystal is FAST, so the hardware lands at
+// commanded * (1 + e). To land on F, command F / (1 + e).
+void testCorrectedTuneHz()
+{
+    expectEqual("0 ppb is a pass-through",
+                static_cast<long long>(correctedTuneHz(435'000'000.0, 0)), 435'000'000LL);
+    // +1 ppm fast: 435 MHz / 1.000001 = 434,999,565.0004
+    expectEqual("+1000 ppb (fast) commands LOW",
+                static_cast<long long>(correctedTuneHz(435'000'000.0, 1000)), 434'999'565LL);
+    // -20 ppm slow: 435 MHz / 0.99998 = 435,008,700.174
+    expectEqual("-20000 ppb (slow) commands HIGH",
+                static_cast<long long>(correctedTuneHz(435'000'000.0, -20'000)), 435'008'700LL);
+    // Round-trip: the commanded value, scaled by the real clock, lands on F.
+    const double landed = static_cast<double>(correctedTuneHz(145'800'000.0, 12'345))
+                          * (1.0 + 12'345e-9);
+    expectNear("commanded * (1 + e) lands within 1 Hz of the target",
+               landed, 145'800'000.0, 1.0);
+    expectEqual("never negative", static_cast<long long>(correctedTuneHz(-5.0, 0)), 0LL);
+}
+
 } // namespace
 
 int main()
@@ -228,6 +272,10 @@ int main()
     testClampLnaGain();
     testClampVgaGain();
     testClampTxVgaGain();
+
+    testTxVgaForPowerPercent();
+    testAmpForDirection();
+    testCorrectedTuneHz();
 
     return g_failed == 0 ? 0 : 1;
 }

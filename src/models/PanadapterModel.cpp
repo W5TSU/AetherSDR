@@ -210,6 +210,28 @@ void PanadapterModel::applyWnbExtension(const QVariantMap& fields)
     }
 }
 
+// Change-gated like the discrete stages: a backend republishes this on every
+// connect, and an ungated emit would rebuild the row each time.
+void PanadapterModel::setIfGainInfo(int low, int high, int step, const QString& label)
+{
+    if (low == m_ifGainLow && high == m_ifGainHigh && step == m_ifGainStep
+        && label == m_ifGainLabel)
+        return;
+    m_ifGainLow = low;
+    m_ifGainHigh = high;
+    m_ifGainStep = step;
+    m_ifGainLabel = label;
+    emit ifGainInfoChanged(low, high, step, label);
+}
+
+void PanadapterModel::setIfGain(int gainDb)
+{
+    if (gainDb != m_ifGain) {
+        m_ifGain = gainDb;
+        emit ifGainChanged(m_ifGain);
+    }
+}
+
 void PanadapterModel::setRfGain(int gain)
 {
     if (gain != m_rfGain) {

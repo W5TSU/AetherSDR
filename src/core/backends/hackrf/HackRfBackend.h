@@ -128,6 +128,12 @@ public:
     // which is exactly what panPreamp is for (see IRadioBackend.h's own
     // comment on why Icom's preamp uses this instead of a continuous slider).
     void setPanPreamp(const QString& panId, int step) override;
+    // The LNA, as the seam's second continuous gain stage. VGA stays on
+    // setPanRfGain and the RF amp on setPanPreamp.
+    void setPanIfGain(const QString& panId, int gainDb) override;
+    // RF Power slider -> TX VGA (0-47 dB). Stored when not connected and applied
+    // at connect; TX VGA can be set while receiving, so it is ready at key-down.
+    void setTxPower(int percent) override;
 
     void setKeying(bool key) override;
     void invokeExtension(const QString& ns, const QString& verb,
@@ -208,6 +214,9 @@ private:
     void onRxChannelBuilt();
     // The second half of a connect, once the receive chain exists.
     void completeConnect();
+    // Tunes the hardware to a TRUE frequency, applying m_freqCalPpb.
+    bool tuneHardware(double trueHz);
+    void applyFreqCalPpb(int ppb, bool persist);
     qint64 nowMs() const { return m_clock.elapsed(); }
     // Gates the wideband spectrum FFT the same way Hl2RxDsp::spectrumFrameDue()
     // does — see the class comment.
@@ -237,7 +246,22 @@ private:
     double m_sampleRateHz{8'000'000.0};
     int m_vgaGainDb{20};
     int m_lnaGainDb{16};
+    // The operator's Preamp setting. The hardware amp follows it on RECEIVE
+    // only: transmit always runs with the amp off (ampEnabledFor()).
     bool m_ampEnabled{false};
+    // True between the arbiter's TX start and its next RX start, so a Preamp
+    // change while keyed is remembered for RX instead of switching the amp on
+    // under a live transmission.
+    bool m_transmitting{false};
+    int m_txPowerPercent{0};
+    // Crystal error in ppb (Hl2FreqCal's convention: > 0 = fast). Loaded per
+    // device at connect; every hardware tune goes through correctedTuneHz().
+    int m_freqCalPpb{0};
+    // The key the calibration is stored under: the device's USB serial, or
+    // EMPTY when the connect used an enumeration-index locator ("hackrf:N"),
+    // which is not a persistent identity (RadioSettingsIdentity.h). Empty means
+    // uncalibrated and not persisted, never someone else's number.
+    QString m_calibrationId;
 
     std::unique_ptr<HackRfWorker> m_worker;
     std::unique_ptr<HackRfDdc> m_ddc;
