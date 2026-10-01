@@ -250,6 +250,22 @@ void testCorrectedTuneHz()
     expectEqual("never negative", static_cast<long long>(correctedTuneHz(-5.0, 0)), 0LL);
 }
 
+// TUNE carrier pacing: top the TX queue up only while it holds less than the
+// target, so the carrier neither starves (a gap on air) nor piles up (an unkey
+// that keeps transmitting the backlog).
+void testTuneCarrierPacing()
+{
+    const double rate = 8'000'000.0;   // HackRF TX samples/s
+    expectTrue("an empty queue is topped up", shouldFeedTuneCarrier(0, rate, 100));
+    expectTrue("50 ms queued of a 100 ms target is topped up",
+               shouldFeedTuneCarrier(400'000, rate, 100));
+    expectTrue("exactly the target is NOT topped up",
+               !shouldFeedTuneCarrier(800'000, rate, 100));
+    expectTrue("more than the target is NOT topped up",
+               !shouldFeedTuneCarrier(2'000'000, rate, 100));
+    expectTrue("a nonsense rate never feeds", !shouldFeedTuneCarrier(0, 0.0, 100));
+}
+
 } // namespace
 
 int main()
@@ -276,6 +292,7 @@ int main()
     testTxVgaForPowerPercent();
     testAmpForDirection();
     testCorrectedTuneHz();
+    testTuneCarrierPacing();
 
     return g_failed == 0 ? 0 : 1;
 }

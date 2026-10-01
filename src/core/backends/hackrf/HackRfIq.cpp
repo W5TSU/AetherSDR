@@ -54,6 +54,13 @@ bool ampEnabledFor(bool preampSetting, bool transmitting)
     return preampSetting && !transmitting;
 }
 
+bool shouldFeedTuneCarrier(std::size_t queuedSamples, double outputRateHz, int targetMs)
+{
+    if (!(outputRateHz > 0.0) || targetMs <= 0)
+        return false;
+    return static_cast<double>(queuedSamples) * 1000.0 / outputRateHz < targetMs;
+}
+
 std::uint64_t correctedTuneHz(double trueHz, int ppb)
 {
     const double commanded = trueHz / (1.0 + static_cast<double>(ppb) * 1.0e-9);

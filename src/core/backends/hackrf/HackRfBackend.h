@@ -134,6 +134,10 @@ public:
     // RF Power slider -> TX VGA (0-47 dB). Stored when not connected and applied
     // at connect; TX VGA can be set while receiving, so it is ready at key-down.
     void setTxPower(int percent) override;
+    // TUNE: an unmodulated carrier at TUNE power. FM with silent audio is a
+    // clean carrier on the slice frequency, so the existing modulator makes it;
+    // a timer keeps the TX queue fed while tuning. Off restores RF Power.
+    void setTune(bool on, int tunePowerPercent = -1) override;
 
     void setKeying(bool key) override;
     void invokeExtension(const QString& ns, const QString& verb,
@@ -254,6 +258,9 @@ private:
     // under a live transmission.
     bool m_transmitting{false};
     int m_txPowerPercent{0};
+    bool m_tuning{false};
+    QTimer m_tuneFeedTimer;   // feeds silence to the FM modulator while tuning
+    void feedTuneCarrier();
     // Crystal error in ppb (Hl2FreqCal's convention: > 0 = fast). Loaded per
     // device at connect; every hardware tune goes through correctedTuneHz().
     int m_freqCalPpb{0};

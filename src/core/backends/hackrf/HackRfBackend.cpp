@@ -110,6 +110,9 @@ HackRfBackend::HackRfBackend(QObject* parent)
     // build itself runs on the pool.
     connect(&m_rxChannelBuild, &QFutureWatcherBase::finished,
             this, &HackRfBackend::onRxChannelBuilt);
+
+    m_tuneFeedTimer.setInterval(20);
+    connect(&m_tuneFeedTimer, &QTimer::timeout, this, &HackRfBackend::feedTuneCarrier);
 }
 
 HackRfBackend::~HackRfBackend()
@@ -426,6 +429,8 @@ void HackRfBackend::completeConnect()
 
 void HackRfBackend::disconnectRadio()
 {
+    m_tuneFeedTimer.stop();
+    m_tuning = false;
     // Every disconnect invalidates a channel build still in flight; it cannot
     // be cancelled (WDSP's OpenChannel does not return early), so it runs to
     // completion and onRxChannelBuilt() discards it.
@@ -606,8 +611,41 @@ void HackRfBackend::setPanIfGain(const QString& panId, int gainDb)
 void HackRfBackend::setTxPower(int percent)
 {
     m_txPowerPercent = std::clamp(percent, 0, 100);
-    if (!m_connected) return;   // applied in completeConnect()
+    // While tuning the hardware runs at TUNE power; the new RF Power is kept
+    // and restored when TUNE ends.
+    if (!m_connected || m_tuning) return;   // otherwise applied in completeConnect()
     m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+}
+
+void HackRfBackend::setTune(bool on, int tunePowerPercent)
+{
+    if (!m_connected) return;
+    if (on) {
+        m_tuning = true;
+        const int percent = tunePowerPercent >= 0 ? tunePowerPercent : m_txPowerPercent;
+        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(percent));
+        setKeying(true);
+        feedTuneCarrier();          // prime the queue before the first timer tick
+        m_tuneFeedTimer.start();
+    } else {
+        m_tuneFeedTimer.stop();
+        m_tuning = false;
+        setKeying(false);
+        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    }
+}
+
+// Keeps ~100 ms of carrier queued: enough to ride out a late tick, short
+// enough that an unkey stops the carrier promptly.
+void HackRfBackend::feedTuneCarrier()
+{
+    if (!m_tuning || !m_keyed) return;
+    const int rate = m_txDsp->config().audioSampleRateHz;
+    const std::vector<float> silence(static_cast<std::size_t>(std::max(1, rate / 50)), 0.0f);  // 20 ms
+    for (int guard = 0; guard < 10
+         && shouldFeedTuneCarrier(m_worker->txQueueDepth(), m_sampleRateHz, 100); ++guard) {
+        m_txDsp->processAudioBlock(silence);
+    }
 }
 
 bool HackRfBackend::tuneHardware(double trueHz)
@@ -659,7 +697,9 @@ void HackRfBackend::submitTxAudio(const QByteArray& int16Stereo, int sampleRateH
     Q_UNUSED(clientLeveled);   // no ALC/makeup gain in this modulator to gate — see HackRfTxDsp.h
     // Only actually modulate while genuinely keyed — see the header comment
     // on why this guard exists (mirrors Hl2Backend::submitTxAudio's own).
-    if (!m_connected || !m_keyed || int16Stereo.isEmpty()) return;
+    // While tuning, the carrier is the only signal: microphone audio would
+    // modulate it.
+    if (!m_connected || !m_keyed || m_tuning || int16Stereo.isEmpty()) return;
 
     if (sampleRateHz != m_txDsp->config().audioSampleRateHz) {
         // Stated rather than silently resampled — a mismatch would
@@ -865,6 +905,10 @@ void HackRfBackend::emitInitialState()
                                   QStringLiteral("LSB"), QStringLiteral("CW"),
                                   QStringLiteral("CWR")};
     sDelta.active = true;
+    // HackRF's one slice is also its transmit slice. Without this RadioModel
+    // had no TX slice at all, so every key request (PTT, MOX, TUNE) was refused
+    // with "No transmit slice is assigned." before reaching the backend.
+    sDelta.txSlice = true;
     sDelta.panId = panId;
     emit sliceChanged(0, sDelta);
 }

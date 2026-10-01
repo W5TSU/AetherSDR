@@ -61,4 +61,8 @@ bool ampEnabledFor(bool preampSetting, bool transmitting);
 // the same correction serves both. Never negative.
 std::uint64_t correctedTuneHz(double trueHz, int ppb);
 
+// TUNE carrier pacing: true while the TX queue holds less than targetMs of
+// output samples, i.e. when the feeder should add another block of silence.
+bool shouldFeedTuneCarrier(std::size_t queuedSamples, double outputRateHz, int targetMs);
+
 } // namespace AetherSDR::hackrf
