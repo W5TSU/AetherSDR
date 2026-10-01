@@ -30,14 +30,14 @@ void HackRfTxRxArbiter::confirmRxStopped(qint64 nowMs)
 {
     if (m_state != State::TxPending) return;  // stale or unexpected — ignore
     if (m_desired == Target::Tx) {
-        emit wantTxStart();
         setState(State::TxStreaming);
+        emit wantTxStart();
     } else {
         // Changed their mind while the teardown was in flight — RX is what's
         // wanted now, and RX is exactly what just finished stopping, so
         // restart it directly rather than proceeding into TX.
-        emit wantRxStart();
         setState(State::RxStreaming);
+        emit wantRxStart();
     }
     Q_UNUSED(nowMs);
 }
@@ -46,11 +46,11 @@ void HackRfTxRxArbiter::confirmTxStopped(qint64 nowMs)
 {
     if (m_state != State::RxPending) return;
     if (m_desired == Target::Rx) {
-        emit wantRxStart();
         setState(State::RxStreaming);
+        emit wantRxStart();
     } else {
-        emit wantTxStart();
         setState(State::TxStreaming);
+        emit wantTxStart();
     }
     Q_UNUSED(nowMs);
 }
@@ -74,29 +74,35 @@ void HackRfTxRxArbiter::evaluate(qint64 nowMs)
     switch (m_state) {
     case State::Idle:
         if (m_desired == Target::Rx) {
-            emit wantRxStart();
             setState(State::RxStreaming);
+            emit wantRxStart();
         } else {
             // Nothing to tear down (RX was never running) — start directly.
-            emit wantTxStart();
             setState(State::TxStreaming);
+            emit wantTxStart();
         }
         break;
 
     case State::RxStreaming:
         if (m_desired == Target::Tx) {
-            emit wantRxStop();
+            // STATE BEFORE THE EMIT, everywhere in this file. HackRfBackend
+            // answers synchronously: its wantRxStop handler stops RX and calls
+            // confirmRxStopped() before this emit returns. Emitting first left
+            // that confirm looking at RxStreaming, where it is ignored as stale,
+            // and the arbiter then waited in TxPending for a confirm that had
+            // already come: keying never started TX (no TX LED, no output).
             m_deadlineMs = nowMs + m_timeoutMs;  // set exactly on entry — see the .h comment
             setState(State::TxPending);
+            emit wantRxStop();
         }
         // else: already RX and RX is still wanted — no-op.
         break;
 
     case State::TxStreaming:
         if (m_desired == Target::Rx) {
-            emit wantTxStop();
             m_deadlineMs = nowMs + m_timeoutMs;
             setState(State::RxPending);
+            emit wantTxStop();
         }
         break;
 
