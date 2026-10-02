@@ -1,8 +1,12 @@
 #include "HackRfBackend.h"
+#include "core/backends/hackrf/HackRfIq.h"
 #include "core/backends/hackrf/HackRfWorker.h"
+#include "core/backends/hl2/Hl2FreqCal.h"
 #include "core/backends/hl2/Hl2ModeTable.h"
+#include "core/RadioSettingsScope.h"
 
 #include <QJsonObject>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QLoggingCategory>
 
 #include <algorithm>
@@ -77,19 +81,40 @@ std::pair<int, int> HackRfBackend::defaultPassbandForMode(const QString& mode) n
 HackRfBackend::HackRfBackend(QObject* parent)
     : IRadioBackend(parent)
     , m_worker(std::make_unique<HackRfWorker>())
-    , m_ddc(std::make_unique<HackRfDdc>())
-    , m_spectrum(std::make_unique<hl2::Hl2Spectrum>(kSpectrumFftSize))
     , m_txDsp(std::make_unique<HackRfTxDsp>())
 {
     // m_arbiter itself is (re)created fresh in connectRadio() — a stale
     // pending/timed-out state from a previous session must not leak into
     // the next one if this backend object is reused for another connect.
     // Its signals are connected there, once per instance; nothing to wire
-    // here. m_worker/m_ddc/m_txDsp are never replaced, so their connections
+    // here. m_worker/m_rxDsp/m_txDsp are never replaced, so their connections
     // live for the whole backend lifetime.
     connect(m_worker.get(), &HackRfWorker::streamStopped, this, &HackRfBackend::onWorkerStreamStopped);
-    connect(m_worker.get(), &HackRfWorker::rxIqReady, this, &HackRfBackend::onWorkerRxIqReady);
-    connect(m_ddc.get(), &HackRfDdc::decimatedIqReady, this, &HackRfBackend::onDdcAudioIqReady);
+
+    // THE RECEIVE CHAIN RUNS ON ITS OWN THREAD (HackRfRxDsp). The libhackrf
+    // callback hands each transfer straight to its bounded queue (DIRECT: the
+    // queue is thread-safe, and a queued hop through any event loop is what
+    // let IQ pile up without limit), and only finished frames come back here,
+    // where they are re-emitted so this backend's signals stay on its own
+    // thread (backend_seam_affinity_test). ~16 blocks is ~260 ms of IQ at
+    // 8 MS/s: deeper buys nothing but latency once the DSP is behind.
+    m_rxDspThread = new QThread(this);
+    m_rxDspThread->setObjectName(QStringLiteral("HackRfRxDsp"));
+    m_rxDsp = new HackRfRxDsp(kSpectrumFftSize, kAudioDspBlockSize, /*maxQueuedBlocks=*/16);
+    m_rxDsp->moveToThread(m_rxDspThread);
+    m_rxDspThread->start();
+    HackRfRxDsp* const rxDsp = m_rxDsp;
+    connect(m_worker.get(), &HackRfWorker::rxIqReady, m_rxDsp,
+            [rxDsp](QVector<std::complex<float>> iq) { rxDsp->enqueueIq(std::move(iq)); },
+            Qt::DirectConnection);
+    connect(m_rxDsp, &HackRfRxDsp::spectrumFrame, this, [this](const QByteArray& frame) {
+        emit spectrumFrameReady(0, frame);
+        emit waterfallRowReady(0, frame);
+    });
+    connect(m_rxDsp, &HackRfRxDsp::audioFrame, this, [this](const QByteArray& pcm) {
+        emit audioFrameReady(pcm);
+        emit sliceAudioFrameReady(0, pcm);
+    });
     connect(m_txDsp.get(), &HackRfTxDsp::iqReady, this, &HackRfBackend::onTxDspIqReady);
 
     // Polls HackRfTxRxArbiter::tick() for timeout recovery. HackRfWorker's
@@ -101,11 +126,27 @@ HackRfBackend::HackRfBackend(QObject* parent)
     // hangs or a confirm never arrives, not for the common path.
     m_arbiterTickTimer.setInterval(50);
     connect(&m_arbiterTickTimer, &QTimer::timeout, this, &HackRfBackend::onArbiterTick);
+
+    // Delivered on this (the GUI) thread: the watcher lives here, and only the
+    // build itself runs on the pool.
+    connect(&m_rxChannelBuild, &QFutureWatcherBase::finished,
+            this, &HackRfBackend::onRxChannelBuilt);
+
+    m_tuneFeedTimer.setInterval(20);
+    connect(&m_tuneFeedTimer, &QTimer::timeout, this, &HackRfBackend::feedTuneCarrier);
 }
 
 HackRfBackend::~HackRfBackend()
 {
-    if (m_connected) disconnectRadio();
+    // Also covers a connect still building its channel: that closes the
+    // device. The build itself touches nothing of this object, so it may
+    // outlive it; its channel is released when the abandoned future is.
+    if (m_connected || m_connectPending) disconnectRadio();
+    // The device is closed, so nothing feeds the queue any more. Join the DSP
+    // thread before its object goes; a WDSP block in flight finishes first.
+    m_rxDspThread->quit();
+    m_rxDspThread->wait();
+    delete m_rxDsp;
 }
 
 RadioCapabilities HackRfBackend::capabilities() const
@@ -160,6 +201,11 @@ RadioCapabilities HackRfBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
                             | RadioCapabilities::ClientSettingsDomain::RfGain
                             | RadioCapabilities::ClientSettingsDomain::Memories;
+
+    // A free-running crystal (+-20 ppm on a stock HackRF One, ~8.7 kHz at
+    // 435 MHz) with no calibration register: correcting it is the client's job,
+    // so the Calibration page applies. hackrf.freqcal.* implements it.
+    c.hostFrequencyCalibration = true;
 
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};
@@ -232,7 +278,7 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
 
 void HackRfBackend::connectRadio(const RadioConnectRequest& request)
 {
-    if (m_connected) disconnectRadio();
+    if (m_connected || m_connectPending) disconnectRadio();
 
     m_serial = request.serial.trimmed();
 
@@ -262,8 +308,18 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         return;
     }
 
+    // This device's frequency calibration, keyed by its serial: it describes
+    // one physical crystal, so a second HackRF must not inherit the first's.
+    // Loaded before the first tune so no session starts uncorrected.
+    m_calibrationId = request.serialIdentity.indexLocator ? QString() : m_serial;
+    m_freqCalPpb = m_calibrationId.isEmpty()
+        ? 0
+        : Hl2FreqCal::loadPpb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId));
+    if (m_freqCalPpb != 0)
+        qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
+
     if (!m_worker->setSampleRateHz(m_sampleRateHz)
-        || !m_worker->setFreqHz(static_cast<std::uint64_t>(m_sliceFreqHz))
+        || !tuneHardware(m_sliceFreqHz)
         || !m_worker->setVgaGainDb(m_vgaGainDb)
         || !m_worker->setLnaGainDb(m_lnaGainDb)
         || !m_worker->setAmpEnable(m_ampEnabled)) {
@@ -279,26 +335,98 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     // multi-slice will need (a wideband-tuned center with per-slice
     // offsets) without claiming multi-slice works before HackRfBackend
     // actually owns more than one HackRfDdc instance.
-    m_ddc->setInputSampleRateHz(m_sampleRateHz);
-    m_ddc->setCenterFrequencyHz(m_sliceFreqHz);
-    m_ddc->setSliceFrequencyHz(m_sliceFreqHz);
+    m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
+    m_rxDsp->ddc().setCenterFrequencyHz(m_sliceFreqHz);
+    m_rxDsp->ddc().setSliceFrequencyHz(m_sliceFreqHz);
     // Not HackRfDdc's own 48 kHz default — see kAudioDdcRateHz's comment on
     // why WFM needs a wider slice than WDSP's usual 48 kHz input.
-    m_ddc->setOutputSampleRateHz(kAudioDdcRateHz);
-    rebuildRxChannel();
+    m_rxDsp->ddc().setOutputSampleRateHz(kAudioDdcRateHz);
 
+    // THE RECEIVE CHAIN IS BUILT OFF THE GUI THREAD, and connected() waits for
+    // it. Opening a WDSP channel measures FFTW_PATIENT plans unless the wisdom
+    // cache already has them: ~30 s on a cold cache here, "up to a minute" by
+    // MainWindow's own dialog copy. This used to run inline, so the whole app
+    // froze for that long with "connecting" as the last log line, and an
+    // operator who reasonably closed it was back to a cold cache next time:
+    // the freeze repeated on every attempt and read as "cannot connect".
+    // Hl2Backend learned this first (beginDspSetup); this is the same shape
+    // without its multi-receiver and wire-pacing machinery, which HackRF lacks.
+    //
+    // The hardware is already open and configured, so a failure there is still
+    // reported synchronously above. Nothing streams until completeConnect().
+    m_connectPending = true;
+    const quint64 generation = ++m_connectGeneration;
+    const WdspChannel::Config cfg = rxChannelConfig();
+    emit dspSetupProgress(tr("Preparing the receive chain…"), 0, 1);
+    // Mirrored to the log: dspSetupProgress has one consumer, MainWindow, so a
+    // headless run would otherwise show nothing between here and connected().
+    qCInfo(lcHackRf) << "HackRF DSP setup: opening the receive chain";
+    m_rxChannelBuild.setFuture(QtConcurrent::run([generation, cfg] {
+        // ---- POOL THREAD ---- Touches nothing of the backend: only cfg, by
+        // value. WdspChannel::create serialises on the process-wide FFTW
+        // planner lock itself.
+        QElapsedTimer clock;
+        clock.start();
+        RxChannelBuild build;
+        build.generation = generation;
+        std::string error;
+        build.channel = WdspChannel::create(cfg, &error);
+        build.error = QString::fromStdString(error);
+        build.elapsedMs = clock.elapsed();
+        return build;
+    }));
+}
+
+void HackRfBackend::onRxChannelBuilt()
+{
+    const RxChannelBuild build = m_rxChannelBuild.result();
+    // Superseded or abandoned: a disconnect (or a newer connect) bumped the
+    // generation after this build started. Its channel is released with
+    // `build`. That disconnect already emitted dspSetupFinished.
+    if (!m_connectPending || build.generation != m_connectGeneration) {
+        qCInfo(lcHackRf) << "HackRF DSP setup: discarding a receive chain built for"
+                         << "an abandoned connect";
+        return;
+    }
+    m_connectPending = false;
+    emit dspSetupFinished();
+
+    if (!build.channel) {
+        qCWarning(lcHackRf) << "HackRfBackend: failed to create RX WDSP channel:" << build.error;
+        m_worker->close();
+        emit connectionError(tr("HackRF opened but its receive chain could not be prepared: %1")
+                                 .arg(build.error));
+        return;
+    }
+    qCInfo(lcHackRf) << "HackRF DSP setup: receive chain ready in" << build.elapsedMs << "ms";
+
+    // The channel was built from the state at connectRadio(). Re-apply the
+    // live values in case anything changed while it was building; each call is
+    // a cheap no-op when it did not.
+    m_rxDsp->installChannel(build.channel, rxSettings());
+
+    completeConnect();
+}
+
+void HackRfBackend::completeConnect()
+{
     HackRfTxDsp::Config txCfg;
     txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
     m_txDsp->configure(txCfg);
+    // The RF Power slider's drive. RadioModel also pushes it on connect, but
+    // the value it last set is applied here so the first key-down never runs
+    // at libhackrf's default TX gain.
+    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    m_transmitting = false;
 
     m_connected = true;
     m_clock.start();
     m_arbiterTickTimer.start();
     // A fresh instance, not a reset on the old one — QObject subclasses
-    // aren't copy-assignable, and this also means each connectRadio() call
-    // gets its own arbiter with no risk of double-connecting signals onto
-    // one that's already wired (the old instance, and its connections,
-    // are simply destroyed here).
+    // aren't copy-assignable, and this also means each connect gets its own
+    // arbiter with no risk of double-connecting signals onto one that's
+    // already wired (the old instance, and its connections, are simply
+    // destroyed here).
     m_arbiter = std::make_unique<HackRfTxRxArbiter>();
     connect(m_arbiter.get(), &HackRfTxRxArbiter::wantRxStart, this, &HackRfBackend::onArbiterWantRxStart);
     connect(m_arbiter.get(), &HackRfTxRxArbiter::wantRxStop,  this, &HackRfBackend::onArbiterWantRxStop);
@@ -323,6 +451,22 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
 
 void HackRfBackend::disconnectRadio()
 {
+    m_tuneFeedTimer.stop();
+    m_tuning = false;
+    // Every disconnect invalidates a channel build still in flight; it cannot
+    // be cancelled (WDSP's OpenChannel does not return early), so it runs to
+    // completion and onRxChannelBuilt() discards it.
+    ++m_connectGeneration;
+    if (m_connectPending) {
+        // Abandoned mid-setup: the device is open but never streamed. Close it,
+        // end the setup phase the dialog is showing, and report the session
+        // over, as Hl2Backend does for a disconnect during its DSP setup.
+        m_connectPending = false;
+        m_worker->close();
+        emit dspSetupFinished();
+        emit disconnected();
+        return;
+    }
     if (!m_connected) return;
     m_arbiterTickTimer.stop();
     m_worker->close();  // also stops any active RX/TX — see HackRfWorker::close()
@@ -330,8 +474,7 @@ void HackRfBackend::disconnectRadio()
     // No RX IQ can reach it once the worker is closed, but drop it anyway
     // rather than leave a channel from the last session sitting idle — the
     // next connectRadio() builds a fresh one regardless.
-    m_rxChannel.reset();
-    m_audioIqBuffer.clear();
+    m_rxDsp->clearChannel();
     emit disconnected();
 }
 
@@ -340,9 +483,9 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     Q_UNUSED(sliceId);  // single slice
     if (!m_connected) return;
     m_sliceFreqHz = hz;
-    m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
-    m_ddc->setCenterFrequencyHz(hz);
-    m_ddc->setSliceFrequencyHz(hz);
+    tuneHardware(hz);
+    m_rxDsp->ddc().setCenterFrequencyHz(hz);
+    m_rxDsp->ddc().setSliceFrequencyHz(hz);
     // Single-slice/single-pan: every VFO retune moves the ENTIRE captured
     // span (there is no independent "slice inside a wider pan window" the
     // way RtlSdrBackend has), so the pan model must move with it every time,
@@ -389,10 +532,7 @@ void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
     // per-mode notion of the passband, discarding whatever setFilter() set
     // before it. The filter must be re-pushed AFTER setMode() on every call,
     // not only when the mode actually changed.
-    if (m_rxChannel) {
-        m_rxChannel->setMode(wdspModeFromString(m_sliceMode));
-        m_rxChannel->setFilter(m_sliceFilterLow, m_sliceFilterHigh);
-    }
+    m_rxDsp->applySettings(rxSettings());   // mode, THEN filter, on the DSP thread
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -408,9 +548,7 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
     if (!m_connected || lowHz >= highHz) return;
     m_sliceFilterLow = lowHz;
     m_sliceFilterHigh = highHz;
-    if (m_rxChannel) {
-        m_rxChannel->setFilter(lowHz, highHz);
-    }
+    m_rxDsp->applySettings(rxSettings());
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -430,9 +568,7 @@ void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdD
     // hardware: WBFM's raw discriminator output needs far more headroom than
     // SSB/AM's mixer output does before it clips).
     m_agcMaxGainDb = std::clamp(thresholdDb, 0, 100) * 1.0;
-    if (m_rxChannel) {
-        m_rxChannel->setAgc(m_agcModeIndex, m_agcMaxGainDb);
-    }
+    m_rxDsp->applySettings(rxSettings());
 }
 
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
@@ -441,9 +577,9 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     Q_UNUSED(intent);  // this pan's window is not slaved to the VFO independently of it (single slice == the pan)
     if (!m_connected) return;
     m_sliceFreqHz = hz;
-    m_worker->setFreqHz(static_cast<std::uint64_t>(hz));
-    m_ddc->setCenterFrequencyHz(hz);
-    m_ddc->setSliceFrequencyHz(hz);
+    tuneHardware(hz);
+    m_rxDsp->ddc().setCenterFrequencyHz(hz);
+    m_rxDsp->ddc().setSliceFrequencyHz(hz);
     emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6, m_sampleRateHz / 1e6);
 }
 
@@ -451,7 +587,7 @@ void HackRfBackend::setPanFrameRate(const QString& panId, int fps)
 {
     Q_UNUSED(panId);
     // Same formula as Hl2RxDsp::setSpectrumRateFps: 0 = uncapped.
-    m_spectrumIntervalMs = fps > 0 ? (1000 / fps) : 0;
+    m_rxDsp->setSpectrumIntervalMs(fps > 0 ? (1000 / fps) : 0);
 }
 
 void HackRfBackend::setPanRfGain(const QString& panId, int gainDb)
@@ -469,9 +605,89 @@ void HackRfBackend::setPanPreamp(const QString& panId, int step)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_ampEnabled = (step != 0);
-    if (m_worker->setAmpEnable(m_ampEnabled)) {
+    // While transmitting the amp stays off (ampEnabledFor); the setting is kept
+    // and the next RX start applies it.
+    if (m_transmitting || m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, false))) {
         emit panPreampChanged(QString::fromLatin1(kPanId), m_ampEnabled ? 1 : 0);
     }
+}
+
+void HackRfBackend::setPanIfGain(const QString& panId, int gainDb)
+{
+    Q_UNUSED(panId);
+    if (!m_connected) return;
+    m_lnaGainDb = clampLnaGainDb(gainDb);
+    if (m_worker->setLnaGainDb(m_lnaGainDb)) {
+        emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
+    }
+}
+
+void HackRfBackend::setTxPower(int percent)
+{
+    m_txPowerPercent = std::clamp(percent, 0, 100);
+    // While tuning the hardware runs at TUNE power; the new RF Power is kept
+    // and restored when TUNE ends.
+    if (!m_connected || m_tuning) return;   // otherwise applied in completeConnect()
+    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+}
+
+void HackRfBackend::setTune(bool on, int tunePowerPercent)
+{
+    if (!m_connected) return;
+    if (on) {
+        m_tuning = true;
+        const int percent = tunePowerPercent >= 0 ? tunePowerPercent : m_txPowerPercent;
+        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(percent));
+        setKeying(true);
+        feedTuneCarrier();          // prime the queue before the first timer tick
+        m_tuneFeedTimer.start();
+    } else {
+        m_tuneFeedTimer.stop();
+        m_tuning = false;
+        setKeying(false);
+        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    }
+}
+
+// Keeps ~100 ms of carrier queued: enough to ride out a late tick, short
+// enough that an unkey stops the carrier promptly.
+void HackRfBackend::feedTuneCarrier()
+{
+    if (!m_tuning || !m_keyed) return;
+    const int rate = m_txDsp->config().audioSampleRateHz;
+    const std::vector<float> silence(static_cast<std::size_t>(std::max(1, rate / 50)), 0.0f);  // 20 ms
+    for (int guard = 0; guard < 10
+         && shouldFeedTuneCarrier(m_worker->txQueueDepth(), m_sampleRateHz, 100); ++guard) {
+        m_txDsp->processAudioBlock(silence);
+    }
+}
+
+bool HackRfBackend::tuneHardware(double trueHz)
+{
+    return m_worker->setFreqHz(correctedTuneHz(trueHz, m_freqCalPpb));
+}
+
+// Same shape as Hl2Backend::applyFreqCalPpb: clamp, persist per device unless
+// this is a live trim, then re-tune so the change is heard at once instead of
+// at the next dial movement.
+void HackRfBackend::applyFreqCalPpb(int ppb, bool persist)
+{
+    const int clamped = Hl2FreqCal::clampPpb(ppb);
+    if (persist) {
+        if (m_calibrationId.isEmpty()) {
+            qCWarning(lcHackRf) << "HackRF: not persisting frequency calibration —"
+                                << "no stable device serial; applying for this session only";
+        } else {
+            Hl2FreqCal::savePpb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId),
+                                clamped);
+        }
+    }
+    if (clamped == m_freqCalPpb)
+        return;
+    m_freqCalPpb = clamped;
+    qCInfo(lcHackRf) << "HackRF: frequency calibration" << clamped << "ppb";
+    if (m_connected)
+        tuneHardware(m_sliceFreqHz);
 }
 
 void HackRfBackend::setKeying(bool key)
@@ -495,7 +711,9 @@ void HackRfBackend::submitTxAudio(const QByteArray& int16Stereo, int sampleRateH
     Q_UNUSED(clientLeveled);   // no ALC/makeup gain in this modulator to gate — see HackRfTxDsp.h
     // Only actually modulate while genuinely keyed — see the header comment
     // on why this guard exists (mirrors Hl2Backend::submitTxAudio's own).
-    if (!m_connected || !m_keyed || int16Stereo.isEmpty()) return;
+    // While tuning, the carrier is the only signal: microphone audio would
+    // modulate it.
+    if (!m_connected || !m_keyed || m_tuning || int16Stereo.isEmpty()) return;
 
     if (sampleRateHz != m_txDsp->config().audioSampleRateHz) {
         // Stated rather than silently resampled — a mismatch would
@@ -548,8 +766,10 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
             emit extensionError(requestId, tr("lna.set requires an integer dB value"));
             return;
         }
-        m_lnaGainDb = db;  // HackRfWorker::setLnaGainDb clamps to the valid 0-40/8dB steps
+        // Clamped HERE so the reply and the slider report what the hardware took.
+        m_lnaGainDb = clampLnaGainDb(db);
         if (m_worker->setLnaGainDb(m_lnaGainDb)) {
+            emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
             emit extensionResult(requestId, m_lnaGainDb);
         } else {
             emit extensionError(requestId, tr("Failed to set LNA gain"));
@@ -558,6 +778,19 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
     }
     if (verb == QLatin1String("lna.get")) {
         emit extensionResult(requestId, m_lnaGainDb);
+        return;
+    }
+    // Frequency calibration, the same verbs and ppb units Hl2Backend serves, so
+    // the Calibration page and the `freqcal` bridge verb drive either family.
+    if (verb == QLatin1String("freqcal.set") || verb == QLatin1String("freqcal.set_live")) {
+        applyFreqCalPpb(arg.toInt(), /*persist=*/verb == QLatin1String("freqcal.set"));
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariant(m_freqCalPpb));
+        return;
+    }
+    if (verb == QLatin1String("freqcal.get")) {
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariantMap{{QStringLiteral("ppb"), m_freqCalPpb}});
         return;
     }
     emit extensionError(requestId, tr("Unknown verb %1.%2").arg(ns, verb));
@@ -574,6 +807,8 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
 
 void HackRfBackend::onArbiterWantRxStart()
 {
+    m_transmitting = false;
+    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/false));
     m_worker->startRx();
     // No separate "confirm" needed on the way INTO Idle/RxStreaming — only
     // the pending (TxPending/RxPending) states wait for a confirmRxStopped/
@@ -588,6 +823,10 @@ void HackRfBackend::onArbiterWantRxStop()
 
 void HackRfBackend::onArbiterWantTxStart()
 {
+    // Amp OFF before the first TX sample: it is one switch for both
+    // directions, and the operator's RX Preamp must not add ~14 dB to TX.
+    m_transmitting = true;
+    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/true));
     m_worker->startTx();
 }
 
@@ -623,34 +862,6 @@ void HackRfBackend::onWorkerStreamStopped(bool wasRx, const QString& reason)
     emit connectionError(tr("HackRF stream stopped unexpectedly: %1").arg(reason));
 }
 
-void HackRfBackend::onWorkerRxIqReady(QVector<std::complex<float>> iq)
-{
-    // Feeds HackRfDdc's decimator, which emits decimatedIqReady() — caught by
-    // onDdcAudioIqReady() below (connected in the constructor) and turned into
-    // demodulated audio via m_rxChannel. See the class comment.
-    m_ddc->process(iq);
-
-    // Wideband panadapter spectrum — computed once per backend from the raw
-    // capture, independent of the per-slice DDC above (see the class
-    // comment on why these are separate). QVector's storage is contiguous
-    // for a trivial element type, so this is a view, not a copy.
-    const std::span<const std::complex<float>> wideband(iq.constData(),
-                                                         static_cast<std::size_t>(iq.size()));
-    if (spectrumFrameDue()) {
-        if (m_spectrum->process(wideband, m_specBins) > 0) {
-            QByteArray frame(reinterpret_cast<const char*>(m_specBins.data()),
-                             static_cast<int>(m_specBins.size() * sizeof(float)));
-            emit spectrumFrameReady(0, frame);
-            emit waterfallRowReady(0, frame);
-            m_lastSpectrumMs = nowMs();
-        }
-    } else {
-        // Keep the window fed without paying for a transform — see
-        // Hl2RxDsp's identical reasoning in its own class comment.
-        m_spectrum->accumulate(wideband);
-    }
-}
-
 void HackRfBackend::emitInitialState()
 {
     RadioDelta rDelta;
@@ -666,6 +877,8 @@ void HackRfBackend::emitInitialState()
     emit panRfGainChanged(panId, m_vgaGainDb);
     emit panPreampInfoChanged(panId, {QStringLiteral("OFF"), QStringLiteral("ON")});
     emit panPreampChanged(panId, m_ampEnabled ? 1 : 0);
+    emit panIfGainInfoChanged(panId, 0, 40, 8, QStringLiteral("LNA"));
+    emit panIfGainChanged(panId, m_lnaGainDb);
 
     SliceDelta sDelta;
     sDelta.frequency = m_sliceFreqHz / 1e6;
@@ -678,11 +891,26 @@ void HackRfBackend::emitInitialState()
                                   QStringLiteral("LSB"), QStringLiteral("CW"),
                                   QStringLiteral("CWR")};
     sDelta.active = true;
+    // HackRF's one slice is also its transmit slice. Without this RadioModel
+    // had no TX slice at all, so every key request (PTT, MOX, TUNE) was refused
+    // with "No transmit slice is assigned." before reaching the backend.
+    sDelta.txSlice = true;
     sDelta.panId = panId;
     emit sliceChanged(0, sDelta);
 }
 
-void HackRfBackend::rebuildRxChannel()
+HackRfRxDsp::RxSettings HackRfBackend::rxSettings() const
+{
+    HackRfRxDsp::RxSettings s;
+    s.mode = wdspModeFromString(m_sliceMode);
+    s.filterLowHz = m_sliceFilterLow;
+    s.filterHighHz = m_sliceFilterHigh;
+    s.agcMode = m_agcModeIndex;
+    s.agcMaxGainDb = m_agcMaxGainDb;
+    return s;
+}
+
+WdspChannel::Config HackRfBackend::rxChannelConfig() const
 {
     WdspChannel::Config cfg;
     cfg.direction = WdspChannel::Direction::Receive;
@@ -701,7 +929,7 @@ void HackRfBackend::rebuildRxChannel()
     // async worker paces itself against real time; true "waits for each
     // output block (deterministic for a burst/offline feed)". HackRF
     // delivers IQ in USB-transfer-sized bursts, not a steady tick — one
-    // onDdcAudioIqReady() call typically drains several WDSP blocks back to
+    // HackRfRxDsp::onDecimated() call typically drains several WDSP blocks back to
     // back — so false is the wrong mode entirely, not just a quality trade.
     // Measured on real hardware (#42): with it false, the raw output PCM had
     // an exact-period glitch every 128 samples (2x this config's own output
@@ -709,68 +937,7 @@ void HackRfBackend::rebuildRxChannel()
     // the reported "over modulated"/distorted sound at an otherwise healthy
     // signal level and clean spectrum shape.
     cfg.blockForOutput = true;
-
-    std::string error;
-    auto channel = WdspChannel::create(cfg, &error);
-    if (!channel) {
-        qCWarning(lcHackRf) << "HackRfBackend: failed to create RX WDSP channel:"
-                            << QString::fromStdString(error);
-        m_rxChannel.reset();
-        return;
-    }
-    m_rxChannel = std::move(channel);
-    m_audioIqBuffer.clear();
-}
-
-void HackRfBackend::onDdcAudioIqReady(QVector<std::complex<float>> iq)
-{
-    if (!m_rxChannel) return;
-
-    m_audioIqBuffer.insert(m_audioIqBuffer.end(), iq.begin(), iq.end());
-
-    const std::size_t block = kAudioDspBlockSize;
-    const std::size_t outN = m_rxChannel->outputBlockSize();
-    if (m_audioI.size() != block) {
-        m_audioI.assign(block, 0.0f);
-        m_audioQ.assign(block, 0.0f);
-    }
-    if (m_audioLeft.size() != outN) {
-        m_audioLeft.assign(outN, 0.0f);
-        m_audioRight.assign(outN, 0.0f);
-    }
-
-    QByteArray pcm;
-    std::size_t consumed = 0;
-    while (m_audioIqBuffer.size() - consumed >= block) {
-        for (std::size_t n = 0; n < block; ++n) {
-            m_audioI[n] = m_audioIqBuffer[consumed + n].real();
-            m_audioQ[n] = m_audioIqBuffer[consumed + n].imag();
-        }
-        consumed += block;
-
-        const WdspChannel::ProcessResult res =
-            m_rxChannel->processIq(m_audioI, m_audioQ, m_audioLeft, m_audioRight);
-        if (res != WdspChannel::ProcessResult::Ok) {
-            continue;  // underrun while the pipeline fills, etc. — no output yet
-        }
-
-        const int before = pcm.size();
-        pcm.resize(before + static_cast<int>(outN * 2 * sizeof(float)));
-        auto* out = reinterpret_cast<float*>(pcm.data() + before);
-        for (std::size_t k = 0; k < outN; ++k) {
-            out[2 * k] = m_audioLeft[k];
-            out[2 * k + 1] = m_audioRight[k];
-        }
-    }
-    if (consumed > 0) {
-        m_audioIqBuffer.erase(m_audioIqBuffer.begin(),
-                              m_audioIqBuffer.begin() + static_cast<std::ptrdiff_t>(consumed));
-    }
-
-    if (!pcm.isEmpty()) {
-        emit audioFrameReady(pcm);
-        emit sliceAudioFrameReady(0, pcm);
-    }
+    return cfg;
 }
 
 void HackRfBackend::onTxDspIqReady(QVector<std::complex<float>> iq)

@@ -8,6 +8,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <mutex>
@@ -69,7 +71,16 @@ std::array<bool, kWdspChannelCount> g_channelsInUse {};
 // Called under g_setupMutex, so this global FFTW-planner I/O never races a
 // concurrent OpenChannel. (WDSPwisdom() itself is Windows-console-only, so we use
 // FFTW's portable wisdom API directly.)
-std::string wisdomPath()
+//
+// The cache is split into the DIRECTORY (wisdomDir) and a file name KEYED BY THE
+// FFTW BUILD (wisdomPath). FFTW rejects wisdom written by any other FFTW build
+// WHOLESALE, and every open exports, so one unversioned file shared by two FFTW
+// builds was rewritten by whichever ran last and was useless to the other: on a
+// machine running both a source build (Ubuntu 24.04, FFTW 3.3.10) and the x86_64
+// AppImage (built on 22.04, FFTW 3.3.8), each one's first RX channel open after
+// the other had run re-measured every PATIENT plan from scratch. On the GUI
+// thread, for HackRF, that was a 30 s freeze that read as "cannot connect".
+std::filesystem::path wisdomDir()
 {
     namespace fs = std::filesystem;
     fs::path dir;
@@ -88,7 +99,7 @@ std::string wisdomPath()
         dir = override;
         std::error_code overrideEc;
         fs::create_directories(dir, overrideEc);   // best-effort
-        return (dir / "wdsp-fftw-wisdom").string();
+        return dir;
     }
 #ifdef _WIN32
     if (const char* la = std::getenv("LOCALAPPDATA")) dir = la;
@@ -103,7 +114,36 @@ std::string wisdomPath()
     dir /= "aethersdr";
     std::error_code ec;
     fs::create_directories(dir, ec);   // best-effort
-    return (dir / "wdsp-fftw-wisdom").string();
+    return dir;
+}
+
+// The pre-versioning name. Read once as a fallback (loadWisdomOnce) so the
+// upgrade costs nobody a re-measure, never written again.
+constexpr const char* kLegacyWisdomFile = "wdsp-fftw-wisdom";
+
+// "wdsp-fftw-wisdom-3.3.10-1a2b3c4d": the FFTW version and a hash of the
+// planner signature, read from the header of FFTW's own wisdom export, which
+// is exactly what FFTW checks before it accepts a wisdom file.
+//
+// Read through fftw_export_wisdom_to_string(), a FUNCTION, not the data symbol
+// fftw_version: the Windows FFTW DLL does not export fftw_version, and
+// referencing it broke the Windows link. Computed once per process. The export
+// reads FFTW's global wisdom store, so the first call must come from a caller
+// holding the FFTW planner lock; every caller does (loadWisdomOnce and
+// exportWisdomNow run under it, and wisdomCacheFile() takes it).
+std::string wisdomPath()
+{
+    static std::once_flag once;
+    static std::string tag;
+    std::call_once(once, [] {
+        std::string header;
+        if (char* s = fftw_export_wisdom_to_string()) {
+            header = s;
+            fftw_free(s);
+        }
+        tag = WdspChannel::wisdomCacheKeyFromHeader(header);
+    });
+    return (wisdomDir() / (std::string(kLegacyWisdomFile) + "-" + tag)).string();
 }
 
 // Test/CI escape hatch: bound how long FFTW may spend measuring each plan.
@@ -165,7 +205,14 @@ void loadWisdomOnce()
         // default is FFTW_NO_TIMELIMIT and we only ever move off it here.
         if (plannerIsBounded())
             fftw_set_timelimit(plannerTimeLimitSeconds());
-        fftw_import_wisdom_from_filename(wisdomPath().c_str());
+        // The versioned file first. Only when it is missing or unusable, the
+        // legacy unversioned one: FFTW rejects it wholesale if another build
+        // wrote it, so this can only ever load plans that are valid here, and
+        // the next export lands under the versioned name.
+        if (!fftw_import_wisdom_from_filename(wisdomPath().c_str())) {
+            const std::filesystem::path legacy = wisdomDir() / kLegacyWisdomFile;
+            fftw_import_wisdom_from_filename(legacy.string().c_str());
+        }
     });
 }
 
@@ -1045,6 +1092,46 @@ uint64_t WdspChannel::outstandingAllocationsForTest() noexcept
 void WdspChannel::setWorkerHandoffPauseForTest(unsigned microseconds) noexcept
 {
     wdspPortSetHandoffPauseForTest(microseconds);
+}
+
+std::string WdspChannel::wisdomCacheFile()
+{
+    auto lock = AetherSDR::fftwPlannerLock();
+    return wisdomPath();
+}
+
+std::string WdspChannel::wisdomCacheKeyFromHeader(std::string_view header)
+{
+    // "(fftw-<version> fftw_wisdom <signature...>\n"
+    constexpr std::string_view kPrefix = "(fftw-";
+    constexpr std::string_view kMarker = " fftw_wisdom ";
+    if (header.substr(0, kPrefix.size()) != kPrefix)
+        return "unknown";
+    const std::size_t markerAt = header.find(kMarker);
+    if (markerAt == std::string_view::npos || markerAt <= kPrefix.size())
+        return "unknown";
+    std::string version(header.substr(kPrefix.size(), markerAt - kPrefix.size()));
+    const std::size_t sigAt = markerAt + kMarker.size();
+    const std::size_t lineEnd = header.find('\n', sigAt);
+    const std::string_view signature = header.substr(
+        sigAt, lineEnd == std::string_view::npos ? std::string_view::npos : lineEnd - sigAt);
+
+    // Filename-safe version: nothing outside this alphabet can become a path.
+    for (char& c : version) {
+        const bool safe = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
+                       || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_';
+        if (!safe)
+            c = '_';
+    }
+    // FNV-1a: stable across runs and platforms, unlike std::hash.
+    std::uint32_t h = 2166136261u;
+    for (const char c : signature) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 16777619u;
+    }
+    char hex[9];
+    std::snprintf(hex, sizeof hex, "%08x", h);
+    return version + "-" + hex;
 }
 
 std::unique_lock<std::mutex> WdspChannel::fftwSetupLock()

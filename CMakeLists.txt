@@ -2604,7 +2604,10 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfTxDsp.cpp
         src/core/backends/hackrf/HackRfTxDsp.h
         src/core/backends/hackrf/HackRfBackend.cpp
-        src/core/backends/hackrf/HackRfBackend.h)
+        src/core/backends/hackrf/HackRfBackend.h
+        src/core/backends/hackrf/HackRfRxDsp.cpp
+        src/core/backends/hackrf/HackRfRxDsp.h
+        src/core/backends/hackrf/HackRfLibraryLock.h)
 else()
     message(STATUS "HackRF ... disabled — libhackrf not found")
 endif()

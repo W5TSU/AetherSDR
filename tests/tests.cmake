@@ -564,6 +564,12 @@ add_executable(wdsp_channel_test tests/wdsp_channel_test.cpp)
 target_link_libraries(wdsp_channel_test PRIVATE aethercore)
 add_test(NAME wdsp_channel_test COMMAND wdsp_channel_test)
 
+# The WDSP wisdom cache name is keyed by the FFTW build, so builds linking
+# different FFTWs stop overwriting each other's plans. Opens no channel.
+add_executable(wdsp_wisdom_cache_name_test tests/wdsp_wisdom_cache_name_test.cpp)
+target_link_libraries(wdsp_wisdom_cache_name_test PRIVATE aethercore)
+add_test(NAME wdsp_wisdom_cache_name_test COMMAND wdsp_wisdom_cache_name_test)
+
 # Socket-free lifetime checks for the two process-global FFTW planners.
 # Uses real NR2/NR4/RTL constructors and destructors, without radio sockets.
 add_executable(fftw_planner_lock_test tests/fftw_planner_lock_test.cpp)
@@ -2748,6 +2754,23 @@ if(AETHER_BACKEND_HACKRF)
     target_include_directories(hackrf_backend_test PRIVATE src)
     target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
+
+    # HackRF's receive chain on its own thread behind a bounded queue: the
+    # caller never runs the DSP, a busy DSP drops instead of piling up. No
+    # hardware.
+    add_executable(hackrf_rx_dsp_test tests/hackrf_rx_dsp_test.cpp)
+    target_include_directories(hackrf_rx_dsp_test PRIVATE src)
+    target_link_libraries(hackrf_rx_dsp_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_rx_dsp_test COMMAND hackrf_rx_dsp_test)
+
+    # A cold HackRF connect must not freeze the GUI while WDSP plans its FFTs.
+    # Needs a real HackRF and AETHER_HACKRF_HW_TEST=1; exits 77 (skipped)
+    # otherwise, so CI and ordinary local runs never touch the device.
+    add_executable(hackrf_cold_connect_hw_test tests/hackrf_cold_connect_hw_test.cpp)
+    target_include_directories(hackrf_cold_connect_hw_test PRIVATE src)
+    target_link_libraries(hackrf_cold_connect_hw_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Concurrent)
+    add_test(NAME hackrf_cold_connect_hw_test COMMAND hackrf_cold_connect_hw_test)
+    set_tests_properties(hackrf_cold_connect_hw_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 endif()
 
 add_executable(n1mm_spot_client_test
@@ -5224,6 +5247,41 @@ set_target_properties(spectrum_overlay_band_highlight_test PROPERTIES AUTOMOC ON
 add_test(NAME spectrum_overlay_band_highlight_test
          COMMAND spectrum_overlay_band_highlight_test)
 set_tests_properties(spectrum_overlay_band_highlight_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# The ANT panel's second continuous gain row (HackRF's LNA): hidden until a
+# radio publishes it, snapped to the radio's step, emitting only real changes.
+add_executable(spectrum_overlay_if_gain_test
+    tests/spectrum_overlay_if_gain_test.cpp
+    src/gui/SpectrumOverlayMenu.cpp
+    src/gui/SpectrumOverlayWheelGuard.cpp
+    src/gui/MemoryBrowsePanel.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/DspParamPopup.cpp
+)
+target_include_directories(spectrum_overlay_if_gain_test PRIVATE src)
+if(DEBIAN_GPU_FIX_REQUIRED)
+    target_include_directories(spectrum_overlay_if_gain_test PRIVATE
+        "${DEBIAN_PRIVATE_INC}"
+        "${DEBIAN_PRIVATE_INC}/QtGui"
+    )
+endif()
+if(QT_FRAMEWORK_PRIVATE_INC)
+    target_include_directories(spectrum_overlay_if_gain_test PRIVATE
+        "${QT_FRAMEWORK_PRIVATE_INC}"
+        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
+    )
+endif()
+target_link_libraries(spectrum_overlay_if_gain_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+)
+if(TARGET Qt6::GuiPrivate)
+    target_link_libraries(spectrum_overlay_if_gain_test PRIVATE Qt6::GuiPrivate)
+endif()
+set_target_properties(spectrum_overlay_if_gain_test PROPERTIES AUTOMOC ON)
+add_test(NAME spectrum_overlay_if_gain_test
+         COMMAND spectrum_overlay_if_gain_test)
+set_tests_properties(spectrum_overlay_if_gain_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(device_diagnostics_test

@@ -251,7 +251,6 @@
 #endif
 #include "core/PanadapterStream.h"
 #include "core/backends/IRadioBackend.h"   // seam: SimBackend::audioFrameReady wiring
-#include "core/backends/hl2/Hl2Backend.h"  // dynamic_cast for WDSP setup progress
 #include "core/backends/sim/SimBackend.h"  // dynamic_cast for demo noise controls
 #include "workspace/WorkspaceController.h"  // prepareShutdown (phase 7 canvas windows)
 #include "workspace/WorkspaceWindow.h"      // shutdown sweep of hidden windows (M1)
@@ -7176,17 +7175,18 @@ void MainWindow::wireBackendSeam(IRadioBackend* backend)
     // AFTER this whole window. So for all ~20 s the operator saw a panel reading
     // "Connecting…" and nothing else, which is the "the client has hung" report
     // that #4775 set out to answer in the first place.
-    if (auto* hl2Backend = dynamic_cast<hl2::Hl2Backend*>(backend)) {
-        // Disconnected first, like every other lambda connect in this function:
-        // the helper promises to be idempotent for the same live backend, and
-        // Qt::UniqueConnection cannot cover a lambda.
-        disconnect(hl2Backend, &hl2::Hl2Backend::dspSetupProgress, this, nullptr);
-        disconnect(hl2Backend, &hl2::Hl2Backend::dspSetupFinished, this, nullptr);
-        connect(hl2Backend, &hl2::Hl2Backend::dspSetupProgress, this,
-                [this](const QString&, int, int) { armWdspSetupDialog(); });
-        connect(hl2Backend, &hl2::Hl2Backend::dspSetupFinished, this,
-                [this] { dismissWdspSetupDialog(); });
-    }
+    //
+    // On the seam, so every family with a host-side DSP build (HL2, HackRF) gets
+    // it without a dynamic_cast; the others never emit it. Disconnected first,
+    // like every other lambda connect in this function: the helper promises to
+    // be idempotent for the same live backend, and Qt::UniqueConnection cannot
+    // cover a lambda.
+    disconnect(backend, &IRadioBackend::dspSetupProgress, this, nullptr);
+    disconnect(backend, &IRadioBackend::dspSetupFinished, this, nullptr);
+    connect(backend, &IRadioBackend::dspSetupProgress, this,
+            [this](const QString&, int, int) { armWdspSetupDialog(); });
+    connect(backend, &IRadioBackend::dspSetupFinished, this,
+            [this] { dismissWdspSetupDialog(); });
 
     // The demo delivers native 128-sample frames, which the improved 1024/4 NR2
     // geometry (#4400) mangles (wobble + dead DSP/RADE); tell the engine to run

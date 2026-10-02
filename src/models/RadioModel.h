@@ -1025,6 +1025,9 @@ public:
     // wire-text fallback.
     void setPanPreampFor(const QString& panId, int step);
     void setPanAttenuatorFor(const QString& panId, int step);
+    // The second continuous gain stage (PanadapterModel::ifGainLabel); dB in
+    // the range the backend published. Seam-only.
+    void setPanIfGainFor(const QString& panId, int gainDb);
 
     // Display controls — FFT (display pan set)
     void setPanAverage(int frames);

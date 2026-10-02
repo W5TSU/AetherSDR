@@ -126,6 +126,11 @@ public:
     void setRfGain(int gain);
     void setRfGainRange(int low, int high, int step,
                        const QString& unitSuffix = QStringLiteral(" dB"));
+    // A second continuous gain stage, under RF Gain. `label` is the radio's
+    // name for it ("LNA" on a HackRF); an EMPTY label hides the row, which is
+    // every radio with a single gain stage.
+    void setIfGainRange(int low, int high, int step, const QString& label);
+    void setIfGain(int gainDb);
     // Discrete receive front-end stages. An EMPTY label list hides the
     // control — a radio with no preamp or no attenuator shows neither an
     // empty button nor a disabled one.
@@ -241,6 +246,8 @@ signals:
     void wnbLevelChanged(int level);
     // Emitted when RF gain slider changes (panadapter-level).
     void rfGainChanged(int gain);
+    // Emitted when the second gain stage's slider settles on a new step, in dB.
+    void ifGainChanged(int gainDb);
     // Step index into the label list this menu was given, never a dB value.
     void preampStepChanged(int step);
     void attenuatorStepChanged(int step);
@@ -366,6 +373,11 @@ private:
     // What the RF-gain readout appends. " dB" on a radio with a real gain
     // register, "%" on one whose gain is an opaque scale.
     QString      m_rfGainUnitSuffix{QStringLiteral(" dB")};
+    QWidget*     m_ifGainRow{nullptr};       // hidden unless a radio publishes a label
+    QLabel*      m_ifGainNameLabel{nullptr};
+    QSlider*     m_ifGainSlider{nullptr};
+    QLabel*      m_ifGainValueLabel{nullptr};
+    int          m_lastEmittedIfGain{INT_MIN};
     void refreshFrontEndButtons();
     // ONE ROW EACH, and each hides on its own. They were a single "Front end:"
     // row with both buttons side by side, which does not fit: the ANT panel is

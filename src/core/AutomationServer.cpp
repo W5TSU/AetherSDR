@@ -8354,7 +8354,7 @@ QJsonObject AutomationServer::doFreqCal(const QString& action, const QString& va
     }
 
     auto applyPpb = [this](int ppb) {
-        m_radioModel->invokeBackendExtension(QStringLiteral("hl2"),
+        m_radioModel->invokeBackendExtension(m_radioModel->backendCapabilities().family,
                                              QStringLiteral("freqcal.set"), 0,
                                              QVariant(ppb));
     };

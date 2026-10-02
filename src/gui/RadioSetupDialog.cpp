@@ -3969,13 +3969,19 @@ QWidget* RadioSetupDialog::buildCalibrationTab()
         return 0.0;
     };
 
-    auto refreshReadout = [readout, ppbSpin, activeSliceHz] {
+    auto refreshReadout = [this, readout, ppbSpin, activeSliceHz] {
         const int ppb = ppbSpin->value();
-        const double clock = Hl2FreqCal::effectiveClockHz(ppb);
-        QString text = QStringLiteral("Effective clock %1 Hz  ·  %2 ppb (%3 ppm)")
-            .arg(QLocale::system().toString(qRound64(clock)))
+        QString text = QStringLiteral("%1 ppb (%2 ppm)")
             .arg(ppb)
             .arg(ppb / 1000.0, 0, 'f', 3);
+        // The effective-clock figure is the HL2's 76.8 MHz AD9866 clock; other
+        // families have no single clock the operator would recognise.
+        if (m_model->backendCapabilities().family == QLatin1String("hl2")) {
+            const double clock = Hl2FreqCal::effectiveClockHz(ppb);
+            text = QStringLiteral("Effective clock %1 Hz  ·  ")
+                       .arg(QLocale::system().toString(qRound64(clock)))
+                 + text;
+        }
         // The line that makes ppb mean something. "-182 ppb" is abstract;
         // "-5.2 Hz at 28.500 MHz" is the error the operator was looking at.
         if (const double rf = activeSliceHz(); rf > 0.0) {
@@ -3994,7 +4000,9 @@ QWidget* RadioSetupDialog::buildCalibrationTab()
         // The backend owns clamping, persistence and the re-push. Going through
         // it rather than writing settings here is what keeps a mid-session
         // change audible immediately instead of at the next tune.
-        m_model->invokeBackendExtension(QStringLiteral("hl2"),
+        // To the CONNECTED radio's own namespace: the page serves every family
+        // with hostFrequencyCalibration (HL2, HackRF), and they share the verbs.
+        m_model->invokeBackendExtension(m_model->backendCapabilities().family,
                                         persist ? QStringLiteral("freqcal.set")
                                                 : QStringLiteral("freqcal.set_live"),
                                         0, QVariant(ppbSpin->value()));

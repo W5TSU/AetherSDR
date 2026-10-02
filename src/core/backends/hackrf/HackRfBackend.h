@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/backends/hackrf/HackRfDdc.h"
+#include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
 #include "core/backends/hl2/Hl2Spectrum.h"
@@ -9,8 +10,10 @@
 #include "core/dsp/WdspChannel.h"
 
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QObject>
 #include <QString>
+#include <QThread>
 #include <QTimer>
 
 #include <complex>
@@ -127,6 +130,16 @@ public:
     // which is exactly what panPreamp is for (see IRadioBackend.h's own
     // comment on why Icom's preamp uses this instead of a continuous slider).
     void setPanPreamp(const QString& panId, int step) override;
+    // The LNA, as the seam's second continuous gain stage. VGA stays on
+    // setPanRfGain and the RF amp on setPanPreamp.
+    void setPanIfGain(const QString& panId, int gainDb) override;
+    // RF Power slider -> TX VGA (0-47 dB). Stored when not connected and applied
+    // at connect; TX VGA can be set while receiving, so it is ready at key-down.
+    void setTxPower(int percent) override;
+    // TUNE: an unmodulated carrier at TUNE power. FM with silent audio is a
+    // clean carrier on the slice frequency, so the existing modulator makes it;
+    // a timer keeps the TX queue fed while tuning. Off restores RF Power.
+    void setTune(bool on, int tunePowerPercent = -1) override;
 
     void setKeying(bool key) override;
     void invokeExtension(const QString& ns, const QString& verb,
@@ -147,7 +160,7 @@ public:
 
     // Single-slice DDC, exposed for real-hardware verification (mirrors
     // RtlSdrBackend::ddc()).
-    HackRfDdc* ddc() const { return m_ddc.get(); }
+    HackRfDdc* ddc() const { return &m_rxDsp->ddc(); }
 
     // Operator mode string -> WDSP demod mode. Delegates to
     // hl2::modeFromString for every name the two backends share (it is
@@ -172,6 +185,9 @@ public:
     // above.
     static std::pair<int, int> defaultPassbandForMode(const QString& mode) noexcept;
 
+    // Emits IRadioBackend::dspSetupProgress/dspSetupFinished around the one
+    // receive chain a connect builds off the GUI thread (connectRadio).
+
 private slots:
     void onArbiterWantRxStart();
     void onArbiterWantRxStop();
@@ -180,28 +196,46 @@ private slots:
     void onArbiterTimedOut(HackRfTxRxArbiter::State pendingState);
     void onArbiterTick();
     void onWorkerStreamStopped(bool wasRx, const QString& reason);
-    void onWorkerRxIqReady(QVector<std::complex<float>> iq);
-    void onDdcAudioIqReady(QVector<std::complex<float>> iq);
     void onTxDspIqReady(QVector<std::complex<float>> iq);
 
 private:
     void emitInitialState();
-    // (Re)builds m_rxChannel from the current mode/filter/AGC state. Called
-    // on connect and on any mode change — WdspChannel::setMode() handles a
-    // mode change at runtime, so this full rebuild is for the one time a
-    // fresh channel must exist at all (connect), not the ongoing path.
-    void rebuildRxChannel();
+    // The RX WDSP channel's Config from the current mode/filter/AGC state.
+    // A channel is built once per connect, off the GUI thread (connectRadio);
+    // after that, WdspChannel::setMode/setFilter/setAgc carry every change.
+    WdspChannel::Config rxChannelConfig() const;
+
+    // What the worker thread hands back from a connect's channel build.
+    // shared_ptr, not unique_ptr, because QFuture results must be copyable.
+    struct RxChannelBuild {
+        quint64 generation = 0;
+        std::shared_ptr<WdspChannel> channel;
+        QString error;
+        qint64 elapsedMs = 0;
+    };
+    // GUI thread, when the build finishes: installs the channel and completes
+    // the connect, or discards a build its connect no longer wants.
+    void onRxChannelBuilt();
+    // The second half of a connect, once the receive chain exists.
+    void completeConnect();
+    // Tunes the hardware to a TRUE frequency, applying m_freqCalPpb.
+    bool tuneHardware(double trueHz);
+    void applyFreqCalPpb(int ppb, bool persist);
     qint64 nowMs() const { return m_clock.elapsed(); }
-    // Gates the wideband spectrum FFT the same way Hl2RxDsp::spectrumFrameDue()
-    // does — see the class comment.
-    bool spectrumFrameDue() const
-    {
-        return m_spectrumIntervalMs <= 0
-            || (nowMs() - m_lastSpectrumMs) >= m_spectrumIntervalMs;
-    }
+    // The demodulator settings as they stand, for HackRfRxDsp.
+    HackRfRxDsp::RxSettings rxSettings() const;
 
     bool m_connected{false};
     QString m_serial;
+
+    // A connect whose hardware is open and whose RX channel is still being
+    // built. connectRadio() returns at once; onRxChannelBuilt() finishes it.
+    bool m_connectPending{false};
+    // Bumped by every connect and disconnect. A build carries the value it was
+    // started under, so one that finishes after its connect was abandoned or
+    // superseded is recognised and discarded rather than installed.
+    quint64 m_connectGeneration{0};
+    QFutureWatcher<RxChannelBuild> m_rxChannelBuild;
 
     // Slice 0 / pan state — single slice for now, see the class comment.
     double m_sliceFreqHz{100'000'000.0};   // 100.0 MHz FM broadcast — safe RX default
@@ -211,17 +245,34 @@ private:
     double m_sampleRateHz{8'000'000.0};
     int m_vgaGainDb{20};
     int m_lnaGainDb{16};
+    // The operator's Preamp setting. The hardware amp follows it on RECEIVE
+    // only: transmit always runs with the amp off (ampEnabledFor()).
     bool m_ampEnabled{false};
+    // True between the arbiter's TX start and its next RX start, so a Preamp
+    // change while keyed is remembered for RX instead of switching the amp on
+    // under a live transmission.
+    bool m_transmitting{false};
+    int m_txPowerPercent{0};
+    bool m_tuning{false};
+    QTimer m_tuneFeedTimer;   // feeds silence to the FM modulator while tuning
+    void feedTuneCarrier();
+    // Crystal error in ppb (Hl2FreqCal's convention: > 0 = fast). Loaded per
+    // device at connect; every hardware tune goes through correctedTuneHz().
+    int m_freqCalPpb{0};
+    // The key the calibration is stored under: the device's USB serial, or
+    // EMPTY when the connect used an enumeration-index locator ("hackrf:N"),
+    // which is not a persistent identity (RadioSettingsIdentity.h). Empty means
+    // uncalibrated and not persisted, never someone else's number.
+    QString m_calibrationId;
 
     std::unique_ptr<HackRfWorker> m_worker;
-    std::unique_ptr<HackRfDdc> m_ddc;
-    std::unique_ptr<hl2::Hl2Spectrum> m_spectrum;
-    std::vector<float> m_specBins;   // reused output buffer for m_spectrum->process()
-    int m_spectrumIntervalMs{33};    // ~30 fps default, matches RtlSdrDdc's own default
-    qint64 m_lastSpectrumMs{0};
+    // The receive chain (DDC, spectrum, WDSP demod) runs on m_rxDspThread, fed
+    // straight from the libhackrf callback through a bounded queue. Nothing on
+    // the GUI thread waits on it: see HackRfRxDsp.
+    QThread* m_rxDspThread{nullptr};
+    HackRfRxDsp* m_rxDsp{nullptr};
 
-    // RX audio (WDSP RXA channel) — see the class comment.
-    std::unique_ptr<WdspChannel> m_rxChannel;
+    // RX demodulator settings (the channel itself lives in m_rxDsp).
     int m_agcModeIndex{3};       // WDSP AGC mode; 3 = medium, WDSP's own default
     // 0..100 threshold * 1.0 dB, at the slice default of 65 -- NOT Hl2Backend's
     // 0.6 map. Measured on real hardware (#42): the WBFM discriminator's own
@@ -234,9 +285,6 @@ private:
     // per-mode (narrow modes may want HL2's original map back) once a WDSP
     // RXA channel exists for more than WFM to compare against.
     double m_agcMaxGainDb{65.0};
-    std::vector<std::complex<float>> m_audioIqBuffer;  // awaiting a full WDSP block
-    std::vector<float> m_audioI, m_audioQ;             // deinterleaved input scratch
-    std::vector<float> m_audioLeft, m_audioRight;      // WdspChannel output scratch
 
     // FM voice TX audio — see the class comment and HackRfTxDsp.h.
     std::unique_ptr<HackRfTxDsp> m_txDsp;

@@ -273,6 +273,42 @@ void testTickNeverFiresOutsideAPendingState()
 
 } // namespace
 
+// HackRfBackend confirms SYNCHRONOUSLY: its wantRxStop handler stops RX and
+// calls confirmRxStopped() before the emit returns (and the same for TX). The
+// arbiter emitted before entering the Pending state, so that confirm saw the
+// OLD state, was dropped as stale, and the arbiter then waited in Pending for
+// a confirm that had already happened: keying never started TX (no TX LED,
+// no output), and after the timeout neither direction was streaming.
+void testSynchronousConfirmFromInsideTheHandler()
+{
+    HackRfTxRxArbiter a;
+    QStringList log;
+    QObject::connect(&a, &HackRfTxRxArbiter::wantRxStart, [&] { log.append("rxStart"); });
+    QObject::connect(&a, &HackRfTxRxArbiter::wantTxStart, [&] { log.append("txStart"); });
+    QObject::connect(&a, &HackRfTxRxArbiter::wantRxStop, [&] {
+        log.append("rxStop");
+        a.confirmRxStopped(0);          // exactly what onArbiterWantRxStop does
+    });
+    QObject::connect(&a, &HackRfTxRxArbiter::wantTxStop, [&] {
+        log.append("txStop");
+        a.confirmTxStopped(0);          // exactly what onArbiterWantTxStop does
+    });
+
+    a.requestRx(0);
+    expectState("sync: RX from idle streams", a.state(), State::RxStreaming);
+
+    a.requestTx(0);
+    expectState("sync: a confirm from inside wantRxStop completes the switch to TX",
+                a.state(), State::TxStreaming);
+    expectTrue("sync: ...and TX is started", log.contains("txStart"));
+
+    log.clear();
+    a.requestRx(0);
+    expectState("sync: a confirm from inside wantTxStop completes the switch back to RX",
+                a.state(), State::RxStreaming);
+    expectTrue("sync: ...and RX is restarted", log.contains("rxStart"));
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
@@ -284,6 +320,7 @@ int main(int argc, char** argv)
     testConfirmRxStoppedCompletesTheTxTransition();
     testTxToRxGoesThroughPending();
     testConfirmTxStoppedCompletesTheRxTransition();
+    testSynchronousConfirmFromInsideTheHandler();
 
     testRequestRxWhileAlreadyRxIsNoOp();
     testRequestTxWhileAlreadyInTxPendingDoesNotRestartTheTransition();

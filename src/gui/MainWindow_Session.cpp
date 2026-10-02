@@ -1992,6 +1992,13 @@ void MainWindow::wirePanLifecycle()
         connect(pan, &PanadapterModel::attenuatorStepChanged,
                 applet->spectrumWidget()->overlayMenu(),
                 &SpectrumOverlayMenu::setAttenuatorStep);
+        // The second continuous gain stage (HackRF's LNA): model -> row.
+        connect(pan, &PanadapterModel::ifGainInfoChanged,
+                applet->spectrumWidget()->overlayMenu(),
+                &SpectrumOverlayMenu::setIfGainRange);
+        connect(pan, &PanadapterModel::ifGainChanged,
+                applet->spectrumWidget()->overlayMenu(),
+                &SpectrumOverlayMenu::setIfGain);
         connect(applet->spectrumWidget()->overlayMenu(),
                 &SpectrumOverlayMenu::preampStepChanged,
                 this, [this, panId = pan->panId()](int step) {
@@ -2001,6 +2008,11 @@ void MainWindow::wirePanLifecycle()
                 &SpectrumOverlayMenu::attenuatorStepChanged,
                 this, [this, panId = pan->panId()](int step) {
             m_radioModel.setPanAttenuatorFor(panId, step);
+        });
+        connect(applet->spectrumWidget()->overlayMenu(),
+                &SpectrumOverlayMenu::ifGainChanged,
+                this, [this, panId = pan->panId()](int gainDb) {
+            m_radioModel.setPanIfGainFor(panId, gainDb);
         });
         // Seed from whatever the model already holds: this wiring can run after
         // the backend has published, and a control built empty would stay empty
@@ -2018,6 +2030,9 @@ void MainWindow::wirePanLifecycle()
         syncPreampIndicator();
         applet->spectrumWidget()->overlayMenu()->setAttenuatorLabels(pan->attenuatorLabels());
         applet->spectrumWidget()->overlayMenu()->setAttenuatorStep(pan->attenuatorStep());
+        applet->spectrumWidget()->overlayMenu()->setIfGainRange(
+            pan->ifGainLow(), pan->ifGainHigh(), pan->ifGainStep(), pan->ifGainLabel());
+        applet->spectrumWidget()->overlayMenu()->setIfGain(pan->ifGain());
 
         // Push display dimensions to the radio so it sends full-size FFT bins.
         // Without this, the radio uses xpixels=50 ypixels=20 (default) and

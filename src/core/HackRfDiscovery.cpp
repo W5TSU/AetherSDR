@@ -5,6 +5,7 @@
 #include <QSet>
 
 #ifdef AETHER_BACKEND_HACKRF
+#include "core/backends/hackrf/HackRfLibraryLock.h"
 #include <hackrf.h>
 #endif
 
@@ -72,14 +73,15 @@ void HackRfDiscovery::onScanTimer()
         QVector<RadioInfo> current;
 
 #ifdef AETHER_BACKEND_HACKRF
-        // hackrf_init()/hackrf_exit() are independently reference-counted by
-        // libhackrf itself (both documented "can be safely called multiple
-        // times", and hackrf_exit() returns HACKRF_ERROR_NOT_LAST_DEVICE
-        // rather than tearing down shared state if a device is still open
-        // elsewhere) — so this scan's own balanced init/exit pair is safe to
-        // run concurrently with HackRfWorker's separate one on a connected
-        // session, exactly like RtlSdrDiscovery's scan needs no coordination
-        // with a connected RtlSdrWorker.
+        // hackrf_init()/hackrf_exit() are NOT safe to run concurrently with
+        // HackRfWorker's: libhackrf manages its one global libusb context with
+        // no locking, and two racing hackrf_exit() calls both libusb_exit it
+        // (a SIGSEGV in libusb_exit on this thread, observed). The whole scan
+        // holds the library lock HackRfWorker takes around init/open and
+        // close/exit; see HackRfLibraryLock.h. libhackrf's own NOT_LAST_DEVICE
+        // check still keeps this exit from closing a context a device is open
+        // on, which is why streaming needs no lock.
+        const std::lock_guard<std::mutex> lock(hackrf::libraryMutex());
         if (hackrf_init() == HACKRF_SUCCESS) {
             hackrf_device_list_t* list = hackrf_device_list();
             if (list) {
