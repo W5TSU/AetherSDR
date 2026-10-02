@@ -276,6 +276,12 @@ RadioCapabilities HackRfBackend::capabilities() const
     c.hostModulates = true;         // WDSP TXA on this host, once wired — see the class comment
     c.takesTxAudioOverSeam = true;  // audio reaches this backend via submitTxAudio, not DAX/VITA-49
     c.hasRadioPttReadback = false;  // no readback plane, matches HL2 — setKeying's command edge is the only edge
+    // The HOST owns the drive (the TX VGA and amp, set by applyTxDrive()), so
+    // rfPower() is operator intent, not radio-confirmed power -- the HL2's
+    // shape. Declaring it also tells RadioModel that RF and TUNE power reach
+    // this backend as typed intents, so their Flex text is not a "drop".
+    c.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
+        SliceFrequencyControl::Authority::Engine};
     for (const QString& m : supportedModes())
         if (!canTransmitMode(m))
             c.receiveOnlyModes.append(m);
