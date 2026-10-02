@@ -2755,6 +2755,13 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
 
+    # The keyed CW carrier: timestamp-placed edges, raised-cosine ramps, exact
+    # element lengths. Pure; no hardware.
+    add_executable(hackrf_cw_tx_test tests/hackrf_cw_tx_test.cpp)
+    target_include_directories(hackrf_cw_tx_test PRIVATE src)
+    target_link_libraries(hackrf_cw_tx_test PRIVATE aethercore)
+    add_test(NAME hackrf_cw_tx_test COMMAND hackrf_cw_tx_test)
+
     # HackRF's receive chain on its own thread behind a bounded queue: the
     # caller never runs the DSP, a busy DSP drops instead of piling up. No
     # hardware.

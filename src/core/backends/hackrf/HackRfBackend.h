@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/backends/hackrf/HackRfCwTx.h"
 #include "core/backends/hackrf/HackRfDdc.h"
 #include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
@@ -49,12 +50,13 @@ class HackRfWorker;
 //     after real, silent failures, and FM needs far less machinery than
 //     Hl2TxDsp's SSB phasing network to begin with. submitTxAudio() feeds it
 //     mono-converted mic audio; the resulting IQ goes straight to
-//     HackRfWorker::submitTxIq(). CW keying (setCwKeying()) is NOT wired
-//     yet — a keyed-tone generator is a different, event-driven shape from
-//     an audio-block modulator, tracked as its own remaining #42 item.
-//     Keying in CW mode today still transmits silence (the empty-queue path
-//     in HackRfWorker::handleTxTransfer, which silence-pads and emits
-//     txUnderrun()).
+//     HackRfWorker::submitTxIq().
+//   - CW TX IS WIRED via setCwKeying() and HackRfCwTx: the paddle keyer's
+//     edges are timestamped and rendered as a raised-cosine-shaped carrier on
+//     the dial frequency, 50 ms behind real time so GUI-thread jitter never
+//     reaches the air (see HackRfCwTx.h). Break-in raises PTT on key-down and
+//     a hang timer drops it after the operator's delay. Microphone audio is
+//     ignored in CW.
 //   - RX AUDIO IS WIRED via a single WdspChannel (Direction::Receive) —
 //     the same reusable WDSP wrapper Hl2RxDsp uses, not a copy of it: HL2's
 //     class carries a great deal that is specific to ITS wire (notch
@@ -142,6 +144,10 @@ public:
     void setTune(bool on, int tunePowerPercent = -1) override;
 
     void setKeying(bool key) override;
+    // A client-timed CW element (the iambic keyer's edges). Turned into a
+    // shaped carrier by HackRfCwTx; with break-in, key-down raises PTT and a
+    // hang timer drops it after the operator's delay.
+    void setCwKeying(bool down, bool breakIn, int breakInDelayMs) override;
     void invokeExtension(const QString& ns, const QString& verb,
                          quint64 requestId, const QVariant& arg = {}) override;
 
@@ -256,6 +262,16 @@ private:
     bool m_tuning{false};
     QTimer m_tuneFeedTimer;   // feeds silence to the FM modulator while tuning
     void feedTuneCarrier();
+
+    // CW transmit. m_cwTx renders the keyed carrier; m_cwFeedTimer keeps a
+    // short lead of it in the TX queue while keyed in CW; m_cwHangTimer drops
+    // a break-in PTT after the operator's delay.
+    HackRfCwTx m_cwTx;
+    QTimer m_cwFeedTimer;
+    QTimer m_cwHangTimer;
+    bool m_cwAutoKeyed{false};
+    bool isCwMode() const;
+    void feedCwCarrier();
     // Crystal error in ppb (Hl2FreqCal's convention: > 0 = fast). Loaded per
     // device at connect; every hardware tune goes through correctedTuneHz().
     int m_freqCalPpb{0};
