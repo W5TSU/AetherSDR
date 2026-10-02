@@ -8,6 +8,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.1] — 2026-10-01
+
+### HackRF: connects, receives, calibrates and transmits (#59)
+
+v26.9.11 put the experimental HackRF backend in the downloads, but in
+practice it could not be used: connecting appeared to hang, and transmit
+never reached the air. Both are fixed, along with the controls satellite
+work needs.
+
+- **Connecting no longer freezes the app.** The first connect on a machine
+  tunes its signal processing for that computer, which takes up to a
+  minute. That used to happen with the window frozen and no explanation, so
+  it read as "cannot connect", and closing the app meant paying it again
+  next time. It now runs in the background with a **"Setting Up Your Radio"**
+  dialog, and happens once.
+- **Receive can no longer freeze the window.** HackRF's receive processing
+  runs on its own thread. If a slow machine ever falls behind, you hear a
+  brief glitch instead of the application locking up.
+- **Transmit and TUNE work.** Keying used to be refused or to stall before
+  the HackRF started transmitting (no TX LED, no output). PTT now transmits,
+  and **TUNE** sends a clean carrier at your TUNE power.
+- **TX drive:** the RF Power slider now sets the HackRF's transmit gain (TX
+  VGA, 0–47 dB). The RF amp is always **off while transmitting**, so the
+  receive Preamp can no longer add ~14 dB to your transmit signal.
+- **Frequency calibration:** **Radio Setup → Calibration** now works for
+  HackRF. A stock HackRF crystal can be off by several kHz at 70 cm; enter
+  the error, or zero-beat a known signal. It is saved per device.
+- **LNA control:** a new **LNA** slider (0–40 dB, 8 dB steps) under RF Gain in
+  the panadapter's ANT panel. RF Gain is the HackRF's VGA and Preamp its RF
+  amp, so all three receive gain stages are now adjustable.
+- Fixed an occasional crash when disconnecting a HackRF.
+
+CW transmit on HackRF is still not wired: keying in CW sends no signal.
+
+### Fork
+
+- FFTW plan caches are now kept per FFTW version, so running a source build
+  and an AppImage on the same machine no longer makes each one re-measure
+  its plans after the other has run.
+- Radio Setup's Calibration page and the `freqcal` automation verb now work
+  for any radio that needs host-side frequency calibration, not only the
+  Hermes-Lite 2.
+
 ## [v26.9.11] — 2026-09-30
 
 ### HackRF and RTL-SDR are now in the downloads (#56, #57)
