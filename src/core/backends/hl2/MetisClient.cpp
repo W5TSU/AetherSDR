@@ -695,11 +695,20 @@ void MetisClient::stop()
     // has nothing left to sample and its intent ends with the session.
     resetBandscopeGate();
     m_params.bandscope = false;
-    // An interrupted five-bank write must not finish in the next session.
-    // Preserve unrelated one-shot setup; only this board's writes are stale.
+    // An interrupted write must not finish in the next session. Two kinds of
+    // bank (upstream #6014, #4579):
+    //   - the IO board's five-bank I2C write, which a later session would
+    //     complete against a board that may have been power-cycled since;
+    //   - the 0x09 drive bank. It carries the PA enable, and the next start()'s
+    //     priming bursts would put a leftover one on the wire before
+    //     Hl2Backend's drive-0 -- the PA biased on by a session that has
+    //     already ended.
+    // Preserve unrelated one-shot setup: the RX and TX NCO banks assert nothing
+    // on the transmit side, and the next session restates both anyway.
     std::erase_if(m_oneShot, [](const Cc& bank) {
-        return bank[0] == kC0I2c2 && bank[1] == kI2cCookieWrite
-            && bank[2] == (kI2cStopAtEnd | kIoBoardI2cAddr);
+        const bool ioBoardWrite = bank[0] == kC0I2c2 && bank[1] == kI2cCookieWrite
+                               && bank[2] == (kI2cStopAtEnd | kIoBoardI2cAddr);
+        return ioBoardWrite || bank[0] == kC0TxDrive;
     });
     m_ioBoardTxFreqSent = false;
     // The radio's response register does not survive a metis-stop, and neither
@@ -737,7 +746,20 @@ void MetisClient::setRxFrequencyHz(int rxIndex, std::uint32_t hz)
     //
     // This used to append a 0x39 filter-pipeline reset behind the frequency.
     // That WEDGED THE RADIO -- see requestPipelineReset() for the full story.
-    m_oneShot.push_back(m_ccRxFreq[static_cast<std::size_t>(rxIndex)]);
+    queueOneShotIfRunning(m_ccRxFreq[static_cast<std::size_t>(rxIndex)]);
+}
+
+void MetisClient::queueOneShotIfRunning(const Cc& bank)
+{
+    // NOTHING IS QUEUED WHILE STOPPED (upstream #6014). m_oneShot survives
+    // stop() and start() on purpose, so a bank queued now would go out in the
+    // NEXT session's priming burst, ahead of anything that session asserted
+    // for itself. The value is not lost: the caller has already stored it in
+    // m_params / m_cc*, and the next session's own start-up restates it.
+    if (!m_running) {
+        return;
+    }
+    m_oneShot.push_back(bank);
 }
 
 void MetisClient::setSampleRate(SampleRate rate)
@@ -934,7 +956,10 @@ void MetisClient::setAdcDither(bool enabled)
     m_params.adcDither = enabled;
     m_ccConfig = ccConfig(m_params.sampleRate, effectiveNumRx(), m_params.ocFilterByte,
                           m_params.adcDither, m_params.adcRandom);
-    m_oneShot.push_back(m_ccConfig);
+    // NOTHING QUEUED, for the reason setBandFilter() spells out: live m_ccConfig
+    // rides bank A of every EP2 frame, so this is on the wire within ~2.6 ms,
+    // and a queued COPY is a snapshot that could re-assert a stale sample rate
+    // behind a later change (#4579).
 }
 
 void MetisClient::setAdcRandom(bool enabled)
@@ -944,7 +969,10 @@ void MetisClient::setAdcRandom(bool enabled)
     m_params.adcRandom = enabled;
     m_ccConfig = ccConfig(m_params.sampleRate, effectiveNumRx(), m_params.ocFilterByte,
                           m_params.adcDither, m_params.adcRandom);
-    m_oneShot.push_back(m_ccConfig);
+    // NOTHING QUEUED, for the reason setBandFilter() spells out: live m_ccConfig
+    // rides bank A of every EP2 frame, so this is on the wire within ~2.6 ms,
+    // and a queued COPY is a snapshot that could re-assert a stale sample rate
+    // behind a later change (#4579).
 }
 
 void MetisClient::setTxLatencyPttHang(int txLatency, int pttHang)
@@ -985,7 +1013,9 @@ void MetisClient::dispatchNextI2cJob()
     const auto job = m_i2cJobs.dispatchNext();
     if (!job)
         return;
-    m_oneShot.push_back(*job);
+    // Not while stopped: the write would finish in the next session. The
+    // timeout below still fires, so the job fails cleanly instead of hanging.
+    queueOneShotIfRunning(*job);
     m_i2cTimeoutTimer->start();
 }
 
@@ -1234,7 +1264,7 @@ void MetisClient::setTxFrequencyHz(std::uint32_t hz)
     // keying up and listening.
     qCDebug(lcHl2) << "HL2: TX NCO <-" << hz << "Hz (commanded)";
     m_ccTxFreq = ccTxFreq(hz);
-    m_oneShot.push_back(m_ccTxFreq);
+    queueOneShotIfRunning(m_ccTxFreq);
 }
 
 void MetisClient::setTxDriveLevel(int level)
@@ -1250,7 +1280,7 @@ void MetisClient::setTxDriveLevel(int level)
     if (!m_txAllowed)
         level = 0;
     m_ccTxDrive = ccTxDrive(level, level > 0);
-    m_oneShot.push_back(m_ccTxDrive);
+    queueOneShotIfRunning(m_ccTxDrive);
 }
 
 void MetisClient::setCwKeyDown(bool down)
