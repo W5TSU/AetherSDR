@@ -10,6 +10,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <chrono>
 #include <span>
 
 Q_DECLARE_LOGGING_CATEGORY(lcHackRf)  // defined in HackRfWorker.cpp
@@ -134,6 +135,19 @@ HackRfBackend::HackRfBackend(QObject* parent)
 
     m_tuneFeedTimer.setInterval(20);
     connect(&m_tuneFeedTimer, &QTimer::timeout, this, &HackRfBackend::feedTuneCarrier);
+
+    // CW: a fine-grained feed keeps the TX queue only ~20 ms ahead, inside the
+    // 50 ms edge latency, so every timestamped edge lands in samples not yet
+    // rendered. PreciseTimer: the default coarse timer may fire 5% late.
+    m_cwFeedTimer.setInterval(5);
+    m_cwFeedTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_cwFeedTimer, &QTimer::timeout, this, &HackRfBackend::feedCwCarrier);
+    m_cwHangTimer.setSingleShot(true);
+    connect(&m_cwHangTimer, &QTimer::timeout, this, [this] {
+        if (!m_cwAutoKeyed) return;
+        m_cwAutoKeyed = false;
+        setKeying(false);
+    });
 }
 
 HackRfBackend::~HackRfBackend()
@@ -453,6 +467,9 @@ void HackRfBackend::disconnectRadio()
 {
     m_tuneFeedTimer.stop();
     m_tuning = false;
+    m_cwFeedTimer.stop();
+    m_cwHangTimer.stop();
+    m_cwAutoKeyed = false;
     // Every disconnect invalidates a channel build still in flight; it cannot
     // be cancelled (WDSP's OpenChannel does not return early), so it runs to
     // completion and onRxChannelBuilt() discards it.
@@ -631,6 +648,55 @@ void HackRfBackend::setTxPower(int percent)
     m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
 }
 
+bool HackRfBackend::isCwMode() const
+{
+    const QString m = m_sliceMode.trimmed().toUpper();
+    return m == QLatin1String("CW") || m == QLatin1String("CWR")
+        || m == QLatin1String("CWU") || m == QLatin1String("CWL");
+}
+
+void HackRfBackend::setCwKeying(bool down, bool breakIn, int breakInDelayMs)
+{
+    if (!m_connected) return;
+    if (down && !isCwMode()) {
+        qCWarning(lcHackRf) << "HackRF CW key ignored outside CW mode:" << m_sliceMode;
+        return;
+    }
+    m_cwHangTimer.stop();
+    if (down && !m_keyed) {
+        // Nothing to key inside without a PTT: break-in raises one, otherwise
+        // the edge has no transmission to belong to.
+        if (!breakIn) return;
+        setKeying(true);
+        m_cwAutoKeyed = true;
+    }
+    if (!m_keyed) return;   // a key-up after the PTT already dropped
+    const double nowS = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    m_cwTx.keyEdge(down, nowS);
+    if (!down && m_cwAutoKeyed) {
+        // The last element plays out 50 ms (latency) + 5 ms (ramp) after its
+        // key-up, behind up to 20 ms of queue: a shorter hang would cut it off
+        // when the unkey clears the TX queue.
+        constexpr int kMinHangMs = 100;
+        m_cwHangTimer.start(std::max(kMinHangMs, std::clamp(breakInDelayMs, 0, 2000)));
+    }
+}
+
+// Keeps ~20 ms of CW ahead in the TX queue: inside the 50 ms edge latency, so
+// every timestamped edge lands in samples not yet rendered.
+void HackRfBackend::feedCwCarrier()
+{
+    if (!m_keyed || m_tuning || !isCwMode()) return;
+    const int block = std::max(1, static_cast<int>(m_sampleRateHz / 500.0));   // 2 ms
+    for (int guard = 0; guard < 20
+         && shouldFeedTuneCarrier(m_worker->txQueueDepth(), m_sampleRateHz, 20); ++guard) {
+        QVector<std::complex<float>> iq(block);
+        m_cwTx.render(iq.data(), static_cast<std::size_t>(block));
+        m_worker->submitTxIq(iq);
+    }
+}
+
 void HackRfBackend::setTune(bool on, int tunePowerPercent)
 {
     if (!m_connected) return;
@@ -693,10 +759,24 @@ void HackRfBackend::applyFreqCalPpb(int ppb, bool persist)
 void HackRfBackend::setKeying(bool key)
 {
     if (!m_connected) return;
+    const bool wasKeyed = m_keyed;
     m_keyed = key;
     if (key) {
+        // A new transmission in CW: fresh CW timeline, and the carrier feed
+        // runs for the whole PTT (silent until the first paddle edge).
+        if (!wasKeyed && isCwMode()) {
+            HackRfCwTx::Config cw;
+            cw.sampleRateHz = m_sampleRateHz;
+            cw.amplitude = 1.0f;   // the FM modulator's unit magnitude: same power per RF Power
+            m_cwTx.configure(cw);
+            m_cwFeedTimer.start();
+        }
         m_arbiter->requestTx(nowMs());
     } else {
+        m_cwFeedTimer.stop();
+        m_cwHangTimer.stop();
+        m_cwAutoKeyed = false;
+        m_cwTx.reset();
         m_arbiter->requestRx(nowMs());
         // Drop accumulated phase/resample state so the NEXT transmission's
         // carrier starts clean rather than carrying this one's tail —
@@ -713,7 +793,8 @@ void HackRfBackend::submitTxAudio(const QByteArray& int16Stereo, int sampleRateH
     // on why this guard exists (mirrors Hl2Backend::submitTxAudio's own).
     // While tuning, the carrier is the only signal: microphone audio would
     // modulate it.
-    if (!m_connected || !m_keyed || m_tuning || int16Stereo.isEmpty()) return;
+    // In CW the keyed carrier is the signal; microphone audio would FM it.
+    if (!m_connected || !m_keyed || m_tuning || isCwMode() || int16Stereo.isEmpty()) return;
 
     if (sampleRateHz != m_txDsp->config().audioSampleRateHz) {
         // Stated rather than silently resampled — a mismatch would
