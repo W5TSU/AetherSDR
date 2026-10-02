@@ -4563,6 +4563,19 @@ target_include_directories(hl2_unkey_hold_test PRIVATE src tests)
 target_link_libraries(hl2_unkey_hold_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_unkey_hold_test COMMAND hl2_unkey_hold_test)
 
+# Keyboard shortcuts off: a bound key reaches the focused widget, never a
+# TX-keying button, and a PTT (Hold) release always un-keys (upstream
+# 870407b6). Real Qt key delivery, socket-free; no radio or transmitter.
+add_executable(shortcut_passthrough_test
+    tests/shortcut_passthrough_test.cpp
+    src/core/ShortcutManager.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(shortcut_passthrough_test PRIVATE src tests)
+target_link_libraries(shortcut_passthrough_test PRIVATE Qt6::Widgets Qt6::Test)
+add_test(NAME shortcut_passthrough_test COMMAND shortcut_passthrough_test)
+set_tests_properties(shortcut_passthrough_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
@@ -6326,6 +6339,7 @@ set_tests_properties(phone_cw_acc_availability_test PROPERTIES
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    shortcut_passthrough_test
     hl2_unkey_hold_test
     noise_floor_auto_adjust_gate_test
     firmware_close_dialog_test
