@@ -29,6 +29,7 @@
 #include "ExperimentalRadioSupport.h"
 #include "FloatingRestorePolicy.h"
 #include "FramelessMessageBox.h"
+#include "MixerControlAvailability.h"
 #include "PhoneCwApplet.h"
 #include "SpectrumOverlayMenu.h"
 #include "RfGainPresentation.h"
@@ -3006,6 +3007,13 @@ void MainWindow::applyTxAudioCapabilities(bool connected, const RadioCapabilitie
     if (connected) {
         // Observation only: never restore a client setting into DATA OFF MOD.
         m_radioModel.notePcAudioEnabled(pcAudioEnabled);
+    }
+    // A radio with no command plane has no headphone output: dim the title
+    // bar's headphone pair with its reason (MixerControlAvailability.h).
+    // Availability only -- neither edge writes the slider or the mute.
+    if (m_titleBar) {
+        m_titleBar->setHeadphoneAvailable(
+            headphoneControlsAvailable(connected, m_radioModel.hasCommandPlane()));
     }
 }
 

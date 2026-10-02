@@ -894,6 +894,16 @@ void MainWindow::registerShortcutActions()
     m_shortcutManager.registerAction("dax_toggle", "DAX TX Toggle", "TX",
         QKeySequence(), [this]() {
             if (!m_radioModel.isConnected()) return;
+            // A radio with no DAX plane has no DAX TX to switch: the DAX
+            // button is already hidden there (applyCapabilitiesToUi), and the
+            // optimistic daxOn() flip would mark the client TX chain not-ready
+            // (the `!tx.daxOn()` readiness tests) while the transmit set
+            // dax= wire text is dropped. Refuse before the flip, and say so.
+            if (!m_radioModel.hasDaxStreams()) {
+                qCWarning(lcDevices) << "dax_toggle refused: this radio has no DAX plane";
+                showUnsupportedControlNotice();
+                return;
+            }
             auto& tx = m_radioModel.transmitModel();
             tx.setDax(!tx.daxOn());
         });
@@ -1196,6 +1206,17 @@ void MainWindow::registerShortcutActions()
     m_shortcutManager.registerAction("cwl_toggle", "CWL Frequency Offset Toggle", "CW",
         QKeySequence(), [this]() {
             if (!m_radioModel.isConnected()) return;
+            // The keyboard twin of the cw.cwlEnable MIDI gate
+            // (MainWindow_Controllers.cpp): with no command plane the
+            // `cw cwl_enabled` wire text is dropped, yet the optimistic
+            // cwlEnabled() flip still lands and zero-beat mirrors its
+            // correction on it (#5213). Refuse before the flip, and say so.
+            if (!m_radioModel.hasCommandPlane()) {
+                qCWarning(lcDevices) << "cwl_toggle refused: this radio takes CWL"
+                                     << "as a slice mode, not an offset flag";
+                showUnsupportedControlNotice();
+                return;
+            }
             auto& tx = m_radioModel.transmitModel();
             tx.setCwlEnabled(!tx.cwlEnabled());
         });

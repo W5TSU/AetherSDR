@@ -1,4 +1,5 @@
 #include "VfoWidget.h"
+#include "AntennaChoiceGate.h"
 #include "ScopedChildWidget.h"
 #include "AgcModeAvailability.h"
 #include "FmTonePresentation.h"
@@ -790,6 +791,20 @@ void VfoWidget::buildUI()
             return;
         }
         QPointer<SliceModel> slice = m_slice;
+        // Nothing real to choose -- the radio published no port and no Kiwi
+        // receiver is on offer: refuse visibly instead of opening a menu of
+        // invented ANT1/ANT2 whose pick moves the label and nothing else.
+        {
+            const bool connected = m_radioModel && m_radioModel->isConnected();
+            const bool published = !slice->rxAntennaList().isEmpty()
+                || (m_radioModel && !m_radioModel->antennaList().isEmpty());
+            const bool virtualAntennas = m_kiwiSdrManager
+                && !m_kiwiSdrManager->virtualAntennaTokens().isEmpty();
+            if (rxAntennaChoiceRefused(connected, published, virtualAntennas)) {
+                emit antennaChoiceRefused(false);
+                return;
+            }
+        }
         QStringList menuOptions = rxAntennaOptions();
         if (m_kiwiSdrManager) {
             for (const QString& ant : m_kiwiSdrManager->virtualAntennaTokens()) {
@@ -848,6 +863,17 @@ void VfoWidget::buildUI()
         // event loop, so widget teardown or a slice change while the popup is
         // open cannot strand a suspended frame (#5566).
         QPointer<SliceModel> slice = m_slice;
+        // Same rule for TX, without the Kiwi escape: a virtual receiver is
+        // never a transmit destination (AntennaChoiceGate.h).
+        {
+            const bool connected = m_radioModel && m_radioModel->isConnected();
+            const bool published = !m_slice->txAntennaList().isEmpty()
+                || (m_radioModel && !m_radioModel->antennaList().isEmpty());
+            if (txAntennaChoiceRefused(connected, published)) {
+                emit antennaChoiceRefused(true);
+                return;
+            }
+        }
         QMenu* menu = new QMenu(m_txAntBtn);
         connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
         const QStringList options = txAntennaOptions();
