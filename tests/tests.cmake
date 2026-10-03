@@ -4552,6 +4552,14 @@ target_include_directories(hl2_rit_xit_test PRIVATE src tests)
 target_link_libraries(hl2_rit_xit_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_rit_xit_test COMMAND hl2_rit_xit_test)
 
+# RIT/XIT cross the seam with the slice id; the Flex command text is
+# unchanged (upstream 5fae2f86). Injected recording backend — no socket,
+# nothing keyed.
+add_executable(slice_rit_xit_seam_test tests/slice_rit_xit_seam_test.cpp)
+target_include_directories(slice_rit_xit_seam_test PRIVATE src tests)
+target_link_libraries(slice_rit_xit_seam_test PRIVATE aethercore Qt6::Core)
+add_test(NAME slice_rit_xit_seam_test COMMAND slice_rit_xit_seam_test)
+
 # HL2 RQST/ACK state machine (docs/HERMES.md §13 item 13, oracle §5) — pure
 # policy, standalone (no Qt, no socket, no radio). The clock is EP6 frames.
 add_executable(hl2_rqst_ack_test
@@ -6388,6 +6396,7 @@ set(AETHER_SETTINGS_CONSUMERS
     weather_radar_loading_test
     hl2_gain_restore_test
     hl2_rit_xit_test
+    slice_rit_xit_seam_test
     hl2_client_side_spots_declaration_test
     icom_identity_test
     icom_control_profile_test
