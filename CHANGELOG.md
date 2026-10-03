@@ -8,6 +8,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.3] — 2026-10-03
+
+### Fixed: Windows crash when connecting a radio (#63)
+
+**If you run AetherSDR on Windows, update from 26.10.1 or 26.10.2.** Both
+crashed every time a Hermes-Lite 2 (or another radio whose signal processing
+runs on your computer) was connected: the app closed just as it reported
+"DSP setup: opening receive chain(s)". Linux and macOS were not affected.
+
+The cause was a memory-handling mistake introduced in 26.10.1: the app
+released a piece of memory that the bundled FFT library had allocated, in a
+way that is only safe when both use the same C runtime. On Windows they do
+not, so the release corrupted memory and Windows ended the program. The app
+no longer takes memory from that library at all.
+
 ## [v26.10.2] — 2026-10-03
 
 ### HackRF: CW transmit (#61)
