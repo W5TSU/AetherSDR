@@ -123,25 +123,42 @@ constexpr const char* kLegacyWisdomFile = "wdsp-fftw-wisdom";
 
 // "wdsp-fftw-wisdom-3.3.10-1a2b3c4d": the FFTW version and a hash of the
 // planner signature, read from the header of FFTW's own wisdom export, which
-// is exactly what FFTW checks before it accepts a wisdom file.
+// is exactly what FFTW checks before it accepts a wisdom file. (Not the
+// fftw_version data symbol: the Windows FFTW DLL does not export it.)
 //
-// Read through fftw_export_wisdom_to_string(), a FUNCTION, not the data symbol
-// fftw_version: the Windows FFTW DLL does not export fftw_version, and
-// referencing it broke the Windows link. Computed once per process. The export
-// reads FFTW's global wisdom store, so the first call must come from a caller
-// holding the FFTW planner lock; every caller does (loadWisdomOnce and
-// exportWisdomNow run under it, and wisdomCacheFile() takes it).
+// STREAMED THROUGH fftw_export_wisdom()'s CALLBACK, NEVER
+// fftw_export_wisdom_to_string(). That one returns a string FFTW allocated with
+// malloc() in ITS C runtime: the Windows build ships the official MinGW FFTW
+// DLL, linked against msvcrt.dll, while AetherSDR is MSVC/UCRT. Freeing it with
+// fftw_free() (an aligned free expecting an fftw_malloc block) corrupted the
+// msvcrt heap -- every Windows connect died with 0xc0000374 at "DSP setup:
+// opening receive chain(s)" in 26.10.1 and 26.10.2 -- and the app's own free()
+// would be a different heap again. The callback hands us characters, so no
+// allocation crosses the DLL boundary at all. Linux never showed it: there
+// fftw_free, free and malloc are all glibc's.
+//
+// Computed once per process. The export reads FFTW's global wisdom store, so
+// the first call must come from a caller holding the FFTW planner lock; every
+// caller does (loadWisdomOnce and exportWisdomNow run under it, and
+// wisdomCacheFile() takes it).
 std::string wisdomPath()
 {
     static std::once_flag once;
     static std::string tag;
     std::call_once(once, [] {
-        std::string header;
-        if (char* s = fftw_export_wisdom_to_string()) {
-            header = s;
-            fftw_free(s);
-        }
-        tag = WdspChannel::wisdomCacheKeyFromHeader(header);
+        struct HeaderSink {
+            std::string line;
+            bool done = false;
+        } sink;
+        fftw_export_wisdom([](char c, void* data) {
+            auto* s = static_cast<HeaderSink*>(data);
+            if (s->done)
+                return;            // the rest of the wisdom: not needed
+            if (c == '\n')
+                s->done = true;
+            s->line.push_back(c);
+        }, &sink);
+        tag = WdspChannel::wisdomCacheKeyFromHeader(sink.line);
     });
     return (wisdomDir() / (std::string(kLegacyWisdomFile) + "-" + tag)).string();
 }
