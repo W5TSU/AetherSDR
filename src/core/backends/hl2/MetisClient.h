@@ -982,6 +982,7 @@ private:
     // 384 kHz. The meters only need ~10 Hz; rate-limit the cross-thread emit so
     // publishTelemetry() does not flood the GUI thread. (#4449 review)
     QElapsedTimer m_telemetryEmitClock;
+    ForwardPowerWindow m_fwdWindow;      // forward-power peak of the current emit window
     static constexpr qint64 kTelemetryMinIntervalMs = 100;
 
     // ---- transport counters (see LinkCounters) ----

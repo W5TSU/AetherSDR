@@ -7002,22 +7002,18 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
         if (const auto swr = swrFromRaw(*t.forwardPowerRaw, *t.reversePowerRaw))
             emit meterUpdate(QStringLiteral("TX:SWR"), *swr);
     }
-    // Forward and reverse power, through the reference curve in
-    // directionalWatts(). UNCALIBRATED — see that function for exactly what
-    // that means and why publishing an approximate value still beats publishing
-    // none. The raw counts continue to be logged alongside, because they are
-    // what a per-unit calibration will be built from and they are the only way
-    // to tell "the radio reports no power" from "we never asked".
-    //
-    // Arrives at the 10 Hz MetisClient already paces telemetry at
-    // (kTelemetryMinIntervalMs), so no further rate gate is needed here;
-    // MeterModel applies its own forward-power ballistics on top.
-    //
-    // Published through the peak hold, not raw. See kFwdPeakReleaseAlpha for
-    // why a 10 Hz instantaneous sample of a speech envelope reads ~10 dB low
-    // and what the hold does and does not recover.
+    // Forward/reverse power through directionalWatts()'s uncalibrated reference
+    // curve; raw counts are logged too, for future per-unit calibration.
+    // MetisClient paces telemetry at kTelemetryMinIntervalMs. Forward power is
+    // published through the peak hold; see kFwdPeakReleaseAlpha.
     if (t.forwardPowerRaw) {
-        const double instantW = directionalWatts(*t.forwardPowerRaw);
+        // Keyed: the window's loudest RADDR-1 sample, since the radio reports
+        // ~190 a second and the last one misses speech peaks. Unkeyed: the
+        // last value, because a maximum of noise samples would sit above the
+        // no-carrier floor MeterModel snaps to zero on.
+        const int fwdRaw = (m_keyed && t.forwardPowerPeakRaw)
+            ? *t.forwardPowerPeakRaw : *t.forwardPowerRaw;
+        const double instantW = directionalWatts(fwdRaw);
         // The hold applies only while keyed. Unkeyed, the reading must fall to
         // zero on the same schedule REFPWR does — MeterModel snaps its own
         // forward-power filter to zero the moment a no-carrier sample arrives,
@@ -7032,10 +7028,14 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
                          wattsToDbm(directionalWatts(*t.reversePowerRaw)));
     if (t.forwardPowerRaw && (*t.forwardPowerRaw != m_lastFwdRaw)) {
         m_lastFwdRaw = *t.forwardPowerRaw;
+        // The sample count shows whether the RADDR-1 stream itself is thin
+        // (~19 per 100 ms is healthy at 48 kHz).
         qCDebug(lcHl2Tx) << "HL2 directional: fwd" << *t.forwardPowerRaw
                          << "rev" << t.reversePowerRaw.value_or(-1)
                          << "-> fwd" << directionalWatts(*t.forwardPowerRaw) << "W"
-                         << "(uncalibrated reference curve)";
+                         << "(uncalibrated reference curve);"
+                         << "window peak" << t.forwardPowerPeakRaw.value_or(-1)
+                         << "of" << t.forwardPowerSamples << "RADDR-1 samples";
     }
     // TX IQ FIFO — a queue-fed transmission can starve the radio's buffer in a
     // way a per-packet generated tone never can, so this is what distinguishes

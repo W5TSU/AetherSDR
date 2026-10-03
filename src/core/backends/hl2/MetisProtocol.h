@@ -747,6 +747,14 @@ struct Hl2Telemetry {
     std::optional<int>  biasCurrentRaw;
     bool ptt = false;
 
+    // The LOUDEST RADDR-1 forward-power reading since the previous telemetry
+    // emit, and how many readings that window held (upstream #6019). The radio
+    // reports forward power ~190 times a second at 48 kHz; the 10 Hz emit kept
+    // only the last one, which almost never lands on a speech peak, so SSB read
+    // ~4 dB under true PEP. Filled by MetisClient at each emit, not by apply().
+    std::optional<int>  forwardPowerPeakRaw;
+    int forwardPowerSamples = 0;
+
     // Merge a decoded response in, leaving untouched fields alone.
     //
     // IGNORES ACK responses apart from their PTT bit, and that is load-bearing
@@ -757,6 +765,28 @@ struct Hl2Telemetry {
     // own outgoing bytes. Harmless until something set the RQST bit; this
     // guard is what makes it stay harmless now that Hl2ControlRequest does.
     void apply(const Ep6Response& r) noexcept;
+};
+
+// Accumulates the forward-power readings of one telemetry window: the peak and
+// the count. Non-ACK RADDR 1 only; the forward-power field is the low 16 bits.
+struct ForwardPowerWindow {
+    std::optional<int> peak;
+    int samples = 0;
+
+    void observe(const Ep6Response& r) noexcept
+    {
+        if (r.ack || r.raddr != 0x01)
+            return;
+        const int v = static_cast<int>(r.data & 0xFFFF);
+        if (!peak || v > *peak)
+            peak = v;
+        ++samples;
+    }
+    void clear() noexcept
+    {
+        peak.reset();
+        samples = 0;
+    }
 };
 
 // Directional-coupler counts -> watts, through the reference calibration curve.

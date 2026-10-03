@@ -275,6 +275,9 @@ bool MetisClient::start(const Params& params)
     m_expectedEp4Seq = 0;
     m_ep4Drops = 0;
     m_ep4Rewinds = 0;
+    m_fwdWindow.clear();
+    m_telemetry.forwardPowerPeakRaw.reset();
+    m_telemetry.forwardPowerSamples = 0;
     // The gate's counters belong to the session for the same reason the wire
     // ones do. Left standing they survive a reconnect while every sibling is
     // zeroed here and m_link is replaced below, so resetBandscopeMirrors()
@@ -1752,6 +1755,7 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
                 if (m_telemetry.ptt != wasRadioPtt)
                     onRadioPttEdge(m_telemetry.ptt);
                 telemetryChanged = true;
+                m_fwdWindow.observe(*resp);
             }
         }
         // One response slot per FRAME, so the RQST deadline advances here
@@ -1768,6 +1772,9 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
         && (!m_telemetryEmitClock.isValid()
             || m_telemetryEmitClock.elapsed() >= kTelemetryMinIntervalMs)) {
         m_telemetryEmitClock.restart();
+        m_telemetry.forwardPowerPeakRaw = m_fwdWindow.peak;
+        m_telemetry.forwardPowerSamples = m_fwdWindow.samples;
+        m_fwdWindow.clear();
         emit telemetryUpdated(m_telemetry);
     }
 

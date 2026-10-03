@@ -1069,53 +1069,15 @@ private:
     double m_paTempC = 0.0;
     bool   m_havePaTemp = false;
 
-    // ---- Forward-power peak hold ----
-    //
-    // WHY THE SHARED BALLISTICS ABOVE ARE NOT ENOUGH HERE, and why this is a
-    // peak ESTIMATE rather than a peak measurement.
-    //
-    // A Flex reports FWDPWR from a detector the radio itself peak-reads, so
-    // MeterModel's fast-attack EMA is smoothing an already-peak-tracking
-    // signal. The HL2 has nothing of the kind: forward power is one 12-bit
-    // conversion from the `slow_adc` I2C converter, round-robined with reverse
-    // power, temperature and bias current, with no peak detector and no
-    // averaging anywhere in the gateware (rtl/slow_adc.v, rtl/control.v ~L262 —
-    // tier 1 on the source-precedence ladder). Each reading is the RF envelope
-    // at whatever instant the I2C transaction happened to land, and we see one
-    // every kTelemetryMinIntervalMs.
-    //
-    // Speech peaks last tens of milliseconds. Sampling that envelope at 10 Hz
-    // lands on a peak essentially never, so an SSB reading sat 8-12 dB below
-    // PEP while a constant-envelope FT8 or WSPR transmission — where every
-    // instant IS the peak — read full scale. That is the whole of the reported
-    // "6 W on FT8, 1 W on voice": both were making the same PEP.
-    //
-    // No host-side filter can recover a peak that was never sampled. What a
-    // hold CAN do is accumulate the maximum across a transmission: ~30
-    // independent samples in a 3 s over lands within a few dB of true PEP, and
-    // converges further the longer the operator talks. So this is honest as an
-    // estimate that settles, and dishonest as an instantaneous reading — which
-    // is why the meter description says so and why the raw counts keep being
-    // logged and published for the bridge alongside it.
-    //
-    // Instant attack, slow release, in WATTS rather than counts because the
-    // calibration curve is markedly non-linear and a peak held in counts would
-    // decay at a rate that changed with level.
-    //
-    // 0.05 per 10 Hz sample is a ~2 s release, matching what an outboard PEP
-    // wattmeter does. Slower would keep a peak past the end of the over; faster
-    // would decay between syllables and give the reading back to the average,
-    // which is exactly the failure this exists to fix.
-    //
-    // ONE DOWNSTREAM CONSEQUENCE, stated because it is not obvious: TxApplet
-    // runs its own ~2 s PEP hold + linear decay on the FWDPWR gauge (#2561),
-    // fed from MeterModel::txPeakChanged and documented there as taking the
-    // "pre-smoothed" sample. On this backend that sample is now itself held, so
-    // the applet's PEP tick and the gauge fill converge on the same number
-    // where they diverge on a Flex. That is the honest outcome rather than a
-    // defect — the fill is a peak estimate here BECAUSE the hardware gives us
-    // nothing to smooth — but the applet's tick carries no extra information on
-    // an HL2, and anyone reading the two as independent would be wrong.
+    // Forward-power peak hold: a PEP ESTIMATE. The HL2 has no peak detector: forward
+    // power is one 12-bit slow_adc I2C conversion, round-robined with reverse power,
+    // temperature and bias (rtl/slow_adc.v, rtl/control.v ~L262), reported in RADDR 1
+    // up to ~190 times a second. Keyed, the input is each publish window's maximum
+    // (Hl2Telemetry::forwardPowerPeakRaw); the hold carries it across windows:
+    // instant attack, release 0.05 per kTelemetryMinIntervalMs window (~2 s, like an
+    // outboard PEP meter), in WATTS because the calibration curve is non-linear. Raw
+    // counts are still logged and published. TxApplet's PEP tick (#2561) therefore
+    // tracks the gauge fill on an HL2.
     static constexpr double kFwdPeakReleaseAlpha = 0.05;
     double m_fwdPeakWatts = 0.0;
 
