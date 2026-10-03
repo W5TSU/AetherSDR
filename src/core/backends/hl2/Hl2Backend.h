@@ -142,6 +142,16 @@ public:
     void setTune(bool on, int tunePowerPercent) override;
     void setTxAudioMonitor(bool on) override;
     void setTxFrequency(double hz);
+    // RIT / XIT (#5386). The seam carries no slice id, so both are radio-wide
+    // here and follow transmit: RIT offsets the RECEIVE of the transmit-owning
+    // receiver (m_txDdc) only, XIT the TX NCO register only. Neither moves the
+    // published slice frequency — that stays the dial.
+    void setRitEnabled(bool on) override;
+    void setRitOffset(int hz) override;
+    void setXitEnabled(bool on) override;
+    // Overridden, not inherited: the base forwards to setRitOffset() for a radio
+    // with one shared register, and the HL2's RX and TX paths are independent.
+    void setXitOffset(int hz) override;
     void setTxDriveLevel(int level);
     // Baseband TX test tone, offsetHz from the carrier, amplitude 0..1.
     // Opt-in only — never enabled by a default.
@@ -197,6 +207,7 @@ public:
 private:
     friend struct Hl2DspReadbackTestAccess;
     friend struct Hl2UnkeyHoldTestAccess;
+    friend struct Hl2RitXitTestAccess;
     // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
     // timer's key-up is the only caller that passes true.
     void applyKeying(bool key, bool cwBreakIn);
@@ -458,6 +469,10 @@ private:
         // window.
         double sliceFreqHz = 10'000'000.0;   // slice
         double ncoHz       = 10'000'000.0;   // DDC / pan centre
+        // True while the NCO sits off the dial only because RIT pushed the
+        // receive frequency out of the window (the dial alone fitted), so
+        // clearing RIT re-centres it on the dial. A pan drag clears it.
+        bool ncoMovedForRit = false;
 
         QString mode = QStringLiteral("USB");
         // Overwritten from defaultPassbandForMode(mode) on the first linkUp of
@@ -522,6 +537,22 @@ private:
     // the BFO, so the detector's zero sits a pitch BELOW the marker (CWU) and
     // the marker itself lands on the pitch.
     [[nodiscard]] double rxShiftHz(const Receiver& r) const noexcept;
+    // Where a receiver actually listens: its dial, plus RIT when it owns
+    // transmit. Feeds the NCO window and the shift; sliceFreqHz stays the dial.
+    [[nodiscard]] double rxTunedHz(const Receiver& r) const noexcept;
+    // Re-run one receiver's tune after its share of RIT changed.
+    void retuneReceiver(int ddc);
+    // qCInfo naming the receiver RIT landed on: the seam is radio-wide, so the
+    // VFO turned need not be the receiver that moved.
+    void logRitScope() const;
+    // SmartCatProtocol's kRitMaxHz. Only SmartCAT clamps to it: SliceModel::
+    // setRit() and the VFO's RIT/XIT steppers do not, so an offset past it can
+    // reach the setters, and they log when this clamp bites.
+    static constexpr int kRitXitMaxHz = 9999;
+    bool m_ritOn = false;
+    int m_ritHz = 0;
+    bool m_xitOn = false;
+    int m_xitHz = 0;
 
     // The operator's CW pitch, mirrored from TransmitModel through
     // setCwPitch(). Defaults to TransmitModel's own 600 so a receiver built
