@@ -322,6 +322,8 @@ AnanBackend::AnanBackend(QObject* parent)
         // separate mix stage needed for a single receiver.
         emit audioFrameReady(bytes);
     });
+    // Ungated by design: m_dsp emits on m_ioThread, the thread that emits linkDown,
+    // so every frame is delivered before disconnected() (contract rule 6).
     connect(m_dsp, &AnanRxDsp::spectrumReady, this, [this](const std::vector<float>& binsDbfs) {
         std::vector<float> dbm(binsDbfs.size());
         for (std::size_t i = 0; i < binsDbfs.size(); ++i)
