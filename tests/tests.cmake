@@ -3518,6 +3518,14 @@ if(PYTHON3_EXECUTABLE)
     add_test(NAME release_notes_extract
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_release_notes.py)
+    # FFTW's wisdom-to-string export returns memory from FFTW's own C runtime,
+    # which the Windows build cannot free safely (a 26.10.1/.2 heap corruption
+    # on every Windows HL2 connect). No Linux test can reproduce that, so this
+    # guards the pattern instead.
+    add_test(NAME fftw_wisdom_string_contract
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fftw_wisdom_string_contract_test.py
+                     ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # Retired local-listener fixture. Positive behavior is covered through the live
