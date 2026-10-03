@@ -358,7 +358,12 @@ public:
     // RadioCapabilities::panBinsAbsolute(): the bins do not move with the
     // reference level, so the auto-floor converges without an echo and a
     // waterfall row is in absolute dB. False on disconnect.
-    void setPanBinsAbsolute(bool on) { m_panBinsAbsolute = on; }
+    void setPanBinsAbsolute(bool on)
+    {
+        if (m_panBinsAbsolute != on)
+            resetWfBlankerState();  // the blanker ring's unit follows this flag
+        m_panBinsAbsolute = on;
+    }
     bool panBinsAbsolute() const { return m_panBinsAbsolute; }
     double centerMhz()    const { return m_centerMhz; }
     double bandwidthMhz() const { return m_bandwidthMhz; }
