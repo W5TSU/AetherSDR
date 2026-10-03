@@ -1,0 +1,257 @@
+{
+  "config": {
+    "freq_mhz": 915.5,
+    "freq_tol_ppm": 25.0,
+    "callsign": "W5TSU",
+    "git_commit": "v26.10.5-17-gae7dd902",
+    "max_power": 80,
+    "power_ramp": "10 %: 71.5 dB",
+    "tone_hz": 1000.0,
+    "cw_text": "TEST",
+    "cw_wpm": 15.0
+  },
+  "modes": [
+    {
+      "mode": "TUNE",
+      "capture": "TUNE/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0255,
+        3.5339
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "USB",
+      "capture": "USB/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0196,
+        3.5361
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "LSB",
+      "capture": "LSB/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0268,
+        3.5318
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "DIGU",
+      "capture": "DIGU/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0011,
+        3.5013
+      ],
+      "tone_hz": 1500.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "DIGL",
+      "capture": "DIGL/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0013,
+        3.5015
+      ],
+      "tone_hz": 1500.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "RTTY",
+      "capture": "RTTY/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0012,
+        3.5014
+      ],
+      "tone_hz": 2125.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "CW",
+      "capture": "CW/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.2192,
+        2.9
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": [],
+      "cw_text": "TEST",
+      "cw_wpm": 15.0
+    },
+    {
+      "mode": "CWR",
+      "capture": "CWR/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.2215,
+        2.9022
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": [],
+      "cw_text": "TEST",
+      "cw_wpm": 15.0
+    },
+    {
+      "mode": "AM",
+      "capture": "AM/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0209,
+        3.5258
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "SAM",
+      "capture": "SAM/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0226,
+        3.5363
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "DSB",
+      "capture": "DSB/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0202,
+        3.5252
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "FM",
+      "capture": "FM/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0224,
+        3.5414
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "FMN",
+      "capture": "FMN/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0203,
+        3.5373
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    },
+    {
+      "mode": "DFM",
+      "capture": "DFM/capture.cu8",
+      "spec": {
+        "sample_rate_hz": 2048000.0,
+        "rtl_center_hz": 915100000.0,
+        "tx_freq_hz": 915500000.0
+      },
+      "nominal_s": [
+        1.0015,
+        3.5016
+      ],
+      "tone_hz": 1000.0,
+      "power": 10,
+      "rtl_gain_db": 20.7,
+      "notes": []
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "mode": "TUNE",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "snr",
+      "passed": true,
+      "measured": 68.2,
+      "limit": ">= 20 dB (target 55)",
+      "unit": "dB"
+    },
+    {
+      "name": "frequency",
+      "passed": true,
+      "measured": -1.433,
+      "limit": "within +/-25 ppm",
+      "unit": "ppm"
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -53.4,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [
+    "carrier -1312.3 Hz from 915.500000 MHz (both radios' crystal error)"
+  ],
+  "dial_offset_hz": -1312.3
+}

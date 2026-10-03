@@ -375,6 +375,12 @@ RadioCapabilities AnanBackend::capabilities() const
     c.family = QStringLiteral("anan");
     // No setTune() implementation, so no tune generator to select a mode on.
     c.twoToneGenerator = std::nullopt;
+    // No VOX, monitor or speech-processor setters. PROC would be the host
+    // ClientComp, but canTransmit is false below, so nothing serves it and the
+    // drop notice correctly stands.
+    c.voxControl = std::nullopt;
+    c.speechProcessorControl = std::nullopt;
+    c.txMonitorControl = std::nullopt;
     c.hasAgcThreshold = true; // Host receiver DSP implements threshold/off gain.
     c.manufacturer = QStringLiteral("Apache Labs");
     c.model = QStringLiteral("ANAN-G2");

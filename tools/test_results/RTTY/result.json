@@ -1,0 +1,50 @@
+{
+  "mode": "RTTY",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "signal",
+      "passed": true,
+      "measured": 62.5,
+      "limit": ">= 20 dB over the noise",
+      "unit": "dB"
+    },
+    {
+      "name": "shift",
+      "passed": true,
+      "measured": 168.5,
+      "limit": "170 +/- 10 Hz",
+      "unit": "Hz"
+    },
+    {
+      "name": "balance",
+      "passed": true,
+      "measured": 1.2,
+      "limit": "mark and space within 6 dB",
+      "unit": "dB"
+    },
+    {
+      "name": "opposite_sideband",
+      "passed": true,
+      "measured": 44.0,
+      "limit": ">= 25 dB below the tones",
+      "unit": "dB"
+    },
+    {
+      "name": "carrier_suppression",
+      "passed": true,
+      "measured": 24.2,
+      "limit": ">= 20 dB below the tones",
+      "unit": "dB"
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -47.2,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [],
+  "dial_offset_hz": -1266.7
+}
