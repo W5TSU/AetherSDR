@@ -1920,6 +1920,11 @@ private:
     qint64 m_lastAudioMs{0};
     TunerModel       m_tunerModel;
     TransmitModel    m_transmitModel;
+    // A TUNE this client handed to the backend and has not yet released. A
+    // tune state decoded off the radio alone is not one, so live tune power
+    // neither reaches it nor hides its drop notice.
+    bool tuneCarrierLive() const;
+    bool m_backendTuneKeyed{false};
     EqualizerModel   m_equalizerModel;
     TnfModel         m_tnfModel;
     SpotModel        m_spotModel;

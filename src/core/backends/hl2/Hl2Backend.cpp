@@ -360,6 +360,10 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         applyRxAudioMute(false);
     });
 
+    m_txTailTimer = new QTimer(this);
+    m_txTailTimer->setSingleShot(true);
+    connect(m_txTailTimer, &QTimer::timeout, this, &Hl2Backend::finishTxTail);
+
     m_cwHangTimer = new QTimer(this);
     m_cwHangTimer->setSingleShot(true);
     connect(m_cwHangTimer, &QTimer::timeout, this, [this] {
@@ -1796,7 +1800,7 @@ RadioCapabilities Hl2Backend::capabilities() const
     // 100 with no RF leaving the radio. Consumers that act on drive must see that
     // distinction rather than infer applied power from a request.
     c.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
-        SliceFrequencyControl::Authority::Engine};
+        SliceFrequencyControl::Authority::Engine, /*tunePowerAppliesLive=*/true};
     c.hasRadioDialLock = false;
     c.hasTuner = false;
     c.hasTunerMemories = false;
@@ -2800,6 +2804,7 @@ void Hl2Backend::disconnectRadio()
     // finishSpanRebuild(); a span request parked behind it is stale for the same
     // reason — the operator has since asked to be disconnected.
     m_queuedSpanHz = 0.0;
+    cancelTxTail();
 
     if (m_metis)
         // Queued: serialises behind whatever the I/O thread is doing.
@@ -4025,7 +4030,11 @@ void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
 
     // While keyed the shared filter board must follow the TRANSMIT receiver
     // rather than the agree-or-bypass receive policy — see applyBandFilter().
-    applyBandFilter(key ? "key" : "unkey");
+    // A re-key inside the transmit tail cancels the tail: the carrier continues.
+    if (key) {
+        cancelTxTail();
+        applyBandFilter("key");
+    }
 
     // A VOICE key must never inherit a TUNE carrier.
     //
@@ -4039,13 +4048,16 @@ void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
     // clearing that indiscriminately broke exactly that case.
     if (key && !m_tuning && m_toneFromTune)
         setTxTestTone(0.0, 0.0);
+    bool wasTuning = false;
     if (!key) {
         if (m_cwHangTimer) {
             m_cwHangTimer->stop();
         }
         m_cwAutoKeyed = false;
         // An unkey ends tune too, however it was started — so the drive register
-        // has to come back HERE, not in setTune()'s release branch.
+        // has to come back on THIS path, not in setTune()'s release branch. It
+        // comes back once the transmit tail has drained (finishTxTail()), and
+        // the band filter with it: the radio is still radiating until then.
         //
         // setTune(false, …) is only reached when the operator releases the TUNE
         // toggle. Every other way a tune ends — the automation TX watchdog and
@@ -4057,27 +4069,21 @@ void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
         // same line, setTxPower() no longer held off: the radio stayed at tune
         // power until the operator happened to move the slider. A subsequent
         // voice transmission would have gone out at 10%.
-        const bool wasTuning = m_tuning;
+        wasTuning = m_tuning;
         m_tuning = false;
-        if (wasTuning) {
-            setTxPower(m_rfPowerPercent);
-            // AND re-decide the filter, because the call above ran while
-            // m_tuning was still set.
-            //
-            // applyBandFilter() branches on (m_keyed || m_tuning): with receivers
-            // spanning bands it forces the TX receiver's filter while either is
-            // true, and bypasses otherwise. On a tune-initiated unkey m_keyed is
-            // already false but m_tuning was not, so the earlier call took the
-            // forced branch and left the bank on the TX receiver's filter with
-            // the other receivers attenuated. Nothing re-ran it: the early-out on
-            // `oc == m_ocFilterByte` means the stuck value looks current, so it
-            // survives until someone happens to retune.
-            applyBandFilter("tune-end");
-        }
     }
     if (m_metis)
         QMetaObject::invokeMethod(m_metis, "setMox", Qt::QueuedConnection,
             Q_ARG(bool, key));
+    // The receive filter and an owed RF drive wait out the radio's transmit
+    // tail (see kTxTailHoldMs), armed only after the MOX-off is queued.
+    if (!key) {
+        if (keyChanged || wasTuning) {
+            beginTxTail();
+        } else if (!m_txTailPending) {
+            applyBandFilter("unkey");
+        }
+    }
     // AND ONLY NOW THE RELEASE -- after the MOX-off above is on the queue, so
     // even at a hold of zero the unmute is posted behind it, never ahead.
     if (!muteWhileKeyed) {
@@ -4570,8 +4576,10 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
         m_tuning = true;
         // Straight to the drive register rather than through setTxPower(), which
         // would overwrite the saved RF power we have to restore on release.
-        if (tunePowerPercent >= 0)
+        if (tunePowerPercent >= 0) {
             applyDrive(tunePowerPercent);
+            m_rfDriveOwed = true;
+        }
         setTxTestTone(0.0, kTuneCarrierAmplitude);
         m_toneFromTune = true;   // set AFTER: setTxTestTone clears the flag
         setKeying(true);
@@ -4581,9 +4589,57 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
     }
 }
 
+// Drive only, straight to the register: m_rfPowerPercent stays the value the
+// unkey restores. Nothing changes unless a tune carrier is up.
+void Hl2Backend::setTunePower(int percent)
+{
+    if (!m_tuning || !m_keyed) {
+        return;
+    }
+    applyDrive(percent);
+    m_rfDriveOwed = true;
+}
+
+// The radio keeps radiating after the MOX-off frame: keyed IQ already in its TX
+// FIFO drains (tx_buffer_latency, radio.v:934) and the last sample is held for
+// ptt_hang_time (radio.v:935, 1036-1047), while drive applies at once
+// (ad9866ctrl.v:134-140). So the band filter and an owed RF drive wait.
+void Hl2Backend::beginTxTail()
+{
+    m_txTailPending = true;
+    if (m_txTailHoldMs <= 0) {
+        finishTxTail();
+        return;
+    }
+    if (!m_txTailTimer->isActive()) {
+        m_txTailTimer->start(m_txTailHoldMs);
+    }
+}
+
+void Hl2Backend::cancelTxTail()
+{
+    if (m_txTailTimer) {
+        m_txTailTimer->stop();
+    }
+    m_txTailPending = false;
+}
+
+void Hl2Backend::finishTxTail()
+{
+    if (!m_txTailPending || m_keyed) {
+        return;
+    }
+    m_txTailPending = false;
+    applyBandFilter("unkey");
+    if (m_rfDriveOwed && !m_tuning) {
+        m_rfDriveOwed = false;
+        applyDrive(m_rfPowerPercent);
+    }
+}
+
 // Clamp, map to the drive register, and honour the transmit gate. Shared by
-// setTxPower() and setTune() so the mapping — whose coarseness is documented in
-// setTxPower() — exists once and cannot drift between the two.
+// setTxPower(), setTune() and setTunePower() so the mapping — whose coarseness
+// is documented in setTxPower() — exists once and cannot drift between them.
 void Hl2Backend::applyDrive(int percent)
 {
     // Drive is gated exactly like keying. setTxDriveLevel writes the PA-enable
@@ -4804,6 +4860,9 @@ void Hl2Backend::setTxPower(int percent)
     notifyOperatingStateChanged();
     if (m_tuning)
         return;   // tune power owns the drive register until the carrier drops
+    if (m_rfDriveOwed && m_txTailPending)
+        return;   // the tune tail is still radiating; finishTxTail() applies it
+    m_rfDriveOwed = false;
     applyDrive(m_rfPowerPercent);
 }
 
@@ -7028,6 +7087,8 @@ void Hl2Backend::pushInitialState()
     // keyed because the previous session ended mid-transmission.
     m_keyed = false;
     m_tuning = false;
+    cancelTxTail();
+    m_rfDriveOwed = false;
     setKeying(false);
     // AND THE RECEIVE-AUDIO HOLD WITH IT, after the unkey above, never before
     // it. The mixer gates on m_rxAudioMuted, which clearing m_keyed does not
@@ -7452,7 +7513,7 @@ void Hl2Backend::applyBandFilter(const char* reason)
         // through a bypassed filter bank because a second receiver happened to
         // be parked on another band would put harmonics on the air, and no
         // receive-side convenience justifies that.
-        if (m_keyed || m_tuning) {
+        if (m_keyed || m_tuning || m_txTailPending) {
             const Receiver* txRx = rx(m_txDdc);
             oc = txRx ? static_cast<int>(ocByteFor(txRx->sliceFreqHz, hl2::FilterDirection::Transmit))
                       : static_cast<int>(kOcNone);
@@ -7480,7 +7541,7 @@ void Hl2Backend::applyBandFilter(const char* reason)
             mhz << QString::number(r.sliceFreqHz / 1.0e6, 'f', 3);
         forWhat = QStringLiteral("receivers spanning bands (%1 MHz)%2")
                       .arg(mhz.join(QStringLiteral(", ")),
-                           (m_keyed || m_tuning)
+                           (m_keyed || m_tuning || m_txTailPending)
                                ? QStringLiteral(" — TX receiver's filter forced")
                                : QStringLiteral(" — BYPASSED, AM-broadcast HPF is out"));
     } else {

@@ -95,6 +95,7 @@ public:
     void setKeying(bool key) override;
     void setTune(bool on, int tunePowerPercent = -1) override;
     void setTxPower(int percent) override;
+    void setTunePower(int percent) override;
     QString sendCwText(const QString& text) override;
     void abortCwText() override;
     void setCwSpeed(int wpm) override;
@@ -189,6 +190,8 @@ private:
 
     void queueTuneAudioFrame();
     [[nodiscard]] int stopTuneProducer();
+    // The RF-power level write itself, bypassing setTxPower()'s TUNE handling.
+    void writeTxPowerLevel(int percent);
     // Commanded PTT intent inside its confirmation window, radio truth
     // otherwise. See the definition for why neither alone is right.
     [[nodiscard]] bool txAudioGateOpen() const;
@@ -621,6 +624,8 @@ private:
     // so remembering 01 vs 02 is what lets OFF -> ON restore Full rather than
     // silently demoting it to Semi.
     int m_cwBreakInMode = 1;
+    // The operator's RF power while TUNE holds the drive register; the unkey
+    // writes it back. setTxPower() during TUNE updates this, not the register.
     int m_preTuneTxPowerPercent = -1;
     double m_tunePhase = 0.0;
     static constexpr double kTuneToneHz = 1500.0;

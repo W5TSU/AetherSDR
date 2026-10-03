@@ -619,6 +619,13 @@ public:
     // implements it.
     virtual void setTxPower(int percent) { Q_UNUSED(percent); }
 
+    // TUNE power (0..100) changed while the TUNE carrier may be up. NEVER keys:
+    // a backend generating its own carrier re-applies drive to one in progress
+    // and otherwise does nothing, since the next setTune() carries the value.
+    // Owner thread, like setTxPower(). Declaring
+    // TransmitDriveControl::tunePowerAppliesLive promises it is implemented.
+    virtual void setTunePower(int percent) { Q_UNUSED(percent); }
+
     // The operator's CW pitch, in Hz (TransmitModel's range: 100..6000).
     //
     // A sidetone setting on a radio that keys itself; a TUNING setting on a

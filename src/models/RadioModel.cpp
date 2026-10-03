@@ -2135,9 +2135,10 @@ namespace {
 // Every key must be routed, and each only under the capability that says its
 // setter is real (setters default to no-ops):
 //   rfpower, tunepower    canTransmit + transmitDriveControl (setTxPower;
-//                         tunepower rides setTune()'s tunePowerPercent, so
-//                         only while TUNE is not keyed: the next key-down
-//                         carries it, and nothing re-applies it mid-carrier)
+//                         tunepower rides setTune()'s tunePowerPercent at
+//                         key-down; while TUNE is keyed it is routed only to a
+//                         live carrier (tuneCarrierLive()) whose backend
+//                         declares tunePowerAppliesLive)
 //   miclevel              canTransmit (setMicGain)
 //   filter_low/_high      hasTxFilterControls (setTxFilter)
 //   cw pitch N            N is the pitch last handed to THIS backend, because
@@ -2148,7 +2149,8 @@ namespace {
 bool transmitCommandDeliveredThroughSeam(const QString& command,
                                          const RadioCapabilities& caps,
                                          int cwPitchHandedToBackend,
-                                         bool tuneKeyed)
+                                         bool tuneKeyed,
+                                         bool tuneCarrierLive)
 {
     static const QString kCwPitch = QStringLiteral("cw pitch ");
     if (command.startsWith(kCwPitch)) {
@@ -2173,7 +2175,8 @@ bool transmitCommandDeliveredThroughSeam(const QString& command,
             routed = caps.canTransmit && caps.transmitDriveControl.has_value();
         } else if (key == QLatin1String("tunepower")) {
             routed = caps.canTransmit && caps.transmitDriveControl.has_value()
-                && !tuneKeyed;
+                && (!tuneKeyed
+                    || (tuneCarrierLive && caps.transmitDriveControl->tunePowerAppliesLive));
         } else if (key == QLatin1String("miclevel")) {
             routed = caps.canTransmit;
         } else if (key == QLatin1String("filter_low")
@@ -2351,6 +2354,19 @@ RadioModel::RadioModel(QObject* parent)
             m_backend->setTxPower(percent);
     });
 
+    // TUNE power to a carrier already up, on a backend that declares it live.
+    // Not keyed: setTune() carries the value at the next key-down.
+    connect(&m_transmitModel, &TransmitModel::tunePowerCommandIssued, this,
+            [this](int percent) {
+        if (!m_backend || !tuneCarrierLive()) {
+            return;
+        }
+        const RadioCapabilities caps = backendCapabilities();
+        if (caps.transmitDriveControl && caps.transmitDriveControl->tunePowerAppliesLive) {
+            m_backend->setTunePower(percent);
+        }
+    });
+
     // The CW pitch to a backend that owns its own demodulator.
     //
     // Not a transmit setting for these radios. When we demodulate, the pitch IS
@@ -2518,6 +2534,7 @@ RadioModel::RadioModel(QObject* parent)
             // Hand the backend the operator's TUNE power. A host-modulated
             // backend has no other path to it — see IRadioBackend::setTune().
             m_backend->setTune(on, m_transmitModel.tunePower());
+            m_backendTuneKeyed = on;
             // A tune carrier is a transmission. Hl2Backend::setTune() calls
             // setKeying(), so the radio is on the air — the raw-TX edge has to
             // be published here for the same reason it is on the MOX path, and
@@ -2712,7 +2729,8 @@ RadioModel::RadioModel(QObject* parent)
         if (!hasCommandPlane() && m_backend
             && transmitCommandDeliveredThroughSeam(trimmed, m_backend->capabilities(),
                                                    m_cwPitchHandedToBackend,
-                                                   m_transmitModel.isTuning())) {
+                                                   m_transmitModel.isTuning(),
+                                                   tuneCarrierLive())) {
             qCDebug(lcProtocol).noquote()
                 << "RadioModel: no command plane; value already delivered through the seam:"
                 << cmd;
@@ -7910,6 +7928,7 @@ void RadioModel::onDisconnected()
     m_txRequested = false;
     m_cwKeyActive = false;
     m_cwPaddleHeld = false;   // a paddle held across a disconnect must not keep TUNE refused (#5422)
+    m_backendTuneKeyed = false;
     m_cwxActive = false;
     m_cwxDrainArmed = false;
     // Reset the CWX drain watch and bump its epoch so a watch armed mid-macro
@@ -13086,6 +13105,14 @@ void RadioModel::releaseAllDaxChannels(PanadapterStream::DaxConsumer who)
     if (!m_panStream)
         return;
     m_panStream->releaseAllDaxChannels(who);
+}
+
+// A TUNE this client handed to the backend and still holds. A tune state
+// decoded off the radio alone is not one, so live tune power neither reaches
+// it nor hides its drop notice.
+bool RadioModel::tuneCarrierLive() const
+{
+    return m_backendTuneKeyed && m_transmitModel.isTuning();
 }
 
 } // namespace AetherSDR

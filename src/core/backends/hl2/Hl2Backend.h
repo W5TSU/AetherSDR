@@ -134,6 +134,7 @@ public:
     void submitTxAudio(const QByteArray& int16Stereo, int sampleRateHz,
                        bool clientLeveled) override;
     void setTxPower(int percent) override;
+    void setTunePower(int percent) override;
     void setTxFilter(int lowHz, int highHz) override;
     void setMicGain(int level) override;
     // No default argument here on purpose: defaults on virtuals bind statically,
@@ -208,6 +209,7 @@ private:
     friend struct Hl2DspReadbackTestAccess;
     friend struct Hl2UnkeyHoldTestAccess;
     friend struct Hl2RitXitTestAccess;
+    friend struct Hl2TuneTailTestAccess;
     // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
     // timer's key-up is the only caller that passes true.
     void applyKeying(bool key, bool cwBreakIn);
@@ -344,6 +346,9 @@ private:
     // Clamp 0..100, map onto the drive register, honour the transmit gate.
     // Shared by setTxPower() and setTune() so the mapping exists exactly once.
     void applyDrive(int percent);
+    void beginTxTail();
+    void cancelTxTail();
+    void finishTxTail();
     static double temperatureCelsius(int raw);
     // Uncalibrated directional-coupler counts -> watts now lives beside the
     // curve itself, as AetherSDR::hl2::directionalWatts() in MetisProtocol —
@@ -977,6 +982,18 @@ private:
     static constexpr int kUnkeyUnmuteHoldMs = 70;
     int m_unkeyUnmuteHoldMs = kUnkeyUnmuteHoldMs;
     QTimer* m_unkeyUnmuteTimer = nullptr;
+    // How long the band filter and an owed RF drive wait after the MOX-off is
+    // queued. Gateware defaults put the radio's tail at 20 ms FIFO + 12 ms hang
+    // (radio.v:934-935; 0x17 is never written); one unit measured 40-54 ms
+    // end-to-end, and the RX hold above measured 51.66-66.15 ms of the same
+    // tail. Never below kUnkeyUnmuteHoldMs. A member so tests can shorten it.
+    static constexpr int kTxTailHoldMs = kUnkeyUnmuteHoldMs;
+    int m_txTailHoldMs = kTxTailHoldMs;
+    QTimer* m_txTailTimer = nullptr;
+    bool m_txTailPending = false;
+    // The drive register holds a tune level; the operator's RF drive is owed
+    // once no tune carrier or tail is radiating.
+    bool m_rfDriveOwed = false;
     // Both flags above are set SYNCHRONOUSLY while the setAudioMuted they imply
     // rides a queued connection to the DSP thread, so at key-up they say
     // "sampling" a block before it is true. This gate holds the moment sampling

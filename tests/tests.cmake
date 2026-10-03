@@ -4589,6 +4589,14 @@ target_link_libraries(shortcut_passthrough_test PRIVATE Qt6::Widgets Qt6::Test)
 add_test(NAME shortcut_passthrough_test COMMAND shortcut_passthrough_test)
 set_tests_properties(shortcut_passthrough_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# TUNE power applied live while TUNE is keyed, and the transmit tail that
+# holds the band filter and the owed RF drive until the radio stops radiating
+# (upstream fe1fec51). Socket-free; nothing is keyed on a radio.
+add_executable(hl2_tune_tail_test tests/hl2_tune_tail_test.cpp)
+target_include_directories(hl2_tune_tail_test PRIVATE src tests)
+target_link_libraries(hl2_tune_tail_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tune_tail_test COMMAND hl2_tune_tail_test)
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
@@ -6352,6 +6360,7 @@ set_tests_properties(phone_cw_acc_availability_test PROPERTIES
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    hl2_tune_tail_test
     reroute_dead_controls_test
     shortcut_passthrough_test
     hl2_unkey_hold_test
