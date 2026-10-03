@@ -3060,24 +3060,16 @@ QString RadioModel::connectState() const
 
 bool RadioModel::isConnected() const
 {
-    // Whoever carries the link reports its state: a RadioConnection when one
-    // exists (Flex, and the demo's synthetic wire), otherwise the backend behind
-    // the seam (HL2). Mirrors both the connect dispatch in connectToRadio() and
-    // the lifecycle wiring in setupBackend().
-    //
-    // A previous revision keyed this on "!m_flexBackend" so the demo would answer
-    // from SimBackend instead — because `sim disconnect` used to drop the backend's
-    // state while leaving the synthetic connection "Connected", so this reported
-    // connected=true forever with dead audio. That is now fixed at the source:
-    // SimBackend::disconnectRadio() tears the synthetic connection down, so the
-    // connection is truthful for the demo too.
-    //
-    // Keying on the connection also preserves teardownBackend()'s fail-closed
-    // ordering: it nulls m_flexBackend BEFORE destroying the backend precisely so
-    // a status slot running during teardown cannot dereference a half-destroyed
-    // backend — which the "!m_flexBackend" form inverted into doing exactly that.
-    if (m_connection)
-        return m_connection->isConnected() || (m_wanConn && m_wanConn->isConnected());
+    // WAN sessions leave the backend's LAN connection undialed. Check each
+    // link independently, including backends without a RadioConnection.
+    // Do not key on m_flexBackend: teardown clears it before destroying the
+    // backend, while the connection alias still carries the link state.
+    if (m_connection && m_connection->isConnected()) {
+        return true;
+    }
+    if (m_wanConn && m_wanConn->isConnected()) {
+        return true;
+    }
     return m_backend && m_backend->isConnected();
 }
 
