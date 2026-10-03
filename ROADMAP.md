@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.2
+## Current cycle: post-v26.10.3
 
 ### In flight
 
@@ -17,11 +17,11 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   woven through `RadioModel`. FlexBackend owns the Flex wire objects
   and threads, and the Panadapter / Slice / Meter / Transmit / Amp / Tuner
   status+command paths decode behind the seam (RFC steps 2.1–2.4). The seam
-  now carries **six** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, the
-  synthetic `SimBackend`, and two RX-only additions from v26.9.4:
+  now carries **seven** backends — `FlexBackend`, `HL2Backend`, `IcomCIV`, the
+  synthetic `SimBackend`, two RX-only additions from v26.9.4,
   **AnanBackend** (openHPSDR Protocol 2, ANAN-G2) and **RtlSdrBackend**
-  (`librtlsdr` + `fftw3f`), both carrying the `experimental` notice HL2 wore
-  before its own promotion. v26.9.4 also landed **Stage 3** of the control
+  (`librtlsdr` + `fftw3f`), and the RX+TX **HackRfBackend** (v26.9.10), all
+  three carrying the `experimental` notice HL2 wore before its own promotion. v26.9.4 also landed **Stage 3** of the control
   protocol — a local control server plus wire codec — a further step toward
   the headless-engine/thin-client split the RFC targets, though not the full
   split: UI code still consumes models directly, and that remains correct
@@ -71,22 +71,9 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
-- **HackRF backend — highly experimental** — a new `HackRfBackend` behind
-  `IRadioBackend`: full RX+TX over a single HackRF One (FM/CW TX only for
-  v1), multi-slice receive across its wide capture. Driving goal is FM
-  amateur-satellite work (SO-50, AO-91, ISS), operated PTT-style. Design
-  reuses `Hl2Backend`'s host-side WDSP TX modulator (`hostModulates` +
-  `takesTxAudioOverSeam`) and `RtlSdrBackend`'s worker-thread/DDC shape for
-  RX; the one new piece is an RX↔TX arbitration state machine, since
-  libhackrf's USB transport is genuinely half-duplex (unlike HL2's
-  concurrent-IQ Ethernet link). No software-enforced TX power cap or
-  acknowledgment flow — matches how Anan/RtlSdr's `experimental` label
-  already works; the operator is trusted with their own filtering, same as
-  any other radio. **Explicitly out of scope:** SSB TX, and full-duplex
-  split operation for linear-transponder satellites (AO-7, FO-29-class —
-  needs simultaneous RX+TX to self-monitor through the transponder, which
-  one HackRF cannot do alone and AetherSDR has no existing split-operation
-  concept for). Fork-only — not intended for upstream. Full design:
+- **HackRF — multi-slice receive** — the one goal of the HackRF design not
+  yet shipped: several independent slices across the HackRF's wide capture,
+  each with its own DDC. The backend is single-slice today. Design:
   [`docs/superpowers/specs/2026-09-16-hackrf-backend-design.md`](docs/superpowers/specs/2026-09-16-hackrf-backend-design.md).
 - **HL2 span-following FFT bin count** — named fast-follow from the
   Hermes-Lite 2 supported-promotion (`docs/adr/0001-hermes-lite-2-supported.md`,
@@ -199,6 +186,13 @@ Substantial features requested on the
 Highlights from the last 30 days — full list in
 [`CHANGELOG.md`](CHANGELOG.md):
 
+- **HackRF One — receive and transmit (experimental)** — a new backend that
+  went from source-only to usable in a week: in the AppImages and DMGs
+  (v26.9.11); a connect that no longer freezes the app while DSP is prepared,
+  receive processing on its own thread, working PTT and TUNE, TX drive from
+  RF Power with the amp off on transmit, frequency calibration, and an LNA
+  control (v26.10.1); and timestamp-accurate, click-free CW transmit with
+  break-in (v26.10.2). Driving goal: FM amateur-satellite work. Fork-only.
 - **The workspace canvas** — pans and applets become freely placed, resizable,
   layered items on a canvas that can span several top-level windows, with named
   workspaces, full-recall switching, radio-profile bindings and an Edit Layout
