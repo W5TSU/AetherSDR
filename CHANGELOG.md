@@ -8,6 +8,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.2] — 2026-10-03
+
+### HackRF: CW transmit (#61)
+
+Keying a HackRF in CW mode used to send nothing. It now transmits a clean
+keyed carrier on the dial frequency.
+
+- **Timing you can trust.** Each key edge from your paddle or keyer is
+  timestamped and placed in the transmitted signal 50 ms later, so element
+  lengths and spacing are exact even when the computer is busy. The first
+  element of an over is never clipped by the switch from receive to
+  transmit.
+- **No key clicks.** Every element rises and falls over a shaped 5 ms edge.
+- **Break-in.** With break-in on, key-down raises PTT and it drops after your
+  break-in delay (at least 100 ms, so the last element is never cut). With
+  break-in off, key inside a PTT you hold.
+- **Level** follows the RF Power slider, as for FM, and the RF amp stays off
+  while transmitting. Microphone audio is ignored in CW.
+
+**Limits:** semi-break-in only, because HackRF needs tens of milliseconds to
+switch between receive and transmit, so full QSK is not practical. A faint
+carrier may be audible between elements on a nearby receiver: that is
+HackRF's own local-oscillator leakage, roughly 40 dB down. CW text sending
+(CWX) is not available on HackRF, as on the Hermes-Lite 2.
+
 ## [v26.10.1] — 2026-10-01
 
 ### HackRF: connects, receives, calibrates and transmits (#59)
