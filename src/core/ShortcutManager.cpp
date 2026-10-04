@@ -720,6 +720,14 @@ const ShortcutManager::Action* ShortcutManager::actionForKey(const QKeySequence&
     return nullptr;
 }
 
+const ShortcutManager::Action* ShortcutManager::operatingActionForKey(
+    const QKeySequence& key) const
+{
+    // The fork has no window-management shortcut policy: every bound action
+    // is governed by the keyboard-shortcut master switch.
+    return actionForKey(key);
+}
+
 QString ShortcutManager::conflictCheck(const QKeySequence& key,
                                        const QString& excludeId) const
 {

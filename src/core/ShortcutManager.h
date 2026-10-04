@@ -113,6 +113,9 @@ public:
     const QVector<Action>& actions() const { return m_actions; }
     Action* action(const QString& id);
     const Action* actionForKey(const QKeySequence& key) const;
+    // The action bound to `key` that the keyboard-shortcut master switch
+    // governs; nullptr for an unbound key.
+    const Action* operatingActionForKey(const QKeySequence& key) const;
     QString conflictCheck(const QKeySequence& key,
                           const QString& excludeId = {}) const;
 

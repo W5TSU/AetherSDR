@@ -16,6 +16,8 @@
 #include "MainWindow.h"
 #include "TxKeyActivationGuard.h"
 #include "PttHoldKeyStep.h"
+#include "ShortcutRefusalNotice.h"
+#include "StatusBarNotice.h"
 
 #include <QApplication>
 #include <QKeyEvent>
@@ -41,6 +43,7 @@
 #include "core/CwTrace.h"
 #include "core/DigitalVoiceFeature.h"
 #include "core/LogManager.h"
+#include "core/ThemeManager.h"
 #include "models/BandDefs.h"
 #include "models/SliceModel.h"
 #include "workspace/WorkspaceController.h"
@@ -68,6 +71,16 @@ namespace {
 // Slider keeps the keyboard-shortcut lease this long after the last
 // interaction (#745); moved with its only users from MainWindow.cpp.
 constexpr int kSliderShortcutLeaseMs = 2000;
+
+// The actions eventFilter() drives itself, because QShortcut has no release:
+// handleCwMomentaryShortcut and handlePttHoldShortcut.
+bool isHoldKeyActionId(const QString& id)
+{
+    return id == QLatin1String(kPttHoldActionId)
+        || id == QLatin1String(kCwStraightKeyActionId)
+        || id == QLatin1String(kCwLeftPaddleActionId)
+        || id == QLatin1String(kCwRightPaddleActionId);
+}
 } // namespace
 
 // ─── Shortcut state (definitions — declared in MainWindowShortcutState.h) ───
@@ -131,6 +144,8 @@ bool leaseHolderBusy(QWidget* w) {
 void MainWindow::keyPressEvent(QKeyEvent* event)
 {
     QMainWindow::keyPressEvent(event);
+    // Only a key no child widget accepted gets here: it did nothing (#5483).
+    noticeRefusedShortcut(event);
 }
 
 void MainWindow::keyReleaseEvent(QKeyEvent* event)
@@ -271,6 +286,46 @@ bool MainWindow::handlePttHoldShortcut(QKeyEvent* keyEvent, QEvent::Type eventTy
         return true;
     }
     return true;
+}
+
+
+void MainWindow::noticeRefusedShortcut(QKeyEvent* keyEvent)
+{
+    if (!keyEvent) {
+        return;
+    }
+    const auto* action = m_shortcutManager.operatingActionForKey(
+        shortcutSequenceFromKeyEvent(keyEvent));
+    if (!action) {
+        return;
+    }
+    // The capture test this action would have met with shortcuts on.
+    const bool captured = shortcutRefusalInputCaptured(
+        isHoldKeyActionId(action->id), textEntryCaptured(),
+        shortcutInputCaptured());
+    // Minimal mode hides the status bar; the notice waits until it shows.
+    const auto* refused = m_shortcutRefusalNotice.take(
+        keyEvent, m_keyboardShortcutsEnabled, captured,
+        statusBar()->isVisible(), action);
+    if (!refused) {
+        return;
+    }
+
+    qCInfo(lcGui).noquote() << "Keyboard shortcuts are off:" << refused->displayName
+                            << "(" + refused->currentKey.toString() + ") not run;"
+                            << "Settings > Keyboard Shortcuts turns them on";
+    if (!m_shortcutNoticeLabel) {
+        m_shortcutNoticeLabel = new StatusBarNoticeLabel(statusBar());
+        // The right margin clears the resize grip that overlays the bar.
+        m_shortcutNoticeLabel->setContentsMargins(6, 0, 20, 0);
+        ThemeManager::instance().applyStyleSheet(
+            m_shortcutNoticeLabel,
+            QStringLiteral("QLabel#statusBarNoticeLabel { color: {{color.text.primary}};"
+                           " font-size: 14px; background: transparent; }"));
+    }
+    m_shortcutNoticeLabel->showNotice(
+        tr("Keyboard shortcuts are off"),
+        10000);
 }
 
 
@@ -476,8 +531,13 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
         // After every hold handler, so a hold's release always ends it. With
         // shortcuts off a bound key reaches the focused widget, but never a
         // TX-keying button: a clicked MOX keeps focus (#5483).
-        if (refuseTxKeyActivation(obj, ke, m_keyboardShortcutsEnabled, m_shortcutManager))
+        if (refuseTxKeyActivation(obj, ke, m_keyboardShortcutsEnabled, m_shortcutManager)) {
+            // Consumed here, so this press never reaches keyPressEvent().
+            if (shortcutRefusalReceiverInWindow(obj, this)) {
+                noticeRefusedShortcut(ke);
+            }
             return true;
+        }
 
         // MeterSlider (TCI/DAX gain) handles its own arrow stepping, badge,
         // and Enter-to-release inside keyPressEvent; the lease only frees the
