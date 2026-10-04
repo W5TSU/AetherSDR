@@ -2990,7 +2990,9 @@ void TciServer::onDaxAudioReady(int channel, const QByteArray& pcm)
                 std::memcpy(frame.data(), &hdr, sizeof(hdr));
                 auto* i16dst = reinterpret_cast<qint16*>(frame.data() + sizeof(hdr));
                 for (int i = 0; i < srcSamples; ++i) {
-                    i16dst[i] = static_cast<qint16>(std::clamp(audioSrc[i] * 32768.0f, -32768.0f, 32767.0f));
+                    // A NaN passes std::clamp and its cast is undefined.
+                    const float v = std::isfinite(audioSrc[i]) ? audioSrc[i] : 0.0f;
+                    i16dst[i] = static_cast<qint16>(std::clamp(v * 32768.0f, -32768.0f, 32767.0f));
                 }
                 cs.socket->sendBinaryMessage(frame);
                 ++sentClients;
@@ -3011,9 +3013,12 @@ void TciServer::onDaxAudioReady(int channel, const QByteArray& pcm)
                 hdr.channels = 1;
                 std::memcpy(frame.data(), &hdr, sizeof(hdr));
                 auto* i16dst = reinterpret_cast<qint16*>(frame.data() + sizeof(hdr));
-                for (int i = 0; i < audioFrames; ++i)
-                    i16dst[i] = static_cast<qint16>(std::clamp(
-                        (audioSrc[i*2] + audioSrc[i*2+1]) * 0.5f * 32768.0f, -32768.0f, 32767.0f));
+                for (int i = 0; i < audioFrames; ++i) {
+                    const float mono = (audioSrc[i*2] + audioSrc[i*2+1]) * 0.5f;
+                    // A NaN passes std::clamp and its cast is undefined.
+                    const float v = std::isfinite(mono) ? mono : 0.0f;
+                    i16dst[i] = static_cast<qint16>(std::clamp(v * 32768.0f, -32768.0f, 32767.0f));
+                }
                 cs.socket->sendBinaryMessage(frame);
                 ++sentClients;
                 lastOutputFrames = audioFrames;
