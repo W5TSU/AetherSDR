@@ -195,6 +195,13 @@ int wdspAgcMode(const QString& mode) noexcept
 // namespace AetherSDR::hl2, so the calls below resolve to the header's versions
 // with no `using`.
 
+// The data modes WSJT-X and similar decoders select.
+bool isDigitalDataMode(const QString& mode) noexcept
+{
+    return mode.compare(QLatin1String("DIGU"), Qt::CaseInsensitive) == 0
+           || mode.compare(QLatin1String("DIGL"), Qt::CaseInsensitive) == 0;
+}
+
 // The same question for the AGC vocabulary, and it needs asking for the same
 // reason: wdspAgcMode() FALLS BACK to medium for anything it does not
 // recognise, so a corrupt or hand-edited document would otherwise turn into a
@@ -1060,6 +1067,7 @@ bool Hl2Backend::createPanadapter()
         seed.filterLowHz = first.filterLowHz;
         seed.filterHighHz = first.filterHighHz;
         seed.agcMode = first.agcMode;
+        seed.agcModeBeforeDigital = first.agcModeBeforeDigital;
         seed.agcThresholdDb = first.agcThresholdDb;
     }
     m_rx.push_back(seed);
@@ -2983,6 +2991,27 @@ void Hl2Backend::setSliceFrequency(int sliceId, double hz)
     notifyOperatingStateChanged();
 }
 
+// DIGU/DIGL run AGC off: medium AGC raises the noise between FT8 frames,
+// which inflates the decoder's noise reference and costs weak decodes beside
+// a strong signal (#5629). The held AGC returns on leaving them. Never
+// re-imposed inside a data mode, so an operator's own AGC choice stands.
+bool Hl2Backend::followModeAgc(Receiver& r, const QString& previousMode)
+{
+    const bool wasDigital = isDigitalDataMode(previousMode);
+    const bool isDigital = isDigitalDataMode(r.mode);
+    if (isDigital && !wasDigital) {
+        r.agcModeBeforeDigital = r.agcMode;
+        r.agcMode = QStringLiteral("off");
+        return true;
+    }
+    if (wasDigital && !isDigital && !r.agcModeBeforeDigital.isEmpty()) {
+        r.agcMode = r.agcModeBeforeDigital;
+        r.agcModeBeforeDigital.clear();
+        return true;
+    }
+    return false;
+}
+
 void Hl2Backend::setSliceMode(int sliceId, const QString& mode)
 {
     const int ddc = ddcForSlice(sliceId);
@@ -3007,6 +3036,12 @@ void Hl2Backend::setSliceMode(int sliceId, const QString& mode)
         const auto [lo, hi] = defaultPassbandForMode(mode);
         r->filterLowHz  = lo;
         r->filterHighHz = hi;
+    }
+
+    if (followModeAgc(*r, previous) && r->dsp) {
+        QMetaObject::invokeMethod(r->dsp, "setAgc", Qt::QueuedConnection,
+            Q_ARG(int, wdspAgcMode(r->agcMode)),
+            Q_ARG(double, m_dbRef.agcCeilingDb(r->agcThresholdDb)));
     }
 
     // ORDER IS LOAD-BEARING: mode FIRST, then passband -- and the passband is
@@ -3107,11 +3142,22 @@ void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
     // while wdspAgcMode() silently ran med and the NEXT launch dropped it via
     // isKnownAgcModeString(). The applet, the DSP, the document and the restore
     // all disagreed. An unknown string now leaves the mode where it was.
-    if (!m.isEmpty() && isKnownAgcModeString(m))
+    // AGC threshold: the slice's 0..100 maps to 0..60 dB of WDSP max gain, so
+    // the default 65 lands at 39 dB. Measured on WWV 10 MHz USB: clean through
+    // 40 dB, clipping hard by 50 dB.
+    // Validated on the way in so capture only stores what restore accepts; an
+    // unknown mode string leaves the mode unchanged.
+    if (!m.isEmpty() && isKnownAgcModeString(m)) {
+        // A changed mode is the operator's choice, so leaving DIGU/DIGL no
+        // longer overrides it. A threshold change repeats the current mode.
+        if (m != r->agcMode) {
+            r->agcModeBeforeDigital.clear();
+        }
         r->agcMode = m;
-    else if (!m.isEmpty())
+    } else if (!m.isEmpty()) {
         qCWarning(lcHl2) << "HL2: ignoring unknown AGC mode" << mode
                          << "- keeping" << r->agcMode;
+    }
     r->agcThresholdDb = qBound(0, thresholdDb, 100);
     // THE REMEMBERED PAIR IS THE LAST ONE THE OPERATOR SET, on whichever
     // receiver. Capture used to read rx(m_txDdc) instead, which split the model:
@@ -3120,7 +3166,9 @@ void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
     // capture was not the change that got captured — and the next launch seeded
     // every receiver from it. Flat restore is the deliberate design (see
     // seedReceiverAgc); this makes the capture side agree with it.
-    m_agcMode = r->agcMode;
+    // A data mode's own "off" is not the operator's choice and is not captured.
+    m_agcMode = r->agcModeBeforeDigital.isEmpty() ? r->agcMode
+                                                  : r->agcModeBeforeDigital;
     m_agcThresholdDb = r->agcThresholdDb;
     // WDSP IS TOLD WHAT THE RECEIVER NOW HOLDS, not what the caller asked for.
     // Deriving from `m` meant a refused mode still reached the DSP as
@@ -6606,17 +6654,24 @@ void Hl2Backend::seedReceiverAgc()
         m_haveRestoredState && !m_restoredState.agcMode.isEmpty();
     const bool haveThreshold =
         m_haveRestoredState && m_restoredState.agcThreshold >= 0;
-    for (Receiver& r : m_rx) {
+    for (std::size_t i = 0; i < m_rx.size(); ++i) {
+        Receiver& r = m_rx[i];
         r.agcMode = haveMode ? m_restoredState.agcMode : defaults.agcMode;
         r.agcThresholdDb = haveThreshold ? m_restoredState.agcThreshold
                                          : defaults.agcThresholdDb;
+        r.agcModeBeforeDigital.clear();
+        // A receiver already in DIGU/DIGL runs AGC off over the seeded mode.
+        followModeAgc(r, QString());
     }
     // Prime the remembered pair from what was just seeded, so a capture taken
     // before the operator touches the control records the restored value rather
-    // than falling back through an empty member.
+    // than falling back through an empty member. The seeded mode, not a data
+    // mode's off.
     if (!m_rx.empty()) {
-        m_agcMode = m_rx.front().agcMode;
-        m_agcThresholdDb = m_rx.front().agcThresholdDb;
+        const Receiver& first = m_rx.front();
+        m_agcMode = first.agcModeBeforeDigital.isEmpty()
+                        ? first.agcMode : first.agcModeBeforeDigital;
+        m_agcThresholdDb = first.agcThresholdDb;
     }
 }
 
@@ -6641,7 +6696,8 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
         state.agcMode = m_agcMode;
         state.agcThreshold = m_agcThresholdDb;
     } else if (const Receiver* txRx = rx(m_txDdc)) {
-        state.agcMode = txRx->agcMode;
+        state.agcMode = txRx->agcModeBeforeDigital.isEmpty()
+                            ? txRx->agcMode : txRx->agcModeBeforeDigital;
         state.agcThreshold = txRx->agcThresholdDb;
     }
     state.sampleRateHz = m_sampleRateHz;
@@ -6954,7 +7010,11 @@ void Hl2Backend::pushInitialState()
         if (m_haveRestoredState) {
             if (Receiver* txRx = rx(m_txDdc)) {
                 if (!m_restoredState.mode.isEmpty()) {
+                    // A restore into DIGU/DIGL runs AGC off, as a mode click
+                    // does; the loop below pushes it to the DSP.
+                    const QString previousMode = txRx->mode;
                     txRx->mode = m_restoredState.mode;
+                    followModeAgc(*txRx, previousMode);
                     const auto [pbLowHz, pbHighHz] =
                         defaultPassbandForMode(txRx->mode);
                     txRx->filterLowHz = pbLowHz;
