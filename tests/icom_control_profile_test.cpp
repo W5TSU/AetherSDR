@@ -54,9 +54,7 @@ struct IcomCivBackendTestAccess {
         backend.m_dataMode = true;
         backend.onLinkTick();
         const auto queued = [&](const std::vector<std::uint8_t>& frame) {
-            return std::any_of(backend.m_civScheduler.m_queue.begin(),
-                               backend.m_civScheduler.m_queue.end(),
-                               [&](const auto& request) { return request.request.frame == frame; });
+            return queuedFrame(backend, frame);
         };
         const std::uint8_t address = backend.m_session->civAddress();
         return queued(cmdReadLevel(address, level::kSquelch))
@@ -132,6 +130,49 @@ struct IcomCivBackendTestAccess {
         const auto write = cmdSetRxAntenna(b.m_session->civAddress(), true);
         const auto read = cmdReadRxAntenna(b.m_session->civAddress());
         return b.confirmationFor(write) == read && b.semanticKey(write) == b.semanticKey(read);
+    }
+
+    static bool queuedFrame(const IcomCivBackend& backend, const std::vector<std::uint8_t>& frame)
+    {
+        return std::any_of(backend.m_civScheduler.m_queue.begin(),
+                           backend.m_civScheduler.m_queue.end(),
+                           [&](const auto& request) { return request.request.frame == frame; });
+    }
+
+    // How long after it was queued `frame` may go out; -1 when it is not queued.
+    static std::int64_t queuedHoldOffMs(const IcomCivBackend& backend,
+                                        const std::vector<std::uint8_t>& frame)
+    {
+        for (const auto& entry : backend.m_civScheduler.m_queue) {
+            if (entry.request.frame == frame) {
+                return entry.request.notBeforeMs - entry.enqueuedAtMs;
+            }
+        }
+        return -1;
+    }
+
+    static bool interlockReadSurvivesEarlierRead(const IcomModel& model,
+                                                 bool attenuatorWrite, bool inFlight)
+    {
+        IcomCivBackend backend;
+        prepareSession(backend, model);
+        const std::vector<std::uint8_t> read = attenuatorWrite
+            ? cmdReadFunction(model.civAddress, func::kPreamp)
+            : cmdReadAttenuator(model.civAddress);
+        backend.queueRead(read, backend.semanticKey(read), IcomCivScheduler::Priority::Operator);
+        if (inFlight && !backend.m_civScheduler.takeNext(backend.nowMs())) {
+            return false;
+        }
+        if (attenuatorWrite) {
+            backend.setPanAttenuator(QString(), 1);
+        } else {
+            backend.setPanPreamp(QString(), 1);
+        }
+        return std::any_of(backend.m_civScheduler.m_queue.begin(),
+                           backend.m_civScheduler.m_queue.end(), [&](const auto& entry) {
+            return entry.request.frame == read
+                && entry.request.notBeforeMs - entry.enqueuedAtMs >= 50;
+        });
     }
 
     static QString lastOutboundCiv(const IcomCivBackend& backend)
@@ -333,6 +374,49 @@ int main(int argc, char** argv)
             }
         }
 
+    }
+    // The radio interlocks preamp and ATT and reports neither side effect, so
+    // a write to one stage must read the other back, or its button keeps the
+    // old position until the next controls poll.
+    for (const char* name : {"IC-7300MK2", "IC-705", "IC-9700"}) {
+        const auto* model = modelForName(name);
+        check(model != nullptr, "front-end interlock model resolves");
+        if (!model) { continue; }
+        const std::uint8_t address = model->civAddress;
+        const bool hasAttenuator = !attenStepsFor(*model).empty();
+        IcomCivBackend attWrite;
+        IcomCivBackendTestAccess::prepareSession(attWrite, *model);
+        attWrite.setPanAttenuator(QString(), 1);
+        if (hasAttenuator) {
+            // Held behind the write, like its confirmation read: the radio
+            // applies the interlock with the write, not before it.
+            check(IcomCivBackendTestAccess::queuedHoldOffMs(
+                      attWrite, cmdReadFunction(address, func::kPreamp)) >= 50,
+                  "an ATT write reads the preamp back after the write");
+        } else {
+            check(IcomCivBackendTestAccess::queuedRequestCount(attWrite) == 0,
+                  "an ATT write on a model with no attenuator sends nothing");
+        }
+        IcomCivBackend preampWrite;
+        IcomCivBackendTestAccess::prepareSession(preampWrite, *model);
+        preampWrite.setPanPreamp(QString(), 1);
+        const std::int64_t attHoldOff =
+            IcomCivBackendTestAccess::queuedHoldOffMs(preampWrite, cmdReadAttenuator(address));
+        check(hasAttenuator ? attHoldOff >= 50 : attHoldOff == -1,
+              "a preamp write reads ATT back after the write, where the model has one");
+    }
+    for (const char* name : {"IC-7300MK2", "IC-705"}) {
+        const IcomModel* model = modelForName(name);
+        if (!model) {
+            continue;
+        }
+        for (const bool attenuatorWrite : {false, true}) {
+            for (const bool inFlight : {false, true}) {
+                check(IcomCivBackendTestAccess::interlockReadSurvivesEarlierRead(
+                          *model, attenuatorWrite, inFlight),
+                      "interlock read survives an earlier queued or in-flight stage read");
+            }
+        }
     }
     check(cmdReadRxAntenna(0xB6) == std::vector<std::uint8_t>({0xFE,0xFE,0xB6,0xE0,0x12,0xFD}),
           "MK2 antenna read uses observed bare 12 form");
