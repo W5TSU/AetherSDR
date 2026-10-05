@@ -37,6 +37,12 @@ public:
         QString source;
     };
 
+    struct TuneRequest
+    {
+        int trx { 0 };
+        bool tune { false };
+    };
+
     explicit TciProtocol(RadioModel* model, TciRoutingState* routingState = nullptr,
                          const TciTrxMap* trxMap = nullptr);
 
@@ -54,6 +60,7 @@ public:
     std::optional<VfoRequest> takeVfoRequest();
     std::optional<SplitRequest> takeSplitRequest();
     std::optional<TrxRequest> takeTrxRequest();
+    std::optional<TuneRequest> takeTuneRequest();
 
     // After handleCommand(), if the command was a master-volume SET, this
     // returns the requested level (0-100). -1 means no master-volume change
@@ -244,6 +251,7 @@ private:
     std::optional<VfoRequest> m_vfoRequest;
     std::optional<SplitRequest> m_splitRequest;
     std::optional<TrxRequest> m_trxRequest;
+    std::optional<TuneRequest> m_tuneRequest;
     int         m_pendingMasterVolume{-1};   // -1 = no change requested
     int         m_pendingTxGain{-1};         // -1 = no change requested
     int         m_activeTrx{-1};             // -1 = focus not yet known (#4160)
