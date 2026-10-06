@@ -29,8 +29,15 @@ PanSlice dragPan(PanSlice current, double spanHz, double newPanHz, bool& sliceMo
 // outside it the pan recentres on the slice.
 PanSlice tuneSlice(PanSlice current, double spanHz, double newSliceHz, bool& panMoved);
 
-// The span changed (zoom): keep the slice inside the new one.
-PanSlice applySpan(PanSlice current, double newSpanHz, bool& sliceMoved);
+// The span changed (zoom). ZOOMING NEVER RETUNES THE SLICE: if it would not fit
+// the new span, the VIEW recentres on it. (It used to pull the slice to the
+// edge, so zooming in changed the operator's frequency.)
+PanSlice applySpan(PanSlice current, double newSpanHz, bool& panMoved);
+
+// The centre that rides along with a zoom (PanCenterIntent::Range): the zoom's
+// anchor, not a retune. Taken as asked as far as the slice stays in view, and
+// stopped there; the slice never moves.
+PanSlice rangePan(PanSlice current, double spanHz, double newPanHz);
 
 // The sample rate (= span) for a zoom request. Steps to the next supported rate
 // IN THE DIRECTION of the request: a wheel step asks for a span between two

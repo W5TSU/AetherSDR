@@ -61,17 +61,32 @@ int main()
               "tune outside the span: the pan recentres on the slice");
     }
 
-    // ---- span change ----
+    // ---- span change: ZOOMING NEVER RETUNES THE SLICE ----
+    // Reported: "it does cause the frequency to change as I zoom". The slice was
+    // pulled to the edge of the narrower view; the view must move instead.
     {
-        bool sliceMoved = false;
-        const PanSlice r = applySpan(PanSlice{145.0e6, 148.0e6}, 2e6, sliceMoved);   // margin 0.9 MHz
-        check(sliceMoved && near(r.sliceHz, 145.9e6) && near(r.panHz, 145.0e6),
-              "zooming in keeps the slice inside the narrower span");
+        bool panMoved = false;
+        const PanSlice r = applySpan(PanSlice{145.0e6, 148.0e6}, 2e6, panMoved);   // margin 0.9 MHz
+        check(near(r.sliceHz, 148.0e6), "zooming in never moves the slice");
+        check(panMoved && near(r.panHz, 148.0e6), "...the view moves onto it instead");
     }
     {
-        bool sliceMoved = true;
-        const PanSlice r = applySpan(PanSlice{145.0e6, 146.0e6}, 20e6, sliceMoved);
-        check(!sliceMoved && near(r.sliceHz, 146.0e6), "zooming out leaves an inside slice alone");
+        bool panMoved = true;
+        const PanSlice r = applySpan(PanSlice{145.0e6, 146.0e6}, 20e6, panMoved);
+        check(!panMoved && near(r.sliceHz, 146.0e6) && near(r.panHz, 145.0e6),
+              "zooming out leaves an inside slice and the view alone");
+    }
+
+    // ---- the centre that rides along with a zoom (intent Range) ----
+    {
+        // The zoom anchor asks for a centre 5 MHz from the slice: follow it only
+        // as far as keeps the slice in view, and never move the slice.
+        const PanSlice r = rangePan(start, span, 150.0e6);
+        check(near(r.sliceHz, 145.0e6), "a zoom's centre never moves the slice");
+        check(near(r.panHz, 145.0e6 + 3.6e6), "...the centre stops where the slice is still in view");
+        const PanSlice r2 = rangePan(start, span, 146.0e6);
+        check(near(r2.panHz, 146.0e6) && near(r2.sliceHz, 145.0e6),
+              "a zoom centre that keeps the slice in view is taken as asked");
     }
 
     // ---- zoom -> sample rate ----

@@ -30,11 +30,17 @@ PanSlice tuneSlice(PanSlice current, double spanHz, double newSliceHz, bool& pan
     return PanSlice{newSliceHz, newSliceHz};
 }
 
-PanSlice applySpan(PanSlice current, double newSpanHz, bool& sliceMoved)
+PanSlice applySpan(PanSlice current, double newSpanHz, bool& panMoved)
 {
-    PanSlice r{current.panHz, clampSlice(current.panHz, newSpanHz, current.sliceHz)};
-    sliceMoved = r.sliceHz != current.sliceHz;
-    return r;
+    panMoved = std::fabs(current.sliceHz - current.panHz) > sliceMarginHz(newSpanHz);
+    return panMoved ? PanSlice{current.sliceHz, current.sliceHz} : current;
+}
+
+PanSlice rangePan(PanSlice current, double spanHz, double newPanHz)
+{
+    const double margin = sliceMarginHz(spanHz);
+    return PanSlice{std::clamp(newPanHz, current.sliceHz - margin, current.sliceHz + margin),
+                    current.sliceHz};
 }
 
 double chooseSampleRate(const std::vector<double>& rates, double currentHz, double requestedHz)

@@ -607,10 +607,15 @@ void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdD
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
 {
     Q_UNUSED(panId);
-    // Drag and Range (the centre riding a zoom) mean the same thing here: move
-    // the view, keep the slice, unless it would leave the span.
-    Q_UNUSED(intent);
     if (!m_connected) return;
+    if (intent == PanCenterIntent::Range) {
+        // The centre riding along with a zoom: the zoom's anchor, never a
+        // retune. Follow it only as far as the slice stays in view.
+        const PanSlice r = rangePan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz);
+        applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
+        return;
+    }
+    // A drag: move the view, keep the slice unless it would leave the span.
     bool sliceMoved = false;
     const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz, sliceMoved);
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
@@ -658,10 +663,11 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
     m_rxDsp->setZoomDecimation(plan.decimation);
     m_spanHz = span;
 
-    bool sliceMoved = false;
-    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, sliceMoved);
-    // The span changed even if the centre did not: always re-report it.
-    applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
+    // Zooming never retunes the slice: if it would not fit, the view recentres
+    // on it. The span changed even if the centre did not: always re-report it.
+    bool viewMoved = false;
+    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, viewMoved);
+    applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
     qCInfo(lcHackRf) << "HackRF: span" << m_spanHz / 1e3 << "kHz (rate"
                      << m_sampleRateHz / 1e6 << "MS/s, spectrum decimation" << plan.decimation << ")";
 }
