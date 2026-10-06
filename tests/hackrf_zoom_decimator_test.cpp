@@ -47,8 +47,8 @@ double powerAtDb(const std::vector<std::complex<float>>& x, double freqHz, doubl
 
 int main()
 {
-    const double rate = 2'000'000.0;
-    const std::size_t n = 1 << 17;
+    const double rate = 8'000'000.0;        // narrow zoom decimates the 8 MS/s capture
+    const std::size_t n = 1 << 18;
 
     {
         HackRfZoomDecimator d;
@@ -58,7 +58,7 @@ int main()
         check(out.size() == in.size(), "decimation 1 passes every sample through");
     }
 
-    for (int dec : {2, 4, 8, 16, 32}) {
+    for (int dec : {2, 4, 8, 16, 32, 64, 128}) {
         HackRfZoomDecimator d;
         d.setDecimation(dec);
         const double outRate = rate / dec;

@@ -6,7 +6,7 @@
 
 namespace AetherSDR::hackrf {
 
-// Decimates HackRF's IQ for the narrow-zoom spectrum (spans below 2 MHz).
+// Decimates HackRF's IQ for the narrow-zoom spectrum (spans below 8 MHz).
 //
 // The pan centre is the hardware LO, so a zoomed view is the middle of the
 // capture, already at DC: no mixing, only lowpass + decimate. A cascade of
@@ -22,7 +22,7 @@ namespace AetherSDR::hackrf {
 class HackRfZoomDecimator {
 public:
     HackRfZoomDecimator();
-    // 1, 2, 4, 8, 16 or 32 (other values round down to a power of two, max 32).
+    // 1, 2, 4 .. 128 (other values round down to a power of two, max 128).
     // Resets the filter state when it changes.
     void setDecimation(int decimation);
     int decimation() const { return m_decimation; }

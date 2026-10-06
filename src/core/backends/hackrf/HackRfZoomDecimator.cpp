@@ -31,7 +31,7 @@ HackRfZoomDecimator::HackRfZoomDecimator()
 void HackRfZoomDecimator::setDecimation(int decimation)
 {
     int d = 1;
-    while (d * 2 <= std::clamp(decimation, 1, 32))
+    while (d * 2 <= std::clamp(decimation, 1, 128))
         d *= 2;
     if (d == m_decimation && !m_stages.empty() == (d > 1))
         return;

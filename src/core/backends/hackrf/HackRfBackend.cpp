@@ -338,11 +338,15 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
 
     // A restored rate outside the zoom steps snaps to the nearest one, and each
-    // session starts with the panadapter centred on the slice.
-    m_sampleRateHz = chooseSampleRate(kSampleRatesHz, m_sampleRateHz, m_sampleRateHz);
+    // session starts with the panadapter centred on the slice. A restored 2 or
+    // 4 MS/s becomes that span shown from the 8 MS/s capture (planForSpan).
+    {
+        const ZoomPlan plan = planForSpan(chooseSampleRate(kSampleRatesHz, m_sampleRateHz, m_sampleRateHz));
+        m_spanHz = plan.sampleRateHz / plan.decimation;
+        m_sampleRateHz = plan.sampleRateHz;
+        m_rxDsp->setZoomDecimation(plan.decimation);
+    }
     m_panCenterHz = m_sliceFreqHz;
-    m_spanHz = m_sampleRateHz;              // a session starts unzoomed
-    m_rxDsp->setZoomDecimation(1);
     if (!m_worker->setSampleRateHz(m_sampleRateHz)
         || !tuneHardware(m_panCenterHz)
         || !m_worker->setVgaGainDb(m_vgaGainDb)

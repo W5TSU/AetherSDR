@@ -91,13 +91,14 @@ const std::vector<double>& zoomSpansHz()
 
 ZoomPlan planForSpan(double spanHz)
 {
-    constexpr double kMinRate = 2'000'000.0;
-    if (spanHz >= kMinRate)
+    // Below 8 MHz: the 8 MS/s capture, decimated (see zoomSpansHz()).
+    constexpr double kNarrowRate = 8'000'000.0;
+    if (spanHz >= kNarrowRate)
         return ZoomPlan{spanHz, 1};
     int d = 1;
-    while (d < 32 && kMinRate / (d * 2) >= spanHz - 1.0)
+    while (d < 128 && kNarrowRate / (d * 2) >= spanHz - 1.0)
         d *= 2;
-    return ZoomPlan{kMinRate, d};
+    return ZoomPlan{kNarrowRate, d};
 }
 
 } // namespace AetherSDR::hackrf

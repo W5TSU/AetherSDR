@@ -14,10 +14,13 @@ struct PanSlice {
     double sliceHz = 0.0;
 };
 
-// How far from the pan centre the slice may sit: 45% of the span, leaving the
-// passband clear of the band edges where HackRF's baseband filter rolls off.
-// RtlSdrBackend uses the same fraction.
-inline double sliceMarginHz(double spanHz) { return 0.45 * spanHz; }
+// How far from the capture centre the slice may sit: 25% of the sample rate.
+// Measured on a HackRF Pro: stations a sample rate away fold onto the capture's
+// outer part almost unattenuated (96.1 MHz onto 108.6 MHz only 4.5 dB down at
+// 12.5 MS/s), and the baseband filter setting made no measurable difference,
+// so a slice out there faded under the AGC. Rejection is best near the centre.
+// (RtlSdrBackend's 45% suits the RTL's own filtering, not HackRF's.)
+inline double sliceMarginHz(double spanHz) { return 0.25 * spanHz; }
 
 // The operator dragged the spectrum to `newPanHz`: the view moves, the slice
 // stays, unless that would leave it outside the span, when it is pulled to the
@@ -46,9 +49,10 @@ PanSlice rangePan(PanSlice current, double spanHz, double newPanHz);
 // restored value) snaps to the nearest supported one. `rates` ascending.
 double chooseSampleRate(const std::vector<double>& rates, double currentHz, double requestedHz);
 
-// The displayed spans the wheel zoom walks: 62.5 kHz .. 1 MHz are the 2 MS/s
-// capture decimated for the spectrum (HackRfZoomDecimator), 2 .. 20 MHz are
-// hardware sample rates. Ascending.
+// The displayed spans the wheel zoom walks: 62.5 kHz .. 4 MHz are the 8 MS/s
+// capture decimated for the spectrum (HackRfZoomDecimator), 8 .. 20 MHz are
+// hardware sample rates. Not the 2 and 4 MS/s rates: they measured the worst
+// alias rejection. Ascending.
 const std::vector<double>& zoomSpansHz();
 
 // How to show a span: the hardware sample rate, and the spectrum's decimation

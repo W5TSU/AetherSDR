@@ -30,7 +30,7 @@ const std::vector<double> kRates = {2e6, 4e6, 8e6, 10e6, 12.5e6, 16e6, 20e6};
 
 int main()
 {
-    const double span = 8e6;           // 8 MS/s: +-4 MHz, margin 0.45 * 8 = 3.6 MHz
+    const double span = 8e6;           // 8 MS/s: +-4 MHz, margin 0.25 * 8 = 2 MHz
     const PanSlice start{145.0e6, 145.0e6};
 
     // ---- drag ----
@@ -43,7 +43,7 @@ int main()
     {
         bool sliceMoved = false;
         const PanSlice r = dragPan(start, span, 150.0e6, sliceMoved);   // slice would be 5 MHz off
-        check(near(r.sliceHz, 150.0e6 - 3.6e6) && sliceMoved,
+        check(near(r.sliceHz, 150.0e6 - 2.0e6) && sliceMoved,
               "drag: a slice that would leave the span is pulled to the near edge");
     }
 
@@ -61,12 +61,24 @@ int main()
               "tune outside the span: the pan recentres on the slice");
     }
 
+    // ---- the slice stays out of the capture's outer half ----
+    // Measured on a HackRF Pro: stations a sample rate away fold onto the
+    // outer part of the capture almost unattenuated (96.1 MHz onto 108.6 MHz,
+    // 4.5 dB down, at 12.5 MS/s), and the baseband filter setting had no
+    // effect. Reported as audio fading while sliding/zooming.
+    {
+        bool panMoved = false;
+        const PanSlice r = tuneSlice(start, span, 147.5e6, panMoved);   // 31% of the rate out
+        check(panMoved && near(r.panHz, 147.5e6),
+              "a slice beyond 25% of the rate from centre recentres the capture");
+    }
+
     // ---- span change: ZOOMING NEVER RETUNES THE SLICE ----
     // Reported: "it does cause the frequency to change as I zoom". The slice was
     // pulled to the edge of the narrower view; the view must move instead.
     {
         bool panMoved = false;
-        const PanSlice r = applySpan(PanSlice{145.0e6, 148.0e6}, 2e6, panMoved);   // margin 0.9 MHz
+        const PanSlice r = applySpan(PanSlice{145.0e6, 148.0e6}, 2e6, panMoved);   // margin 0.5 MHz
         check(near(r.sliceHz, 148.0e6), "zooming in never moves the slice");
         check(panMoved && near(r.panHz, 148.0e6), "...the view moves onto it instead");
     }
@@ -83,7 +95,7 @@ int main()
         // as far as keeps the slice in view, and never move the slice.
         const PanSlice r = rangePan(start, span, 150.0e6);
         check(near(r.sliceHz, 145.0e6), "a zoom's centre never moves the slice");
-        check(near(r.panHz, 145.0e6 + 3.6e6), "...the centre stops where the slice is still in view");
+        check(near(r.panHz, 145.0e6 + 2.0e6), "...the centre stops where the slice is still in view");
         const PanSlice r2 = rangePan(start, span, 146.0e6);
         check(near(r2.panHz, 146.0e6) && near(r2.sliceHz, 145.0e6),
               "a zoom centre that keeps the slice in view is taken as asked");
@@ -111,13 +123,19 @@ int main()
 
         const ZoomPlan wide = planForSpan(8e6);
         check(wide.sampleRateHz == 8e6 && wide.decimation == 1, "8 MHz: rate 8 MS/s, no decimation");
+        // Spans below 8 MHz come from the 8 MS/s capture, decimated: the 2 and
+        // 4 MS/s hardware rates measured the worst alias rejection.
+        const ZoomPlan four = planForSpan(4e6);
+        check(four.sampleRateHz == 8e6 && four.decimation == 2, "4 MHz: 8 MS/s decimated by 2");
         const ZoomPlan two = planForSpan(2e6);
-        check(two.sampleRateHz == 2e6 && two.decimation == 1, "2 MHz: rate 2 MS/s, no decimation");
+        check(two.sampleRateHz == 8e6 && two.decimation == 4, "2 MHz: 8 MS/s decimated by 4");
         const ZoomPlan narrow = planForSpan(250e3);
-        check(narrow.sampleRateHz == 2e6 && narrow.decimation == 8, "250 kHz: 2 MS/s decimated by 8");
+        check(narrow.sampleRateHz == 8e6 && narrow.decimation == 32, "250 kHz: 8 MS/s decimated by 32");
         const ZoomPlan narrowest = planForSpan(62'500.0);
-        check(narrowest.sampleRateHz == 2e6 && narrowest.decimation == 32,
-              "62.5 kHz: 2 MS/s decimated by 32");
+        check(narrowest.sampleRateHz == 8e6 && narrowest.decimation == 128,
+              "62.5 kHz: 8 MS/s decimated by 128");
+        const ZoomPlan ten = planForSpan(10e6);
+        check(ten.sampleRateHz == 10e6 && ten.decimation == 1, "10 MHz: rate 10 MS/s, no decimation");
     }
 
     std::printf("%s\n", g_failed == 0 ? "hackrf_tuning_test: OK" : "hackrf_tuning_test: FAILED");
