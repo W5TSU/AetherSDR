@@ -173,7 +173,9 @@ RadioCapabilities RtlSdrBackend::capabilities() const
     PanAmplitudeModel amplitude;
     amplitude.calibratedDbm = false;
     amplitude.binsAbsolute = true;
+    amplitude.clientPersistsDbmRange = false;  // no client owner is declared
     c.panAmplitude = amplitude;
+    c.panFrameRateShaping = std::nullopt;  // no client owner is declared for FFT FPS
 
     // Vendor extensions
     c.extensions["rtl"] = QVariantMap{{"serial", m_serial}};

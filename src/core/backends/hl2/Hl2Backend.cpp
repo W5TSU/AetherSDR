@@ -1982,7 +1982,13 @@ RadioCapabilities Hl2Backend::capabilities() const
     PanAmplitudeModel amplitude;
     amplitude.calibratedDbm = m_dbRef.isCalibrated();
     amplitude.binsAbsolute = true;
+    // No register holds a display range and nothing reports one: the client
+    // is the only memory the operator's dBm range has.
+    amplitude.clientPersistsDbmRange = true;
     c.panAmplitude = amplitude;
+    // The pan's frame rate is paced on this host and the radio stores no
+    // display state: the client is the only memory FFT FPS has.
+    c.panFrameRateShaping = PanFrameRateShaping{/*clientPersistsFrameRate*/ true};
     // (extensionNamespaces is declared above, with the freqcal/nb verbs it
     // names — an earlier revision of this comment claimed none existed.)
     return c;

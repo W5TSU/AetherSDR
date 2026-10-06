@@ -345,7 +345,9 @@ RadioCapabilities HackRfBackend::capabilities() const
     PanAmplitudeModel amplitude;
     amplitude.calibratedDbm = false;
     amplitude.binsAbsolute = true;
+    amplitude.clientPersistsDbmRange = false;  // no client owner is declared
     c.panAmplitude = amplitude;
+    c.panFrameRateShaping = std::nullopt;  // no client owner is declared for FFT FPS
     // No band/segment zoom: no command plane, no per-pan zoom flag.
     c.panZoomModes = std::nullopt;
 
