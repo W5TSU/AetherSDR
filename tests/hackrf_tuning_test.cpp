@@ -85,6 +85,26 @@ int main()
     check(chooseSampleRate(kRates, 7.0e6, 7.0e6) == 8e6,
           "an unsupported current rate (a restored value) snaps to a supported one");
 
+    // ---- narrow zoom: spans below 2 MHz decimate the 2 MS/s capture ----
+    {
+        const auto& spans = zoomSpansHz();
+        check(spans.front() == 62'500.0 && spans.back() == 20e6, "zoom spans run 62.5 kHz .. 20 MHz");
+        check(chooseSampleRate(spans, 2e6, 1.6e6) == 1e6, "zoom in from 2 MHz steps to 1 MHz");
+        check(chooseSampleRate(spans, 125e3, 100e3) == 62'500.0, "zoom in to the narrowest 62.5 kHz");
+        check(chooseSampleRate(spans, 62'500.0, 50e3) == 62'500.0, "below 62.5 kHz stays there");
+        check(chooseSampleRate(spans, 1e6, 1.25e6) == 2e6, "zoom out from 1 MHz steps to 2 MHz");
+
+        const ZoomPlan wide = planForSpan(8e6);
+        check(wide.sampleRateHz == 8e6 && wide.decimation == 1, "8 MHz: rate 8 MS/s, no decimation");
+        const ZoomPlan two = planForSpan(2e6);
+        check(two.sampleRateHz == 2e6 && two.decimation == 1, "2 MHz: rate 2 MS/s, no decimation");
+        const ZoomPlan narrow = planForSpan(250e3);
+        check(narrow.sampleRateHz == 2e6 && narrow.decimation == 8, "250 kHz: 2 MS/s decimated by 8");
+        const ZoomPlan narrowest = planForSpan(62'500.0);
+        check(narrowest.sampleRateHz == 2e6 && narrowest.decimation == 32,
+              "62.5 kHz: 2 MS/s decimated by 32");
+    }
+
     std::printf("%s\n", g_failed == 0 ? "hackrf_tuning_test: OK" : "hackrf_tuning_test: FAILED");
     return g_failed == 0 ? 0 : 1;
 }

@@ -2762,6 +2762,13 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_tuning_test PRIVATE aethercore)
     add_test(NAME hackrf_tuning_test COMMAND hackrf_tuning_test)
 
+    # Narrow-zoom spectrum decimator: in-view tones pass, out-of-view tones do
+    # not fold in. Pure; no hardware.
+    add_executable(hackrf_zoom_decimator_test tests/hackrf_zoom_decimator_test.cpp)
+    target_include_directories(hackrf_zoom_decimator_test PRIVATE src)
+    target_link_libraries(hackrf_zoom_decimator_test PRIVATE aethercore)
+    add_test(NAME hackrf_zoom_decimator_test COMMAND hackrf_zoom_decimator_test)
+
     # The keyed CW carrier: timestamp-placed edges, raised-cosine ramps, exact
     # element lengths. Pure; no hardware.
     add_executable(hackrf_cw_tx_test tests/hackrf_cw_tx_test.cpp)

@@ -39,4 +39,17 @@ PanSlice applySpan(PanSlice current, double newSpanHz, bool& sliceMoved);
 // restored value) snaps to the nearest supported one. `rates` ascending.
 double chooseSampleRate(const std::vector<double>& rates, double currentHz, double requestedHz);
 
+// The displayed spans the wheel zoom walks: 62.5 kHz .. 1 MHz are the 2 MS/s
+// capture decimated for the spectrum (HackRfZoomDecimator), 2 .. 20 MHz are
+// hardware sample rates. Ascending.
+const std::vector<double>& zoomSpansHz();
+
+// How to show a span: the hardware sample rate, and the spectrum's decimation
+// of it (1 for the hardware spans).
+struct ZoomPlan {
+    double sampleRateHz = 8'000'000.0;
+    int decimation = 1;
+};
+ZoomPlan planForSpan(double spanHz);
+
 } // namespace AetherSDR::hackrf

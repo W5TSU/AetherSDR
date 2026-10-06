@@ -77,7 +77,23 @@ void HackRfRxDsp::processBlock(const QVector<std::complex<float>>& block)
     // Per-slice DDC -> onDecimated() -> WDSP, synchronously on this thread.
     m_ddc->process(block);
 
-    processSpectrum(block);
+    // Narrow zoom: the pan centre is the LO, so the zoomed view is the middle
+    // of the capture, already at DC: decimate it and transform that. A change
+    // of zoom restarts the spectrum so no frame mixes two scales.
+    const int zoom = m_zoomDecimation.load();
+    if (zoom != m_zoom.decimation()) {
+        m_zoom.setDecimation(zoom);
+        m_spectrum.reset();
+        m_samplesToNextFrame = 0;
+    }
+    const double rate = m_ddc->inputSampleRateHz();
+    if (m_zoom.decimation() > 1) {
+        const std::vector<std::complex<float>> zoomed =
+            m_zoom.process(block.constData(), static_cast<std::size_t>(block.size()));
+        processSpectrum(zoomed.data(), zoomed.size(), rate / m_zoom.decimation());
+    } else {
+        processSpectrum(block.constData(), static_cast<std::size_t>(block.size()), rate);
+    }
 }
 
 // Wideband spectrum from the raw capture, one frame per interval of SAMPLES.
@@ -85,10 +101,9 @@ void HackRfRxDsp::processBlock(const QVector<std::complex<float>>& block)
 // only the tail of the data is kept (Hl2Spectrum::accumulate), and one more
 // sample through process() completes the frame. A transfer longer than the
 // interval (a narrow zoom) therefore yields several frames instead of one.
-void HackRfRxDsp::processSpectrum(const QVector<std::complex<float>>& block)
+void HackRfRxDsp::processSpectrum(const std::complex<float>* data, std::size_t n, double rateHz)
 {
-    const std::size_t n = static_cast<std::size_t>(block.size());
-    const std::span<const std::complex<float>> all(block.constData(), n);
+    const std::span<const std::complex<float>> all(data, n);
     const int interval = m_spectrumIntervalMs.load();
     if (interval <= 0) {                        // uncapped: every complete frame
         if (m_spectrum.process(all, m_specBins) > 0)
@@ -97,7 +112,7 @@ void HackRfRxDsp::processSpectrum(const QVector<std::complex<float>>& block)
         return;
     }
     const std::int64_t every = std::max<std::int64_t>(
-        1, static_cast<std::int64_t>(m_ddc->inputSampleRateHz() * interval / 1000.0));
+        1, static_cast<std::int64_t>(rateHz * interval / 1000.0));
     const std::size_t keep = static_cast<std::size_t>(std::max(1, m_spectrum.fftSize() - 1));
     auto feedTail = [&](std::size_t from, std::size_t to) {   // [from, to)
         if (to <= from) return;

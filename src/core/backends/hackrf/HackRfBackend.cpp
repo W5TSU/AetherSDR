@@ -341,6 +341,8 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     // session starts with the panadapter centred on the slice.
     m_sampleRateHz = chooseSampleRate(kSampleRatesHz, m_sampleRateHz, m_sampleRateHz);
     m_panCenterHz = m_sliceFreqHz;
+    m_spanHz = m_sampleRateHz;              // a session starts unzoomed
+    m_rxDsp->setZoomDecimation(1);
     if (!m_worker->setSampleRateHz(m_sampleRateHz)
         || !tuneHardware(m_panCenterHz)
         || !m_worker->setVgaGainDb(m_vgaGainDb)
@@ -506,7 +508,7 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     // Inside the span only the DDC's NCO moves: no hardware retune, no
     // waterfall jump. Outside it the pan recentres on the slice.
     bool panMoved = false;
-    const PanSlice r = tuneSlice({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, panMoved);
+    const PanSlice r = tuneSlice({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz, panMoved);
     applyPanSlice(r.panHz, r.sliceHz, panMoved, /*sliceMoved=*/true);
 }
 
@@ -529,7 +531,7 @@ void HackRfBackend::applyPanSlice(double panHz, double sliceHz, bool panMoved, b
     // moves -- and, now that the slice moves inside the span, only then.
     if (panMoved) {
         emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), m_panCenterHz / 1e6,
-                                       m_sampleRateHz / 1e6);
+                                       m_spanHz / 1e6);
     }
     if (sliceMoved) {
         SliceDelta delta;
@@ -610,7 +612,7 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     Q_UNUSED(intent);
     if (!m_connected) return;
     bool sliceMoved = false;
-    const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, sliceMoved);
+    const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz, sliceMoved);
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
 }
 
@@ -618,39 +620,50 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
 {
     Q_UNUSED(panId);
     if (!m_connected) return;
-    const double rate = chooseSampleRate(kSampleRatesHz, m_sampleRateHz, hz);
-    // Refused mid-transmission or mid-switch (the TX modulator runs at this
-    // rate), and a no-op when the step lands where we are. Either way the
-    // pan is re-told the real span so the zoom control snaps back to it.
-    const bool rxStreaming = m_arbiter
-        && m_arbiter->state() == HackRfTxRxArbiter::State::RxStreaming;
-    if (rate == m_sampleRateHz || m_keyed || !rxStreaming) {
+    const double span = chooseSampleRate(zoomSpansHz(), m_spanHz, hz);
+    const ZoomPlan plan = planForSpan(span);
+    auto reassert = [this] {
+        // The pan is re-told the real span so the zoom control snaps back to it.
         emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), m_panCenterHz / 1e6,
-                                       m_sampleRateHz / 1e6);
+                                       m_spanHz / 1e6);
+    };
+    if (span == m_spanHz) {
+        reassert();
         return;
     }
-    // Restart RX around the change: the rate (and the baseband filter that
-    // follows it) is set with the stream stopped.
-    m_worker->stopRx();
-    if (!m_worker->setSampleRateHz(rate)) {
-        m_worker->setSampleRateHz(m_sampleRateHz);   // back to what worked
+    if (plan.sampleRateHz != m_sampleRateHz) {
+        // A hardware rate change: refused mid-transmission or mid-switch (the
+        // TX modulator runs at this rate), and done with RX stopped.
+        const bool rxStreaming = m_arbiter
+            && m_arbiter->state() == HackRfTxRxArbiter::State::RxStreaming;
+        if (m_keyed || !rxStreaming) {
+            reassert();
+            return;
+        }
+        m_worker->stopRx();
+        if (!m_worker->setSampleRateHz(plan.sampleRateHz)) {
+            m_worker->setSampleRateHz(m_sampleRateHz);   // back to what worked
+            m_worker->startRx();
+            reassert();
+            return;
+        }
+        m_sampleRateHz = plan.sampleRateHz;
+        m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
+        HackRfTxDsp::Config txCfg = m_txDsp->config();
+        txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
+        m_txDsp->configure(txCfg);
         m_worker->startRx();
-        emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), m_panCenterHz / 1e6,
-                                       m_sampleRateHz / 1e6);
-        return;
     }
-    m_sampleRateHz = rate;
-    m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
-    HackRfTxDsp::Config txCfg = m_txDsp->config();
-    txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
-    m_txDsp->configure(txCfg);
-    m_worker->startRx();
+    // Narrow spans only change the spectrum's decimation: no RX restart.
+    m_rxDsp->setZoomDecimation(plan.decimation);
+    m_spanHz = span;
 
     bool sliceMoved = false;
-    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, sliceMoved);
+    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, sliceMoved);
     // The span changed even if the centre did not: always re-report it.
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
-    qCInfo(lcHackRf) << "HackRF: span" << m_sampleRateHz / 1e6 << "MHz";
+    qCInfo(lcHackRf) << "HackRF: span" << m_spanHz / 1e3 << "kHz (rate"
+                     << m_sampleRateHz / 1e6 << "MS/s, spectrum decimation" << plan.decimation << ")";
 }
 
 void HackRfBackend::setPanFrameRate(const QString& panId, int fps)
@@ -1009,10 +1022,11 @@ void HackRfBackend::emitInitialState()
     emit radioChanged(rDelta);
 
     const QString panId = QString::fromLatin1(kPanId);
-    emit panCenterBandwidthChanged(panId, m_panCenterHz / 1e6, m_sampleRateHz / 1e6);
-    // The zoom range, in MHz of span: the sample-rate steps. (It said 1 to
-    // 6000, the TUNING range, which no zoom could honour.)
-    emit panBandwidthLimitsChanged(panId, kSampleRatesHz.front() / 1e6, kSampleRatesHz.back() / 1e6);
+    emit panCenterBandwidthChanged(panId, m_panCenterHz / 1e6, m_spanHz / 1e6);
+    // The zoom range, in MHz of span: 62.5 kHz (decimated) to 20 MHz (the top
+    // sample rate). (It said 1 to 6000, the TUNING range, which no zoom could
+    // honour.)
+    emit panBandwidthLimitsChanged(panId, zoomSpansHz().front() / 1e6, zoomSpansHz().back() / 1e6);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);
     emit panRfGainChanged(panId, m_vgaGainDb);

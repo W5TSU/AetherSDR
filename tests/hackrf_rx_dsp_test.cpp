@@ -178,6 +178,25 @@ int main(int argc, char** argv)
         check(frames >= 7 && frames <= 9, "~one spectrum frame per 33 ms of SAMPLES at 2 MS/s");
     }
 
+    // ---- narrow zoom: the spectrum comes from the decimated stream ----
+    {
+        dsp->setZoomDecimation(8);           // 2 MS/s -> 250 kHz view
+        spinUntil([] { return false; }, 100);
+        const int before = spectrumFrames;
+        QByteArray lastFrame;
+        auto conn = QObject::connect(dsp, &HackRfRxDsp::spectrumFrame, dsp,
+                                     [&](const QByteArray& f) { lastFrame = f; }, Qt::DirectConnection);
+        for (int i = 0; i < 4; ++i) dsp->enqueueIq(toneBlock(kBlock, phase));
+        spinUntil([] { return false; }, 1500);
+        QObject::disconnect(conn);
+        const int frames = spectrumFrames - before;
+        std::printf("zoomed (D=8) spectrum frames for 262 ms: %d\n", frames);
+        check(frames >= 6 && frames <= 9, "a zoomed view keeps ~one frame per 33 ms");
+        check(lastFrame.size() == 2048 * static_cast<int>(sizeof(float)),
+              "a zoomed frame is a full 2048-bin spectrum");
+        dsp->setZoomDecimation(1);
+    }
+
     dspThread.quit();
     dspThread.wait();
     std::printf("%s\n", g_failed == 0 ? "hackrf_rx_dsp_test: OK" : "hackrf_rx_dsp_test: FAILED");

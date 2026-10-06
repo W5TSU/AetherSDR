@@ -117,8 +117,9 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     void setPanCenter(const QString& panId, double hz, PanCenterIntent intent) override;
-    // Wheel zoom: steps the sample rate (= span) through 2-20 MHz, restarting
-    // RX around the change. Refused while transmitting.
+    // Wheel zoom, 62.5 kHz .. 20 MHz. 2-20 MHz steps the sample rate
+    // (restarting RX; refused while transmitting); below 2 MHz the spectrum
+    // decimates the 2 MS/s capture (HackRfZoomDecimator), with no restart.
     void setPanBandwidth(const QString& panId, double hz) override;
     void setPanFrameRate(const QString& panId, int fps) override;
 
@@ -242,6 +243,9 @@ private:
     // dragging the spectrum moves this and not the slice. On TX the hardware
     // is retuned to the slice, and back here for RX. See HackRfTuning.h.
     double m_panCenterHz{100'000'000.0};
+    // The DISPLAYED span: the sample rate, or below 2 MHz the 2 MS/s capture
+    // decimated for the spectrum. Drag/tune margins follow what is on screen.
+    double m_spanHz{8'000'000.0};
     // Applies the result of a HackRfTuning operation: retunes the hardware and
     // the DDC, and reports whatever moved.
     void applyPanSlice(double panHz, double sliceHz, bool panMoved, bool sliceMoved);
