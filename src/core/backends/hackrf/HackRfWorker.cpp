@@ -152,6 +152,18 @@ bool HackRfWorker::setSampleRateHz(double hz)
                                << "requested" << hz << "Hz";
         return false;
     }
+    // The analog baseband filter, matched to the new rate the way
+    // hackrf_transfer does (75% of the rate, rounded to a supported width):
+    // stated explicitly rather than trusting whichever libhackrf version the
+    // platform ships to do it inside set_sample_rate. Without it a zoom out
+    // would show a band the filter is still cutting off.
+    const std::uint32_t bw = hackrf_compute_baseband_filter_bw(static_cast<std::uint32_t>(0.75 * hz));
+    const int bwRc = hackrf_set_baseband_filter_bandwidth(m_device, bw);
+    if (bwRc != HACKRF_SUCCESS) {
+        qCWarning(lcHackRf) << "HackRfWorker: hackrf_set_baseband_filter_bandwidth failed:"
+                            << errName(bwRc) << "requested" << bw << "Hz";
+        return false;
+    }
     return true;
 }
 

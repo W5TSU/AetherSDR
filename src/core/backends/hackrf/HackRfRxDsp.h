@@ -82,7 +82,11 @@ private:
     std::vector<float> m_specBins;
     std::atomic<int> m_spectrumIntervalMs{33};
     QElapsedTimer m_clock;
-    qint64 m_lastSpectrumMs{-1};
+    // Samples still to go before the next spectrum frame. Gated on the SAMPLE
+    // clock so the frame rate does not depend on how much IQ one USB transfer
+    // carries (65 ms at 2 MS/s, 6.5 ms at 20 MS/s).
+    std::int64_t m_samplesToNextFrame{0};
+    void processSpectrum(const QVector<std::complex<float>>& block);
 
     // Input queue. Touched by the producer thread and this one, under m_queueMutex.
     std::mutex m_queueMutex;

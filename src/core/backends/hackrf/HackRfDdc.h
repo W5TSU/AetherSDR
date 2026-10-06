@@ -55,6 +55,7 @@ public:
     // hardcoded so a future consumer with different needs (a lower-rate
     // CW-only channel, a test) isn't locked to WDSP's number.
     void setOutputSampleRateHz(double hz);
+    double inputSampleRateHz() const { return m_inputRateHz.load(std::memory_order_relaxed); }
 
 public slots:
     // Runs on whatever thread calls it — HackRfBackend, after receiving

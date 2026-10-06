@@ -2755,6 +2755,13 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
 
+    # HackRF pan/slice bookkeeping (drag keeps the slice, in-span tunes move only
+    # the slice) and directional zoom-to-sample-rate. Pure; no hardware.
+    add_executable(hackrf_tuning_test tests/hackrf_tuning_test.cpp)
+    target_include_directories(hackrf_tuning_test PRIVATE src)
+    target_link_libraries(hackrf_tuning_test PRIVATE aethercore)
+    add_test(NAME hackrf_tuning_test COMMAND hackrf_tuning_test)
+
     # The keyed CW carrier: timestamp-placed edges, raised-cosine ramps, exact
     # element lengths. Pure; no hardware.
     add_executable(hackrf_cw_tx_test tests/hackrf_cw_tx_test.cpp)

@@ -1,0 +1,90 @@
+// HackRF's panadapter/slice bookkeeping and zoom-to-sample-rate choice.
+//
+// The panadapter (hardware LO) and the slice (the DDC's tuned frequency) used
+// to be one value, so dragging the spectrum retuned the slice and the wheel
+// zoom had no implementation. Pinned here, without hardware:
+//   - a drag moves the pan and leaves the slice, unless the slice would leave
+//     the span, when it is pulled to the nearest edge;
+//   - a tune inside the span moves only the slice; outside, the pan recentres;
+//   - a span change keeps the slice inside;
+//   - a zoom request steps to the next supported rate IN ITS DIRECTION, never
+//     rounding back to the current one (which would make the wheel inert).
+#include "core/backends/hackrf/HackRfTuning.h"
+
+#include <cmath>
+#include <cstdio>
+#include <vector>
+
+using namespace AetherSDR::hackrf;
+
+namespace {
+int g_failed = 0;
+void check(bool ok, const char* what)
+{
+    std::printf("%s %s\n", ok ? "[ OK ]" : "[FAIL]", what);
+    if (!ok) ++g_failed;
+}
+bool near(double a, double b) { return std::fabs(a - b) < 0.5; }
+const std::vector<double> kRates = {2e6, 4e6, 8e6, 10e6, 12.5e6, 16e6, 20e6};
+} // namespace
+
+int main()
+{
+    const double span = 8e6;           // 8 MS/s: +-4 MHz, margin 0.45 * 8 = 3.6 MHz
+    const PanSlice start{145.0e6, 145.0e6};
+
+    // ---- drag ----
+    {
+        bool sliceMoved = true;
+        const PanSlice r = dragPan(start, span, 146.0e6, sliceMoved);
+        check(near(r.panHz, 146.0e6), "drag: the pan moves to the dragged centre");
+        check(near(r.sliceHz, 145.0e6) && !sliceMoved, "drag: the slice stays where it was tuned");
+    }
+    {
+        bool sliceMoved = false;
+        const PanSlice r = dragPan(start, span, 150.0e6, sliceMoved);   // slice would be 5 MHz off
+        check(near(r.sliceHz, 150.0e6 - 3.6e6) && sliceMoved,
+              "drag: a slice that would leave the span is pulled to the near edge");
+    }
+
+    // ---- tune ----
+    {
+        bool panMoved = true;
+        const PanSlice r = tuneSlice(start, span, 146.5e6, panMoved);
+        check(near(r.panHz, 145.0e6) && !panMoved, "tune inside the span: the pan stays");
+        check(near(r.sliceHz, 146.5e6), "tune inside the span: the slice moves");
+    }
+    {
+        bool panMoved = false;
+        const PanSlice r = tuneSlice(start, span, 149.0e6, panMoved);
+        check(panMoved && near(r.panHz, 149.0e6) && near(r.sliceHz, 149.0e6),
+              "tune outside the span: the pan recentres on the slice");
+    }
+
+    // ---- span change ----
+    {
+        bool sliceMoved = false;
+        const PanSlice r = applySpan(PanSlice{145.0e6, 148.0e6}, 2e6, sliceMoved);   // margin 0.9 MHz
+        check(sliceMoved && near(r.sliceHz, 145.9e6) && near(r.panHz, 145.0e6),
+              "zooming in keeps the slice inside the narrower span");
+    }
+    {
+        bool sliceMoved = true;
+        const PanSlice r = applySpan(PanSlice{145.0e6, 146.0e6}, 20e6, sliceMoved);
+        check(!sliceMoved && near(r.sliceHz, 146.0e6), "zooming out leaves an inside slice alone");
+    }
+
+    // ---- zoom -> sample rate ----
+    check(chooseSampleRate(kRates, 8e6, 6.4e6) == 4e6, "zoom in from 8 MHz by 0.8 steps down to 4 MHz");
+    check(chooseSampleRate(kRates, 8e6, 9.0e6) == 10e6, "zoom out from 8 MHz by a little steps up to 10 MHz");
+    check(chooseSampleRate(kRates, 10e6, 12.5e6) == 12.5e6, "an exact supported request is taken");
+    check(chooseSampleRate(kRates, 2e6, 1.0e6) == 2e6, "below the minimum stays at 2 MHz");
+    check(chooseSampleRate(kRates, 20e6, 40e6) == 20e6, "above the maximum stays at 20 MHz");
+    check(chooseSampleRate(kRates, 8e6, 8e6) == 8e6, "the current span is kept");
+    check(chooseSampleRate(kRates, 8e6, 2.5e6) == 2e6, "a big zoom in lands on the largest rate not above it");
+    check(chooseSampleRate(kRates, 7.0e6, 7.0e6) == 8e6,
+          "an unsupported current rate (a restored value) snaps to a supported one");
+
+    std::printf("%s\n", g_failed == 0 ? "hackrf_tuning_test: OK" : "hackrf_tuning_test: FAILED");
+    return g_failed == 0 ? 0 : 1;
+}

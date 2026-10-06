@@ -160,6 +160,24 @@ int main(int argc, char** argv)
     spinUntil([] { return false; }, 1000);
     check(audioFrames == framesAtClear, "no audio after clearChannel()");
 
+    // ---- spectrum frame rate follows the SAMPLE clock, not the transfer size ----
+    // At 2 MS/s one 131072-sample transfer is 65.5 ms; gating one frame per
+    // transfer capped the waterfall at ~15 fps on a narrow zoom. With a 33 ms
+    // interval, 4 transfers (262 ms) must yield ~8 frames, not 4.
+    {
+        dsp->clearChannel();                 // spectrum only
+        spinUntil([] { return false; }, 300);
+        dsp->ddc().setInputSampleRateHz(2'000'000.0);
+        dsp->setSpectrumIntervalMs(33);
+        spinUntil([] { return false; }, 100);
+        const int before = spectrumFrames;
+        for (int i = 0; i < 4; ++i) dsp->enqueueIq(toneBlock(kBlock, phase));
+        spinUntil([] { return false; }, 1500);
+        const int frames = spectrumFrames - before;
+        std::printf("spectrum frames for 262 ms at 2 MS/s: %d\n", frames);
+        check(frames >= 7 && frames <= 9, "~one spectrum frame per 33 ms of SAMPLES at 2 MS/s");
+    }
+
     dspThread.quit();
     dspThread.wait();
     std::printf("%s\n", g_failed == 0 ? "hackrf_rx_dsp_test: OK" : "hackrf_rx_dsp_test: FAILED");

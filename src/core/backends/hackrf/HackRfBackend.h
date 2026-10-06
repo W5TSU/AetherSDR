@@ -117,6 +117,9 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     void setPanCenter(const QString& panId, double hz, PanCenterIntent intent) override;
+    // Wheel zoom: steps the sample rate (= span) through 2-20 MHz, restarting
+    // RX around the change. Refused while transmitting.
+    void setPanBandwidth(const QString& panId, double hz) override;
     void setPanFrameRate(const QString& panId, int fps) override;
 
     // VGA (baseband) gain, 0-62dB/2dB steps — the continuous slider. LNA and
@@ -233,6 +236,15 @@ private:
 
     bool m_connected{false};
     QString m_serial;
+
+    // Where the hardware LO sits: the centre of the captured span (the
+    // panadapter). The slice (m_sliceFreqHz) is tuned inside it by the DDC, so
+    // dragging the spectrum moves this and not the slice. On TX the hardware
+    // is retuned to the slice, and back here for RX. See HackRfTuning.h.
+    double m_panCenterHz{100'000'000.0};
+    // Applies the result of a HackRfTuning operation: retunes the hardware and
+    // the DDC, and reports whatever moved.
+    void applyPanSlice(double panHz, double sliceHz, bool panMoved, bool sliceMoved);
 
     // A connect whose hardware is open and whose RX channel is still being
     // built. connectRadio() returns at once; onRxChannelBuilt() finishes it.
