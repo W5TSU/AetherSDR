@@ -244,7 +244,10 @@ private:
     // is retuned to the slice, and back here for RX. See HackRfTuning.h.
     double m_panCenterHz{100'000'000.0};
     // The DISPLAYED span: the sample rate, or below 2 MHz the 2 MS/s capture
-    // decimated for the spectrum. Drag/tune margins follow what is on screen.
+    // decimated for the spectrum. The slice's limits use the CAPTURE
+    // (m_sampleRateHz), not this: a slice off-screen but inside the capture
+    // still has audio, and holding it on-screen fought the GUI's
+    // pointer-anchored zoom.
     double m_spanHz{8'000'000.0};
     // Applies the result of a HackRfTuning operation: retunes the hardware and
     // the DDC, and reports whatever moved.

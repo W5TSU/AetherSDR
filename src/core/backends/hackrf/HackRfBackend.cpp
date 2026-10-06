@@ -508,7 +508,7 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
     // Inside the span only the DDC's NCO moves: no hardware retune, no
     // waterfall jump. Outside it the pan recentres on the slice.
     bool panMoved = false;
-    const PanSlice r = tuneSlice({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz, panMoved);
+    const PanSlice r = tuneSlice({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, panMoved);
     applyPanSlice(r.panHz, r.sliceHz, panMoved, /*sliceMoved=*/true);
 }
 
@@ -609,15 +609,17 @@ void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterInten
     Q_UNUSED(panId);
     if (!m_connected) return;
     if (intent == PanCenterIntent::Range) {
-        // The centre riding along with a zoom: the zoom's anchor, never a
-        // retune. Follow it only as far as the slice stays in view.
-        const PanSlice r = rangePan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz);
+        // The centre riding along with a zoom: the zoom's anchor (Ctrl+wheel keeps
+        // the frequency under the pointer still), never a retune. Followed as
+        // far as the slice stays inside the CAPTURE, which on a narrow zoom is
+        // far wider than the view, so in practice exactly as the GUI asked.
+        const PanSlice r = rangePan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz);
         applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
         return;
     }
     // A drag: move the view, keep the slice unless it would leave the span.
     bool sliceMoved = false;
-    const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, hz, sliceMoved);
+    const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, sliceMoved);
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
 }
 
@@ -663,10 +665,12 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
     m_rxDsp->setZoomDecimation(plan.decimation);
     m_spanHz = span;
 
-    // Zooming never retunes the slice: if it would not fit, the view recentres
-    // on it. The span changed even if the centre did not: always re-report it.
+    // Zooming never retunes the slice: if it would leave the CAPTURE (a rate
+    // change narrowed it), the view recentres on it. Off-screen inside the
+    // capture is fine -- it still has audio -- so a zoom otherwise goes exactly
+    // where the GUI anchored it. The span changed even if the centre did not: always re-report it.
     bool viewMoved = false;
-    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_spanHz, viewMoved);
+    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, viewMoved);
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
     qCInfo(lcHackRf) << "HackRF: span" << m_spanHz / 1e3 << "kHz (rate"
                      << m_sampleRateHz / 1e6 << "MS/s, spectrum decimation" << plan.decimation << ")";
