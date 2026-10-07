@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.4.1] — 2026-10-07
+
+### Hotfix: Linux AppImages for 26.10.4
+
+One fix on top of v26.10.4, no other changes.
+
+- **The Linux AppImages build again (#67).** The 26.10.4 AppImages failed to
+  build, so 26.10.4 shipped without them. The new HackRF Pro detection used
+  a name that only the newest `libhackrf` defines, and the AppImages are
+  built against the older one Ubuntu ships. It now uses the board's numeric
+  id. Nothing changes in how the app behaves: everything in 26.10.4 is in
+  this release.
+
 ## [v26.10.4] — 2026-10-07
 
 ### HackRF: drag, zoom and narrow spans (#65)
