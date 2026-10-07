@@ -561,6 +561,16 @@ void SliceModel::setAnflLevel(int v)
 
 void SliceModel::setAgcMode(const QString& mode)
 {
+    applyAgcMode(mode, false);
+}
+
+void SliceModel::recallAgcMode(const QString& mode)
+{
+    applyAgcMode(mode, true);
+}
+
+void SliceModel::applyAgcMode(const QString& mode, bool recall)
+{
     if (m_externalReceiveAudioReplacement) {
         if (m_externalReceiveAgcMode == mode) {
             return;
@@ -576,7 +586,10 @@ void SliceModel::setAgcMode(const QString& mode)
     m_agcMode = mode;
     sendCommand(QString("slice set %1 agc_mode=%2").arg(m_id).arg(mode));
     emit agcModeChanged(mode);
-    emit agcCommandIssued(m_agcMode, m_agcThreshold);
+    if (recall)
+        emit agcRecallIssued(m_agcMode, m_agcThreshold);
+    else
+        emit agcCommandIssued(m_agcMode, m_agcThreshold);
 }
 
 int SliceModel::receiveAgcThresholdMinimum() const

@@ -4254,6 +4254,14 @@ target_link_libraries(reroute_dead_controls_test PRIVATE
     aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME reroute_dead_controls_test COMMAND reroute_dead_controls_test)
 
+# #6142: a band-stack recall into DIGU/DIGL leaves the HL2's data-mode AGC
+# alone. A real, unconnected Hl2Backend behind RadioModel. Socket-free.
+add_executable(hl2_bandstack_digital_agc_test tests/hl2_bandstack_digital_agc_test.cpp)
+target_include_directories(hl2_bandstack_digital_agc_test PRIVATE src tests)
+target_link_libraries(hl2_bandstack_digital_agc_test PRIVATE
+    aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_bandstack_digital_agc_test COMMAND hl2_bandstack_digital_agc_test)
+
 # #5774: socket-free rigctl `L RF` / `l RF`. An injected backend records the pan
 # RF gain it is handed; the pan is materialised through the seam's geometry
 # signal. Nothing is bound, opened or keyed.
@@ -6434,6 +6442,7 @@ set_tests_properties(phone_cw_acc_availability_test PROPERTIES
 set(AETHER_SETTINGS_CONSUMERS
     hl2_tune_tail_test
     reroute_dead_controls_test
+    hl2_bandstack_digital_agc_test
     shortcut_passthrough_test
     hl2_unkey_hold_test
     noise_floor_auto_adjust_gate_test

@@ -83,6 +83,9 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setCwPitch(int hz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
+    // A recalled AGC mode is dropped while the receiver is in DIGU/DIGL (it
+    // keeps the data mode's AGC off); otherwise it is setSliceAgc().
+    void recallSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     // The impulse noise blanker, run on this host — the HL2 has no firmware DSP
     // to switch on, so this is the same arrangement as the manual notch: the
     // seam verb lands in WDSP here rather than on a wire. The other members of

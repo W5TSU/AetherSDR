@@ -1815,6 +1815,12 @@ void RadioModel::wireBackendReceiverState()
                     [this, s](const QString& mode, int thresholdDb) {
                 if (m_backend) m_backend->setSliceAgc(s->sliceId(), mode, thresholdDb);
             });
+            // A band-stack bookmark replaying a stored AGC mode: the backend
+            // decides whether it overrides the mode's own AGC default.
+            connect(s, &SliceModel::agcRecallIssued, this,
+                    [this, s](const QString& mode, int thresholdDb) {
+                if (m_backend) m_backend->recallSliceAgc(s->sliceId(), mode, thresholdDb);
+            });
             // Receive DSP the radio runs. Same reasoning as AGC above: the
             // applet toggles drive SliceModel, whose Flex wire text a non-Flex
             // backend never sees, so without these the controls move and the
@@ -4541,11 +4547,13 @@ void RadioModel::recallBandStackReceiveDsp(SliceModel* slice,
         return;
     }
     // Under KiwiSDR external receive the AGC setters address the KiwiSDR AGC
-    // (its own dB range), but the bookmark holds the RADIO's AGC, saved from
-    // agcMode()/agcThreshold(). The caller then sends the AGC as wire text.
+    // (its own dB range), but the bookmark holds the RADIO's AGC: only in that
+    // case the caller sends it as wire text. Otherwise the slice setters below
+    // are the one route to the backend; the mode goes as a recall, so a
+    // backend with its own per-mode AGC default can keep it (#6142).
     if (!slice->externalReceiveReplacementActive()) {
         if (!entry.agcMode.isEmpty() && entry.agcMode != slice->agcMode()) {
-            slice->setAgcMode(entry.agcMode);
+            slice->recallAgcMode(entry.agcMode);
         }
         if (entry.agcThreshold != slice->agcThreshold()) {
             slice->setAgcThreshold(entry.agcThreshold);

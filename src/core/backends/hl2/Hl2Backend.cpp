@@ -3127,6 +3127,21 @@ void Hl2Backend::setSliceFilter(int sliceId, int lowHz, int highHz)
     notifyOperatingStateChanged();
 }
 
+// A recalled AGC mode is a stored value, not the operator's choice, so
+// DIGU/DIGL keep the AGC they run (#6142). The slice optimistically shows the
+// stored mode; the echo puts back what the receiver holds. The echo must stay
+// synchronous: the threshold recall that follows reads the slice's mode, and a
+// stale one would clear the held AGC.
+void Hl2Backend::recallSliceAgc(int sliceId, const QString& mode, int thresholdDb)
+{
+    const int ddc = ddcForSlice(sliceId);
+    if (const Receiver* r = rx(ddc); r && isDigitalDataMode(r->mode)) {
+        emitSliceState(ddc);
+        return;
+    }
+    setSliceAgc(sliceId, mode, thresholdDb);
+}
+
 void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
 {
     const int ddc = ddcForSlice(sliceId);

@@ -242,6 +242,13 @@ public:
     // configures that chain. Sent as a pair because a backend configuring a DSP
     // AGC generally needs both to make either meaningful.
     virtual void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) = 0;
+    // A stored AGC mode replayed by a band-stack recall, not an operator edit.
+    // A backend with its own per-mode AGC default (HL2 DIGU/DIGL) may keep its
+    // default and re-echo the slice; every other backend applies it as an edit.
+    virtual void recallSliceAgc(int sliceId, const QString& mode, int thresholdDb)
+    {
+        setSliceAgc(sliceId, mode, thresholdDb);
+    }
     // Move the panadapter's centre — the receiver's WINDOW, not the slice.
     // A backend whose hardware streams a fixed window retunes it; one that
     // owns a DDC moves the NCO. Without this the UI can pan the view locally
