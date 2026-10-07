@@ -4664,7 +4664,7 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
             applyDrive(tunePowerPercent);
             m_rfDriveOwed = true;
         }
-        setTxTestTone(0.0, kTuneCarrierAmplitude);
+        setTxTestTone(0.0, kHl2CarrierAmplitude);
         m_toneFromTune = true;   // set AFTER: setTxTestTone clears the flag
         setKeying(true);
     } else {
