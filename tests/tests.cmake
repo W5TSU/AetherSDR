@@ -6035,6 +6035,24 @@ target_link_libraries(hl2_emergency_stop_test PRIVATE aethercore Qt6::Core Qt6::
 add_test(NAME hl2_emergency_stop_test COMMAND hl2_emergency_stop_test)
 set_tests_properties(hl2_emergency_stop_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+# The Phone and CW ALC bars end at the tick of the value they show (#6228).
+# Rendered offscreen and read back by pixel: filledFraction() cannot tell a
+# left-anchored bar from a right-anchored one.
+add_executable(phone_cw_alc_gauge_fill_test
+    tests/phone_cw_alc_gauge_fill_test.cpp
+    src/gui/PhoneCwApplet.cpp
+    src/gui/DragValuePopup.cpp
+)
+target_include_directories(phone_cw_alc_gauge_fill_test PRIVATE src)
+target_link_libraries(phone_cw_alc_gauge_fill_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets
+)
+set_target_properties(phone_cw_alc_gauge_fill_test PROPERTIES AUTOMOC ON)
+add_test(NAME phone_cw_alc_gauge_fill_test
+         COMMAND phone_cw_alc_gauge_fill_test)
+set_tests_properties(phone_cw_alc_gauge_fill_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
