@@ -10775,6 +10775,10 @@ void RadioModel::onStatusReceived(const QString& object,
             m_licenseFeatures.insert(name, next);
             emit licenseFeaturesChanged();
         }
+        // The radio's licensed status outranks an earlier 50004001 refusal.
+        if (next.enabled && name == DvkModel::kLicenseFeature) {
+            m_dvkModel.clearRefusal();
+        }
         emit infoChanged();
         return;
     }
