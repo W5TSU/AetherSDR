@@ -7,6 +7,7 @@
 #include "models/RadioModel.h"
 
 #include <QCoreApplication>
+#include <QMap>
 #include <QStringList>
 
 #include <cstdio>
@@ -99,6 +100,35 @@ int main(int argc, char* argv[])
                kvs.value("freq") == QStringLiteral("14.225000")
                    && kvs.value("name") == QStringLiteral("\"Solo\"")
                    && kvs.contains("removed") && kvs.value("removed").isEmpty());
+    }
+    {
+        const QStringList names{QStringLiteral("CQ a="), QStringLiteral("CQ ="),
+                                QStringLiteral("CQ a=b"), QStringLiteral("CQ a= b=")};
+        for (const QString& name : names) {
+            const QString body = QStringLiteral("id=1 name=\"%1\" duration=1000").arg(name);
+            const QMap<QString, QString> kvs = CommandParser::parseKVs(body);
+            const QByteArray parsed =
+                QStringLiteral("equals signs inside the quoted name '%1' stay whole").arg(name).toUtf8();
+            report(parsed.constData(),
+                   kvs.value("name") == QStringLiteral("\"%1\"").arg(name)
+                       && kvs.value("duration") == QStringLiteral("1000") && kvs.size() == 3);
+
+            DvkModel model;
+            feed(model, QStringLiteral("S629BA1D4|dvk added %1").arg(body));
+            const QByteArray modelled =
+                QStringLiteral("a DVK status keeps the name '%1' and its duration").arg(name).toUtf8();
+            report(modelled.constData(), nameOf(model, 1) == name && durationOf(model, 1) == 1000);
+        }
+    }
+    {
+        // The one shape the closing rule cannot tell apart: on a malformed line,
+        // a `key="` token with nothing after its quote reads as the close (it is
+        // exactly how a valid name ending in '=' looks). Keys after it survive.
+        const auto kvs = CommandParser::parseKVs(
+            QStringLiteral("name=\"abc label=\" x y\" baz=2"));
+        report("a lone trailing-quote token closes an open value; later keys survive",
+               kvs.value("name") == QStringLiteral("\"abc label=\"")
+                   && kvs.value("baz") == QStringLiteral("2"));
     }
     {
         // Review #6247: an unterminated value must not swallow a later quoted key.
