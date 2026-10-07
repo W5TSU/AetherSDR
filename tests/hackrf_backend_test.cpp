@@ -71,6 +71,8 @@ int main(int argc, char** argv)
     restoredState.filterLowHz = -8'000;
     restoredState.filterHighHz = 8'000;
     restoredState.sampleRateHz = 10'000'000;
+    restoredState.agcMode = QStringLiteral("slow");
+    restoredState.agcThreshold = 40;
     restoredState.extension[QStringLiteral("rfGain")] = QJsonObject{
         {QStringLiteral("vgaGainDb"), 30},
         {QStringLiteral("lnaGainDb"), 24},
@@ -83,6 +85,13 @@ int main(int argc, char** argv)
     check(op.mode == "FM", "restored mode is canonicalized to uppercase");
     check(op.filterLowHz == -8'000 && op.filterHighHz == 8'000, "restored filter round-trips");
     check(op.sampleRateHz == 10'000'000, "restored sample rate round-trips");
+    // AGC runs in WDSP on this host, so the client is the only place the
+    // operator's mode and threshold can live. It was never saved: every
+    // session started on medium/65 whatever had been chosen.
+    check(caps.clientSettingsDomains.testFlag(RadioCapabilities::ClientSettingsDomain::Agc),
+          "declares the AGC settings domain");
+    check(op.agcMode == QStringLiteral("slow"), "restored AGC mode round-trips");
+    check(op.agcThreshold == 40, "restored AGC threshold round-trips");
     const auto gainObj = op.extension.value(QStringLiteral("rfGain")).toObject();
     check(gainObj.value(QStringLiteral("vgaGainDb")).toInt() == 30, "restored VGA gain round-trips");
     check(gainObj.value(QStringLiteral("lnaGainDb")).toInt() == 24, "restored LNA gain round-trips");
@@ -98,6 +107,26 @@ int main(int argc, char** argv)
     check(opAfterEmpty.rfFrequencyHz == 100'000'000.0,
           "an empty restore resets to the 100.0 MHz FM-broadcast default, not the prior session's value");
     check(opAfterEmpty.mode == "WFM", "an empty restore resets mode to the default");
+    check(opAfterEmpty.agcMode == QStringLiteral("med") && opAfterEmpty.agcThreshold == 65,
+          "an empty restore resets AGC to medium / 65");
+
+    // An unknown AGC mode string is ignored, not turned into some other mode.
+    RestoredRadioState oddAgc;
+    oddAgc.agcMode = QStringLiteral("turbo");
+    backend->applyRestoredState(oddAgc);
+    check(backend->currentOperatingState().agcMode == QStringLiteral("med"),
+          "an unknown restored AGC mode keeps the default");
+
+    // The app pushes the saved slice's AGC BEFORE connecting; it was dropped.
+    backend->setSliceAgc(0, QStringLiteral("fast"), 80);
+    check(backend->currentOperatingState().agcMode == QStringLiteral("fast")
+              && backend->currentOperatingState().agcThreshold == 80,
+          "an AGC change before connect is kept");
+    backend->setSliceAgc(0, QStringLiteral("off"), 150);
+    check(backend->currentOperatingState().agcMode == QStringLiteral("off")
+              && backend->currentOperatingState().agcThreshold == 100,
+          "the AGC threshold is clamped to 0..100");
+    backend->applyRestoredState(empty);
 
     // ── Setters before connect are safe no-ops, never crash ────────────
     backend->setSliceFrequency(0, 14'074'000.0);

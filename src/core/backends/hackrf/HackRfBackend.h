@@ -188,6 +188,8 @@ public:
     // off=0, slow=2, fast=4, anything else (including "med" and unknown
     // strings) falls back to WDSP's own medium default of 3.
     static int wdspAgcModeFromString(const QString& mode) noexcept;
+    // One of the AGC modes capabilities() publishes (lower case).
+    static bool isKnownAgcMode(const QString& mode) noexcept;
 
     // Mode-appropriate default RX passband, Hz relative to carrier.
     // Delegates to hl2::defaultPassbandForMode for every name the two
@@ -336,6 +338,10 @@ private:
     HackRfRxDsp* m_rxDsp{nullptr};
 
     // RX demodulator settings (the channel itself lives in m_rxDsp).
+    // The operator's AGC, in the app's terms ("off" | "slow" | "med" | "fast",
+    // threshold 0..100): echoed on the slice and saved (the Agc domain).
+    QString m_agcMode{QStringLiteral("med")};
+    int m_agcThreshold{65};
     int m_agcModeIndex{3};       // WDSP AGC mode; 3 = medium, WDSP's own default
     // 0..100 threshold * 1.0 dB, at the slice default of 65 -- NOT Hl2Backend's
     // 0.6 map. Measured on real hardware (#42): the WBFM discriminator's own

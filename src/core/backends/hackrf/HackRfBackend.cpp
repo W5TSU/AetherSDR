@@ -289,7 +289,10 @@ RadioCapabilities HackRfBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::Passband
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
                             | RadioCapabilities::ClientSettingsDomain::RfGain
-                            | RadioCapabilities::ClientSettingsDomain::Memories;
+                            | RadioCapabilities::ClientSettingsDomain::Memories
+                            // The AGC runs in WDSP on this host: the client is
+                            // the only place its mode and threshold can live.
+                            | RadioCapabilities::ClientSettingsDomain::Agc;
 
     // A free-running crystal (+-20 ppm on a stock HackRF One, ~8.7 kHz at
     // 435 MHz) with no calibration register: correcting it is the client's job,
@@ -322,6 +325,8 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     m_vgaGainDb = 20;
     m_lnaGainDb = 16;
     m_ampEnabled = false;
+    m_agcMode = QStringLiteral("med");
+    m_agcThreshold = 65;
 
     if (state.rfFrequencyHz > 0) {
         m_sliceFreqHz = state.rfFrequencyHz;
@@ -336,6 +341,14 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     if (state.sampleRateHz > 0) {
         m_sampleRateHz = state.sampleRateHz;
     }
+    // The Agc domain. -1 is "not stored" (0 is a real threshold).
+    const QString agc = state.agcMode.trimmed().toLower();
+    if (isKnownAgcMode(agc))
+        m_agcMode = agc;
+    if (state.agcThreshold >= 0)
+        m_agcThreshold = std::clamp(state.agcThreshold, 0, 100);
+    m_agcModeIndex = wdspAgcModeFromString(m_agcMode);
+    m_agcMaxGainDb = m_agcThreshold * 1.0;
     const QJsonValue gainVal = state.extension.value(QStringLiteral("rfGain"));
     if (gainVal.isObject()) {
         const QJsonObject obj = gainVal.toObject();
@@ -356,6 +369,8 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
     state.filterLowHz = m_sliceFilterLow;
     state.filterHighHz = m_sliceFilterHigh;
     state.sampleRateHz = static_cast<int>(m_sampleRateHz);
+    state.agcMode = m_agcMode;
+    state.agcThreshold = m_agcThreshold;
     state.extensionSchemaVersion = 1;
     state.extension[QStringLiteral("rfGain")] = QJsonObject{
         {QStringLiteral("vgaGainDb"), m_vgaGainDb},
@@ -675,14 +690,35 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
 void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
 {
     Q_UNUSED(sliceId);
-    if (!m_connected) return;
-    m_agcModeIndex = wdspAgcModeFromString(mode);
+    // Kept even before connect: the app pushes the saved slice's AGC ahead of
+    // connectRadio(), and that used to be dropped here.
+    const QString m = mode.trimmed().toLower();
+    if (isKnownAgcMode(m))
+        m_agcMode = m;
+    else
+        qCWarning(lcHackRf) << "HackRF: ignoring unknown AGC mode" << mode << "- keeping" << m_agcMode;
+    m_agcThreshold = std::clamp(thresholdDb, 0, 100);
+    m_agcModeIndex = wdspAgcModeFromString(m_agcMode);
     // 0..100 -> 0..100 dB ceiling — see the m_agcMaxGainDb header comment on
     // why this is 1:1 rather than Hl2Backend's *0.6 map (measured on real
     // hardware: WBFM's raw discriminator output needs far more headroom than
     // SSB/AM's mixer output does before it clips).
-    m_agcMaxGainDb = std::clamp(thresholdDb, 0, 100) * 1.0;
+    m_agcMaxGainDb = m_agcThreshold * 1.0;
     m_rxDsp->applySettings(rxSettings());
+    if (!m_connected) return;
+    // Echo what the demodulator now runs, so the AGC control shows it, and
+    // let RadioModel save it.
+    SliceDelta delta;
+    delta.agcMode = m_agcMode;
+    delta.agcThreshold = m_agcThreshold;
+    emit sliceChanged(0, delta);
+    emit operatingStateChanged();
+}
+
+bool HackRfBackend::isKnownAgcMode(const QString& mode) noexcept
+{
+    return mode == QLatin1String("off") || mode == QLatin1String("slow")
+        || mode == QLatin1String("med") || mode == QLatin1String("fast");
 }
 
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
@@ -1135,6 +1171,8 @@ void HackRfBackend::emitInitialState()
     sDelta.mode = m_sliceMode;
     sDelta.filterLow = m_sliceFilterLow;
     sDelta.filterHigh = m_sliceFilterHigh;
+    sDelta.agcMode = m_agcMode;          // what the demodulator runs, so the
+    sDelta.agcThreshold = m_agcThreshold;   // AGC control shows it from connect
     sDelta.modeList = supportedModes();
     sDelta.active = true;
     // HackRF's one slice is also its transmit slice. Without this RadioModel
