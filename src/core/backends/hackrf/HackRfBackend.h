@@ -4,6 +4,7 @@
 #include "core/backends/hackrf/HackRfDdc.h"
 #include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
+#include "core/backends/hackrf/HackRfTuning.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
 #include "core/backends/hl2/Hl2Spectrum.h"
 #include "core/backends/IRadioBackend.h"
@@ -249,6 +250,9 @@ private:
     // still has audio, and holding it on-screen fought the GUI's
     // pointer-anchored zoom.
     double m_spanHz{8'000'000.0};
+    // Which HackRF is connected: the Pro may only use some sample rates
+    // (HackRfTuning.h, hardwareRatesHz). Set at connect.
+    HackRfBoard m_board{HackRfBoard::One};
     // Applies the result of a HackRfTuning operation: retunes the hardware and
     // the DDC, and reports whatever moved.
     void applyPanSlice(double panHz, double sliceHz, bool panMoved, bool sliceMoved);

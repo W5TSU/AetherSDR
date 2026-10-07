@@ -76,6 +76,28 @@ int main()
         check(passOut.size() == n / static_cast<std::size_t>(dec), "exact output count");
         check(std::fabs(pass) < 0.5, "a tone inside the zoomed view passes at ~0 dB");
         check(rej < -60.0, "a strong tone outside the view does not fold in (> 60 dB down)");
+
+        // Every stage halves the rate, and each one folds its own band edge
+        // onto the final view: a tone just inside stage j's Nyquist lands
+        // 0.2 * view from the centre if that stage lets it through. The early
+        // stages run shorter filters (they only protect the final view), so
+        // each one is checked here, not just the last.
+        double worstStage = -300.0;
+        for (int j = 0, r = 1; r < dec; ++j, r *= 2) {
+            const double stageRate = rate / r;
+            const double t = stageRate / 2.0 - 0.2 * view;          // folds to -0.2 * view... then onward
+            d.reset();
+            const auto out = d.process(tone(t, rate, n));
+            // Where it would land in the output, after every fold.
+            double f = std::fmod(t, outRate);
+            if (f > outRate / 2) f -= outRate;
+            if (f < -outRate / 2) f += outRate;
+            worstStage = std::max(worstStage, powerAtDb(out, f, outRate));
+        }
+        if (dec > 2) {
+            std::printf("      worst early-stage fold %.1f dB\n", worstStage);
+            check(worstStage < -60.0, "a tone folded by an early stage stays out of the view (> 60 dB down)");
+        }
     }
 
     {

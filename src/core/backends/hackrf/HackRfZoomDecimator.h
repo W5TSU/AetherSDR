@@ -33,13 +33,33 @@ public:
     std::vector<std::complex<float>> process(const std::complex<float>* in, std::size_t n);
 
 private:
+    // Each stage keeps its inputs not yet consumed, split into I and Q (it
+    // starts with taps-1 zeros: the filter's empty history). Output m reads
+    // pending[2m .. 2m+taps-1]. Split by phase, a half-band output is a short
+    // FIR over the even inputs plus the centre tap on the odd ones, both
+    // contiguous, so the inner loops vectorize: on a laptop's low-power core
+    // the scalar complex loop alone took 38-50% of the core and the DSP thread
+    // fell behind the moment the operator zoomed in.
+    // Only the LAST stage has to be sharp. An earlier stage only protects the
+    // final view, which is a small fraction of its rate, so its transition
+    // band is wide and a short filter does it: 55 taps for the last stage,
+    // 23 for the one before, 15 for the rest (each 4k+3, so the centre is odd
+    // and every even-offset tap but the centre is zero). 11 taps measured only
+    // 54 dB against a fold; the test requires 60.
     struct Stage {
-        std::vector<std::complex<float>> history;   // last taps-1 inputs
-        bool phase = false;                          // emit on every second input
+        std::vector<float> re, im;
+        std::vector<float> pairTaps;   // taps[mid+k] for odd k = 1, 3, ..
+        float centreTap = 0.5f;
+        int taps = 55;
     };
-    std::vector<float> m_taps;
+    void runStage(Stage& s, const float* inRe, const float* inIm, std::size_t n,
+                  std::vector<float>& outRe, std::vector<float>& outIm);
+    static Stage makeStage(int taps);
     std::vector<Stage> m_stages;
     int m_decimation{1};
+    // Scratch, reused across calls.
+    std::vector<float> m_evRe, m_evIm, m_odRe, m_odIm;
+    std::vector<float> m_aRe, m_aIm, m_bRe, m_bIm;
 };
 
 } // namespace AetherSDR::hackrf

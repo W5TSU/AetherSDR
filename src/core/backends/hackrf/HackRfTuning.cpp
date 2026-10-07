@@ -80,13 +80,23 @@ double chooseSampleRate(const std::vector<double>& rates, double currentHz, doub
     return current;
 }
 
-const std::vector<double>& zoomSpansHz()
+const std::vector<double>& hardwareRatesHz(HackRfBoard board)
 {
-    static const std::vector<double> spans = {
-        62'500.0, 125'000.0, 250'000.0, 500'000.0, 1'000'000.0,             // decimated
-        2'000'000.0, 4'000'000.0, 8'000'000.0, 10'000'000.0, 12'500'000.0,   // hardware
-        16'000'000.0, 20'000'000.0};
-    return spans;
+    static const std::vector<double> one = {2'000'000.0, 4'000'000.0, 8'000'000.0, 10'000'000.0,
+                                            12'500'000.0, 16'000'000.0, 20'000'000.0};
+    static const std::vector<double> pro = {8'000'000.0, 16'000'000.0};
+    return board == HackRfBoard::Pro ? pro : one;
+}
+
+const std::vector<double>& zoomSpansHz(HackRfBoard board)
+{
+    static const std::vector<double> one = {
+        62'500.0, 125'000.0, 250'000.0, 500'000.0, 1'000'000.0, 2'000'000.0, 4'000'000.0,   // decimated
+        8'000'000.0, 10'000'000.0, 12'500'000.0, 16'000'000.0, 20'000'000.0};              // hardware
+    static const std::vector<double> pro = {
+        62'500.0, 125'000.0, 250'000.0, 500'000.0, 1'000'000.0, 2'000'000.0, 4'000'000.0,
+        8'000'000.0, 16'000'000.0};
+    return board == HackRfBoard::Pro ? pro : one;
 }
 
 ZoomPlan planForSpan(double spanHz)

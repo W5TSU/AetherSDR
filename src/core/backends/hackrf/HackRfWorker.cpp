@@ -59,9 +59,24 @@ bool HackRfWorker::open(const QString& serial)
     }
 
     m_device = dev;
+    readBoardId();
     qCDebug(lcHackRf) << "HackRfWorker: opened device"
                          << (serial.isEmpty() ? QStringLiteral("(first found)") : serial);
     return true;
+}
+
+bool HackRfWorker::isPro() const
+{
+    return m_boardId == BOARD_ID_PRALINE;
+}
+
+void HackRfWorker::readBoardId()
+{
+    // Called with the library lock held, right after a successful open.
+    uint8_t id = BOARD_ID_UNDETECTED;
+    const int rc = hackrf_board_id_read(m_device, &id);
+    m_boardId = rc == HACKRF_SUCCESS ? id : BOARD_ID_UNDETECTED;
+    qCInfo(lcHackRf) << "HackRfWorker: board" << hackrf_board_id_name(static_cast<hackrf_board_id>(m_boardId));
 }
 
 bool HackRfWorker::openByIndex(int index)
@@ -106,6 +121,7 @@ bool HackRfWorker::openByIndex(int index)
     }
 
     m_device = dev;
+    readBoardId();
     qCDebug(lcHackRf) << "HackRfWorker: opened device at index" << index;
     return true;
 }
@@ -128,6 +144,7 @@ void HackRfWorker::close()
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_close failed:" << errName(rc);
     }
     m_device = nullptr;
+    m_boardId = 0xFF;
     hackrf_exit();
 }
 

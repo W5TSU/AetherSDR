@@ -49,11 +49,24 @@ PanSlice rangePan(PanSlice current, double spanHz, double newPanHz);
 // restored value) snaps to the nearest supported one. `rates` ascending.
 double chooseSampleRate(const std::vector<double>& rates, double currentHz, double requestedHz);
 
+// Which HackRF: the Pro ("Praline", libhackrf BOARD_ID_PRALINE) needs its own
+// rate list, below.
+enum class HackRfBoard { One, Pro };
+
+// The hardware sample rates a connect may restore and the zoom may use.
+// HackRF Pro: only 8 and 16 MS/s. Measured on firmware 2026.01.3, at 10, 12.5
+// and 20 MS/s the whole spectrum lands 1.75-2 MHz off the tuned frequency (the
+// direction flips with the frequency; the Pro offset-tunes and shifts back in
+// its FPGA, and at those rates the two do not cancel), so the slice heard a
+// different frequency than the display showed. 8 and 16 MS/s put every FM
+// station on its channel. Ascending.
+const std::vector<double>& hardwareRatesHz(HackRfBoard board);
+
 // The displayed spans the wheel zoom walks: 62.5 kHz .. 4 MHz are the 8 MS/s
-// capture decimated for the spectrum (HackRfZoomDecimator), 8 .. 20 MHz are
-// hardware sample rates. Not the 2 and 4 MS/s rates: they measured the worst
-// alias rejection. Ascending.
-const std::vector<double>& zoomSpansHz();
+// capture decimated for the spectrum (HackRfZoomDecimator), 8 MHz and up are
+// hardware sample rates (hardwareRatesHz). Not the 2 and 4 MS/s rates: they
+// measured the worst alias rejection. Ascending.
+const std::vector<double>& zoomSpansHz(HackRfBoard board = HackRfBoard::One);
 
 // How to show a span: the hardware sample rate, and the spectrum's decimation
 // of it (1 for the hardware spans).

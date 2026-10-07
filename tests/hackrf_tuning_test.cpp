@@ -11,6 +11,7 @@
 //     rounding back to the current one (which would make the wheel inert).
 #include "core/backends/hackrf/HackRfTuning.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -136,6 +137,28 @@ int main()
               "62.5 kHz: 8 MS/s decimated by 128");
         const ZoomPlan ten = planForSpan(10e6);
         check(ten.sampleRateHz == 10e6 && ten.decimation == 1, "10 MHz: rate 10 MS/s, no decimation");
+    }
+
+    // ---- HackRF Pro: only the hardware rates its firmware tunes correctly ----
+    // Measured on a HackRF Pro (firmware 2026.01.3): at 10, 12.5 and 20 MS/s
+    // the whole spectrum lands 1.75-2 MHz off the tuned frequency (direction
+    // depending on the frequency), so a slice "de-tuned" with the display
+    // unchanged. 8 and 16 MS/s match the FM channel grid exactly.
+    {
+        const auto& pro = zoomSpansHz(HackRfBoard::Pro);
+        check(pro.front() == 62'500.0 && pro.back() == 16e6, "Pro zoom spans run 62.5 kHz .. 16 MHz");
+        check(std::find(pro.begin(), pro.end(), 10e6) == pro.end()
+                  && std::find(pro.begin(), pro.end(), 12.5e6) == pro.end()
+                  && std::find(pro.begin(), pro.end(), 20e6) == pro.end(),
+              "Pro zoom never uses the 10, 12.5 or 20 MS/s rates");
+        check(chooseSampleRate(pro, 8e6, 12e6) == 16e6, "Pro: zoom out from 8 MHz steps to 16 MHz");
+        check(chooseSampleRate(pro, 16e6, 24e6) == 16e6, "Pro: 16 MHz is the widest");
+        check(chooseSampleRate(pro, 16e6, 13e6) == 8e6, "Pro: zoom in from 16 MHz steps to 8 MHz");
+        const auto& rates = hardwareRatesHz(HackRfBoard::Pro);
+        check(rates.size() == 2 && rates[0] == 8e6 && rates[1] == 16e6, "Pro hardware rates are 8 and 16 MS/s");
+        check(chooseSampleRate(rates, 20e6, 20e6) == 16e6, "Pro: a restored 20 MS/s snaps to 16");
+        check(zoomSpansHz(HackRfBoard::One).back() == 20e6, "HackRF One keeps the 20 MHz span");
+        check(hardwareRatesHz(HackRfBoard::One).size() == 7, "HackRF One keeps all seven hardware rates");
     }
 
     std::printf("%s\n", g_failed == 0 ? "hackrf_tuning_test: OK" : "hackrf_tuning_test: FAILED");

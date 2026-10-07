@@ -1,7 +1,7 @@
 # HackRF — Operator Notes
 
 AetherSDR drives a HackRF One or HackRF Pro over USB through `libhackrf`:
-one panadapter (zoom 62.5 kHz – 20 MHz with Ctrl+wheel), one slice
+one panadapter (zoom 62.5 kHz – 20 MHz with Ctrl+wheel; 16 MHz on a Pro), one slice
 demodulated on the host (WDSP), and transmit (SSB, CW, TUNE) with TX drive
 and frequency calibration in Radio Setup.
 
@@ -113,3 +113,24 @@ AetherSDR works around it in two ways:
   which measured worst.
 
 Updating to release firmware is the first thing to try if you still hear it.
+On a HackRF Pro it does not change this: the Pro's firmware sets the analog
+filter from the sample rate by itself and ignores the requested bandwidth.
+
+## Known limitation: HackRF Pro sample rates
+
+On a HackRF Pro (firmware 2026.01.3) we measured the whole spectrum landing
+**1.75–2 MHz off the tuned frequency at 10, 12.5 and 20 MS/s**. The direction
+depends on the frequency. The display still shows the frequency you tuned,
+but the station you hear is somewhere else, so the radio sounds de-tuned
+when you zoom out past 8 MHz. At 8 and 16 MS/s every FM station sits exactly
+on its channel.
+
+The Pro tunes its hardware off the requested frequency and shifts the
+spectrum back in its FPGA. At those three rates the two evidently don't
+cancel.
+
+So on a HackRF Pro, AetherSDR only uses the **8 and 16 MS/s** hardware rates:
+- zoom spans from 62.5 kHz to 8 MHz come from the 8 MS/s capture;
+- the widest view is 16 MHz, not 20.
+
+A HackRF One keeps every rate up to 20 MS/s.

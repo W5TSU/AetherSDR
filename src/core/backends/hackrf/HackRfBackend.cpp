@@ -24,10 +24,6 @@ constexpr const char* kPanId = "0xh1000000";
 // choice for the same "USB SDR wideband capture" category of source; twice
 // Hl2RxDsp's default (1024) since HL2's span is narrower to begin with.
 constexpr int kSpectrumFftSize = 2048;
-// hackrf_set_sample_rate accepts 2-20 MHz continuously; these are the steps the
-// wheel zoom walks (setPanBandwidth) and the list the capabilities publish.
-const std::vector<double> kSampleRatesHz = {2'000'000.0, 4'000'000.0, 8'000'000.0, 10'000'000.0,
-                                            12'500'000.0, 16'000'000.0, 20'000'000.0};
 
 // RX audio (WDSP RXA channel) constants — see the class comment.
 //
@@ -337,11 +333,15 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     if (m_freqCalPpb != 0)
         qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
 
+    // A HackRF Pro may only use the sample rates its firmware tunes correctly.
+    m_board = m_worker->isPro() ? HackRfBoard::Pro : HackRfBoard::One;
+
     // A restored rate outside the zoom steps snaps to the nearest one, and each
     // session starts with the panadapter centred on the slice. A restored 2 or
     // 4 MS/s becomes that span shown from the 8 MS/s capture (planForSpan).
     {
-        const ZoomPlan plan = planForSpan(chooseSampleRate(kSampleRatesHz, m_sampleRateHz, m_sampleRateHz));
+        const auto& rates = hardwareRatesHz(m_board);
+        const ZoomPlan plan = planForSpan(chooseSampleRate(rates, m_sampleRateHz, m_sampleRateHz));
         m_spanHz = plan.sampleRateHz / plan.decimation;
         m_sampleRateHz = plan.sampleRateHz;
         m_rxDsp->setZoomDecimation(plan.decimation);
@@ -631,7 +631,7 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
 {
     Q_UNUSED(panId);
     if (!m_connected) return;
-    const double span = chooseSampleRate(zoomSpansHz(), m_spanHz, hz);
+    const double span = chooseSampleRate(zoomSpansHz(m_board), m_spanHz, hz);
     const ZoomPlan plan = planForSpan(span);
     auto reassert = [this] {
         // The pan is re-told the real span so the zoom control snaps back to it.
@@ -1040,7 +1040,8 @@ void HackRfBackend::emitInitialState()
     // The zoom range, in MHz of span: 62.5 kHz (decimated) to 20 MHz (the top
     // sample rate). (It said 1 to 6000, the TUNING range, which no zoom could
     // honour.)
-    emit panBandwidthLimitsChanged(panId, zoomSpansHz().front() / 1e6, zoomSpansHz().back() / 1e6);
+    emit panBandwidthLimitsChanged(panId, zoomSpansHz(m_board).front() / 1e6,
+                                   zoomSpansHz(m_board).back() / 1e6);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);
     emit panRfGainChanged(panId, m_vgaGainDb);

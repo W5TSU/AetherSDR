@@ -72,6 +72,12 @@ public:
     bool openByIndex(int index);
     void close();
     bool isOpen() const { return m_device != nullptr; }
+    // libhackrf's board id (hackrf_board_id_read), read once at open;
+    // BOARD_ID_UNDETECTED (0xFF) when closed or unreadable.
+    int boardId() const { return m_boardId; }
+    // A HackRF Pro (BOARD_ID_PRALINE). Kept here so libhackrf's header stays
+    // out of the backend.
+    bool isPro() const;
 
     // Frequency/sample-rate/gain may be set before OR during streaming —
     // HackRF's firmware supports live retuning, unlike the RTL2832U tuner
@@ -134,6 +140,8 @@ private:
     int handleTxTransfer(hackrf_transfer* transfer);
 
     hackrf_device* m_device{nullptr};
+    int m_boardId{0xFF};
+    void readBoardId();
     std::atomic<bool> m_rxStreaming{false};
     std::atomic<bool> m_txStreaming{false};
 
