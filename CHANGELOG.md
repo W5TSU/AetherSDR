@@ -8,6 +8,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.4] — 2026-10-07
+
+### HackRF: drag, zoom and narrow spans (#65)
+
+Tuning a HackRF on the panadapter now works the way it does on the other
+radios.
+
+- **Drag the spectrum** to look around: the view moves and your frequency
+  stays put. Click inside the view to tune; tune outside it, and the view
+  follows you.
+- **Ctrl + scroll wheel zooms**, from **62.5 kHz** wide (enough to watch a
+  satellite's FM carrier drift) out to 20 MHz. Zoom centres on the mouse
+  pointer and never changes your frequency. The plain wheel still tunes.
+- **Narrow spans are clean.** Views narrower than 8 MHz are cut from the
+  capture in software, and strong signals outside the view don't leak in as
+  false ones.
+
+### HackRF Pro: fixes for two hardware quirks
+
+Both were measured on a HackRF Pro; a HackRF One isn't affected.
+
+- **Audio no longer fades when you drag or zoom.** The Pro lets strong
+  stations from just outside its capture leak into the outer part of it, and
+  its analog filter can't be narrowed to stop them. That buried a weak signal
+  near the edge, and the AGC turned it down. AetherSDR now keeps your
+  frequency near the middle of the capture, where rejection is best, and
+  moves the view to follow it.
+- **Zooming out no longer de-tunes the radio.** At 10, 12.5 and 20 MS/s the
+  Pro's firmware (2026.01.3) puts the whole spectrum about 2 MHz away from
+  where it should be, so you heard a different frequency than the display
+  showed. On a Pro, AetherSDR now uses only the sample rates that tune
+  correctly: the widest view is **16 MHz**.
+
+### HackRF: smooth audio when zoomed in on laptops
+
+Zooming in used to make the audio break up on laptops whose processors mix
+fast and low-power cores. The zoom filter is now about three times cheaper,
+with identical output.
+
+### Documentation
+
+- New [`docs/HACKRF.md`](docs/HACKRF.md): how to check and update your
+  HackRF's firmware (HackRF One and HackRF Pro), recovering a HackRF after a
+  failed update, and the HackRF Pro limitations above.
+- The README now lists the HackRF.
+
 ## [v26.10.3] — 2026-10-03
 
 ### Fixed: Windows crash when connecting a radio (#63)
