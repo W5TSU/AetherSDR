@@ -200,6 +200,11 @@ public:
     // The modes the VFO offers (published on every SliceDelta).
     static QStringList supportedModes();
 
+    // Whether a mode can be transmitted (the rest are receiveOnlyModes).
+    static bool canTransmitMode(const QString& mode);
+    // The transmit modulator's configuration for a mode, from `base` (rates).
+    static HackRfTxDsp::Config txConfigFor(const QString& mode, HackRfTxDsp::Config base);
+
     // CW's beat-frequency offset: the receiver's zero sits this far below the
     // dial, so a carrier on the dial is heard at the pitch. +pitch for CW/CWU,
     // -pitch for CWR/CWL, 0 in every other mode.

@@ -4,6 +4,7 @@
 #include "core/backends/hackrf/HackRfWorker.h"
 #include "core/backends/hl2/Hl2FreqCal.h"
 #include "core/backends/hl2/Hl2ModeTable.h"
+#include "core/backends/hl2/Hl2TxLevelPolicy.h"
 #include "core/RadioSettingsScope.h"
 
 #include <QJsonObject>
@@ -89,6 +90,40 @@ QStringList HackRfBackend::supportedModes()
             QStringLiteral("AM"), QStringLiteral("SAM"), QStringLiteral("DSB"), QStringLiteral("FM"),
             QStringLiteral("FMN"), QStringLiteral("DFM"), QStringLiteral("WFM"), QStringLiteral("DIGU"),
             QStringLiteral("DIGL"), QStringLiteral("RTTY")};
+}
+
+bool HackRfBackend::canTransmitMode(const QString& mode)
+{
+    // Everything the VFO offers but broadcast WFM: 75 kHz-deviation FM is not
+    // an amateur transmit mode. CW goes through HackRfCwTx, the rest through
+    // HackRfTxDsp (hackrf_tx_modes_test).
+    const QString u = mode.trimmed().toUpper();
+    return u != QLatin1String("WFM") && u != QLatin1String("WBFM");
+}
+
+HackRfTxDsp::Config HackRfBackend::txConfigFor(const QString& mode, HackRfTxDsp::Config base)
+{
+    using M = HackRfTxDsp::Config::Modulation;
+    const QString u = mode.trimmed().toUpper();
+    if (u == QLatin1String("USB") || u == QLatin1String("DIGU") || u == QLatin1String("RTTY"))
+        base.modulation = M::Usb;
+    else if (u == QLatin1String("LSB") || u == QLatin1String("DIGL"))
+        base.modulation = M::Lsb;
+    else if (u == QLatin1String("AM") || u == QLatin1String("SAM"))
+        base.modulation = M::Am;
+    else if (u == QLatin1String("DSB"))
+        base.modulation = M::Dsb;
+    else
+        base.modulation = M::Fm;
+    // FMN is narrow FM: half the deviation.
+    base.maxDeviationHz = u == QLatin1String("FMN") ? 2'500.0 : 5'000.0;
+    // The HL2's transmit passband policy, so the two radios agree.
+    const QByteArray name = u.toUtf8();
+    const auto [lo, hi] = hl2::defaultTxPassbandForModeName(
+        std::string_view(name.constData(), static_cast<std::size_t>(name.size())));
+    base.filterLowHz = lo;
+    base.filterHighHz = hi;
+    return base;
 }
 
 double HackRfBackend::cwBfoHz(const QString& mode, int pitchHz) noexcept
@@ -209,16 +244,17 @@ RadioCapabilities HackRfBackend::capabilities() const
     c.model = QStringLiteral("HackRF");
     c.manufacturer = QStringLiteral("Great Scott Gadgets");
 
-    // TX — full RX+TX (design doc v1), FM/CW only. receiveOnlyModes gates
-    // the other demodulatable-but-not-transmittable modes; the engine TX
-    // guard (RFC §6) is what actually enforces it.
+    // TX — every mode but broadcast WFM: SSB (USB/LSB/DIGU/DIGL/RTTY), AM,
+    // DSB and FM through HackRfTxDsp, CW through HackRfCwTx. receiveOnlyModes
+    // is what the engine TX guard (RFC §6) enforces.
     c.canTransmit = true;
     c.txPowerMaxWatts = 0.015;  // ~15 dBm typical max, no PA — hackrf.readthedocs.io
     c.hostModulates = true;         // WDSP TXA on this host, once wired — see the class comment
     c.takesTxAudioOverSeam = true;  // audio reaches this backend via submitTxAudio, not DAX/VITA-49
     c.hasRadioPttReadback = false;  // no readback plane, matches HL2 — setKeying's command edge is the only edge
-    c.receiveOnlyModes = {QStringLiteral("AM"), QStringLiteral("SAM"), QStringLiteral("WFM"),
-                          QStringLiteral("USB"), QStringLiteral("LSB")};
+    for (const QString& m : supportedModes())
+        if (!canTransmitMode(m))
+            c.receiveOnlyModes.append(m);
     c.agcModes = {QStringLiteral("off"), QStringLiteral("slow"),
                   QStringLiteral("med"), QStringLiteral("fast")};
     c.alcMeterUnit = QStringLiteral("dBFS");
@@ -474,7 +510,7 @@ void HackRfBackend::completeConnect()
 {
     HackRfTxDsp::Config txCfg;
     txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
-    m_txDsp->configure(txCfg);
+    m_txDsp->configure(txConfigFor(m_sliceMode, txCfg));
     // The RF Power slider's drive. RadioModel also pushes it on connect, but
     // the value it last set is applied here so the first key-down never runs
     // at libhackrf's default TX gain.
@@ -609,6 +645,8 @@ void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
     // not only when the mode actually changed.
     m_rxDsp->ddc().setSliceFrequencyHz(ddcSliceHz());   // the CW BFO follows the mode
     m_rxDsp->applySettings(rxSettings());   // mode, THEN filter, on the DSP thread
+    // The transmit modulator follows the mode too (SSB, AM, DSB or FM).
+    m_txDsp->configure(txConfigFor(m_sliceMode, m_txDsp->config()));
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -839,11 +877,14 @@ void HackRfBackend::setTune(bool on, int tunePowerPercent)
 void HackRfBackend::feedTuneCarrier()
 {
     if (!m_tuning || !m_keyed) return;
-    const int rate = m_txDsp->config().audioSampleRateHz;
-    const std::vector<float> silence(static_cast<std::size_t>(std::max(1, rate / 50)), 0.0f);  // 20 ms
+    // A plain full-scale carrier, at the output rate. Not silence through the
+    // modulator, which is what this used to be: that is a carrier only in FM.
+    // In USB, LSB or DSB silence transmits nothing, and in AM half power.
+    const QVector<std::complex<float>> carrier(
+        static_cast<qsizetype>(std::max(1.0, m_sampleRateHz / 50.0)), {1.0f, 0.0f});  // 20 ms
     for (int guard = 0; guard < 10
          && shouldFeedTuneCarrier(m_worker->txQueueDepth(), m_sampleRateHz, 100); ++guard) {
-        m_txDsp->processAudioBlock(silence);
+        m_worker->submitTxIq(carrier);
     }
 }
 

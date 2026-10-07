@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <utility>
 
 using namespace AetherSDR;
@@ -55,13 +56,13 @@ int main(int argc, char** argv)
     check(caps.extensionNamespaces.contains(QStringLiteral("hackrf")),
           "declares the hackrf extension namespace (for LNA gain)");
 
-    // FM/CW are transmittable; the modes explicitly out of TX scope per the
-    // design doc are NOT (SSB, AM-family, WFM).
-    check(!caps.receiveOnlyModes.contains(QStringLiteral("FM")), "FM is transmittable");
-    check(!caps.receiveOnlyModes.contains(QStringLiteral("CW")), "CW is transmittable");
-    check(caps.receiveOnlyModes.contains(QStringLiteral("USB")), "USB is receive-only in v1");
-    check(caps.receiveOnlyModes.contains(QStringLiteral("LSB")), "LSB is receive-only in v1");
-    check(caps.receiveOnlyModes.contains(QStringLiteral("WFM")), "WFM is receive-only in v1");
+    // Every mode transmits but broadcast WFM. (v1 was FM/CW only, with SSB
+    // and AM receive-only; hackrf_tx_modes_test pins each modulation.)
+    for (const char* m : {"FM", "FMN", "DFM", "CW", "CWR", "USB", "LSB", "DIGU", "DIGL",
+                          "RTTY", "AM", "SAM", "DSB"})
+        check(!caps.receiveOnlyModes.contains(QString::fromLatin1(m)),
+              (std::string(m) + " is transmittable").c_str());
+    check(caps.receiveOnlyModes == QStringList{QStringLiteral("WFM")}, "WFM is the only receive-only mode");
 
     // ── applyRestoredState / currentOperatingState round trip ──────────
     RestoredRadioState restoredState;

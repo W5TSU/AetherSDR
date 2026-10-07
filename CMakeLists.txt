@@ -2608,7 +2608,9 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfCwTx.cpp
         src/core/backends/hackrf/HackRfCwTx.h
         src/core/backends/hackrf/HackRfZoomDecimator.cpp
+        src/core/backends/hackrf/HackRfTxInterpolator.cpp
         src/core/backends/hackrf/HackRfZoomDecimator.h
+        src/core/backends/hackrf/HackRfTxInterpolator.h
         src/core/backends/hackrf/HackRfTuning.cpp
         src/core/backends/hackrf/HackRfTuning.h
         src/core/backends/hackrf/HackRfRxDsp.cpp
