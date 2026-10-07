@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.3
+## Current cycle: post-v26.10.4
 
 ### In flight
 
@@ -192,7 +192,11 @@ Highlights from the last 30 days — full list in
   receive processing on its own thread, working PTT and TUNE, TX drive from
   RF Power with the amp off on transmit, frequency calibration, and an LNA
   control (v26.10.1); and timestamp-accurate, click-free CW transmit with
-  break-in (v26.10.2). Driving goal: FM amateur-satellite work. Fork-only.
+  break-in (v26.10.2); then drag and Ctrl+wheel zoom from 62.5 kHz with the
+  slice kept apart from the view, plus fixes for two HackRF Pro hardware
+  quirks: stations folding in near the capture edge, and three sample rates
+  its firmware mis-tunes (v26.10.4). Driving goal: FM amateur-satellite work.
+  Fork-only.
 - **The workspace canvas** — pans and applets become freely placed, resizable,
   layered items on a canvas that can span several top-level windows, with named
   workspaces, full-recall switching, radio-profile bindings and an Edit Layout
