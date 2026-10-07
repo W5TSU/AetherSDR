@@ -2180,6 +2180,38 @@ target_include_directories(dvk_wav_upload_test PRIVATE src)
 target_link_libraries(dvk_wav_upload_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME dvk_wav_upload_test COMMAND dvk_wav_upload_test)
 
+# #6244 — imports become the 24 kHz mono 16-bit PCM a DVK slot plays at the
+# right pitch and length, from any common WAV encoding and chunk layout.
+add_executable(dvk_wav_converter_test
+    tests/dvk_wav_converter_test.cpp
+)
+target_include_directories(dvk_wav_converter_test PRIVATE src)
+target_link_libraries(dvk_wav_converter_test PRIVATE aethercore Qt6::Core)
+add_test(NAME dvk_wav_converter_test COMMAND dvk_wav_converter_test)
+
+# #6244 — DvkModel against the SmartSDR API wiki and fw 4.2.20 status lines:
+# quoted names with spaces, stop verbs without id, clear + default name, the
+# 50004001 license signal, enabled=0.
+add_executable(dvk_model_status_test
+    tests/dvk_model_status_test.cpp
+)
+target_include_directories(dvk_model_status_test PRIVATE src)
+target_link_libraries(dvk_model_status_test PRIVATE aethercore Qt6::Core)
+add_test(NAME dvk_model_status_test COMMAND dvk_model_status_test)
+
+# #6244 review — the panel admits one DVK operation at a time from the moment a
+# start is sent (not from the radio's echo) and none during a WAV transfer;
+# STOP reaches a start still awaiting its echo; PLAY and F-keys key TX.
+add_executable(dvk_panel_admission_test
+    tests/dvk_panel_admission_test.cpp
+    src/gui/DvkPanel.cpp
+)
+target_include_directories(dvk_panel_admission_test PRIVATE src tests)
+target_link_libraries(dvk_panel_admission_test PRIVATE aetherdesktop_support Qt6::Widgets)
+add_test(NAME dvk_panel_admission_test COMMAND dvk_panel_admission_test)
+set_tests_properties(dvk_panel_admission_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 
 # #5640 — QsoRecorder claims filename candidates atomically so a same-second
 # recording cannot truncate a populated WAV or a concurrently-created file.

@@ -932,6 +932,7 @@ set(CORE_SOURCES
     src/core/DigitalVoiceModeRegistry.cpp
     src/core/DigitalVoiceWaveformTelemetry.cpp
     src/core/DigitalVoiceWaveformProcess.cpp
+    src/core/DvkWavConverter.cpp
     src/core/DvkWavTransfer.cpp
     src/core/ZipArchive.cpp
     src/core/ProfileTransfer.cpp

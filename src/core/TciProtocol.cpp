@@ -1533,7 +1533,7 @@ QString TciProtocol::cmdRxApfEnable(const QStringList& args, bool isSet)
     return {};
 }
 
-// ── AetherSDR extensions (DVK record/play) ─────────────────────────────────
+// ── AetherSDR extensions (slice quick-record record/play) ──────────────────
 
 QString TciProtocol::cmdRxRecord(const QStringList& args, bool isSet)
 {
