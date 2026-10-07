@@ -153,6 +153,7 @@ public:
     // shaped carrier by HackRfCwTx; with break-in, key-down raises PTT and a
     // hang timer drops it after the operator's delay.
     void setCwKeying(bool down, bool breakIn, int breakInDelayMs) override;
+    void setCwPitch(int hz) override;
     void invokeExtension(const QString& ns, const QString& verb,
                          quint64 requestId, const QVariant& arg = {}) override;
 
@@ -195,6 +196,20 @@ public:
     // Public and static for the same testability reason as the two maps
     // above.
     static std::pair<int, int> defaultPassbandForMode(const QString& mode) noexcept;
+
+    // The modes the VFO offers (published on every SliceDelta).
+    static QStringList supportedModes();
+
+    // CW's beat-frequency offset: the receiver's zero sits this far below the
+    // dial, so a carrier on the dial is heard at the pitch. +pitch for CW/CWU,
+    // -pitch for CWR/CWL, 0 in every other mode.
+    static double cwBfoHz(const QString& mode, int pitchHz) noexcept;
+
+    // The demodulator settings for a mode. The passband is the operator's
+    // carrier-relative cuts moved by the BFO, so it lands where the audio is.
+    static HackRfRxDsp::RxSettings rxSettingsFor(const QString& mode, int filterLowHz,
+                                                 int filterHighHz, int cwPitchHz,
+                                                 int agcMode, double agcMaxGainDb);
 
     // Emits IRadioBackend::dspSetupProgress/dspSetupFinished around the one
     // receive chain a connect builds off the GUI thread (connectRadio).
@@ -269,6 +284,10 @@ private:
     // Slice 0 / pan state — single slice for now, see the class comment.
     double m_sliceFreqHz{100'000'000.0};   // 100.0 MHz FM broadcast — safe RX default
     QString m_sliceMode{QStringLiteral("WFM")};
+    // The operator's CW pitch: where a carrier on the dial is heard.
+    int m_cwPitchHz{600};
+    // Where the DDC is tuned: the dial, less the CW BFO.
+    double ddcSliceHz() const;
     int m_sliceFilterLow{-40'000};   // matches defaultPassbandForMode("WFM")
     int m_sliceFilterHigh{40'000};
     double m_sampleRateHz{8'000'000.0};

@@ -2784,6 +2784,13 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_rx_dsp_test PRIVATE aethercore Qt6::Core)
     add_test(NAME hackrf_rx_dsp_test COMMAND hackrf_rx_dsp_test)
 
+    # Every receive mode through the real chain (DDC -> WDSP): sidebands,
+    # CW at the operator's pitch, AM/SAM/DSB and every FM flavour.
+    add_executable(hackrf_rx_modes_test tests/hackrf_rx_modes_test.cpp)
+    target_include_directories(hackrf_rx_modes_test PRIVATE src)
+    target_link_libraries(hackrf_rx_modes_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_rx_modes_test COMMAND hackrf_rx_modes_test)
+
     # A cold HackRF connect must not freeze the GUI while WDSP plans its FFTs.
     # Needs a real HackRF and AETHER_HACKRF_HW_TEST=1; exits 77 (skipped)
     # otherwise, so CI and ordinary local runs never touch the device.
