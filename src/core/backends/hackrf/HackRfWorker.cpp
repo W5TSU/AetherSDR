@@ -67,15 +67,21 @@ bool HackRfWorker::open(const QString& serial)
 
 bool HackRfWorker::isPro() const
 {
-    return m_boardId == BOARD_ID_PRALINE;
+    // BOARD_ID_PRALINE is 5, but only libhackrf 2026.01+ declares it: the
+    // Ubuntu 22.04/24.04 packages the AppImages build against predate the
+    // Pro. The id is a firmware constant, so the number is stable.
+    constexpr int kBoardIdPraline = 5;
+    return m_boardId == kBoardIdPraline;
 }
 
 void HackRfWorker::readBoardId()
 {
     // Called with the library lock held, right after a successful open.
-    uint8_t id = BOARD_ID_UNDETECTED;
+    // 0xFF: "undetected" (BOARD_ID_UNDETECTED; BOARD_ID_INVALID in the
+    // older headers, which have no common name for it).
+    uint8_t id = 0xFF;
     const int rc = hackrf_board_id_read(m_device, &id);
-    m_boardId = rc == HACKRF_SUCCESS ? id : BOARD_ID_UNDETECTED;
+    m_boardId = rc == HACKRF_SUCCESS ? id : 0xFF;
     qCInfo(lcHackRf) << "HackRfWorker: board" << hackrf_board_id_name(static_cast<hackrf_board_id>(m_boardId));
 }
 
