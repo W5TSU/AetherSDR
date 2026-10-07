@@ -1,5 +1,6 @@
 #include "HackRfBackend.h"
 #include "core/backends/hackrf/HackRfIq.h"
+#include "core/backends/hackrf/HackRfTuning.h"
 #include "core/backends/hackrf/HackRfWorker.h"
 #include "core/backends/hl2/Hl2FreqCal.h"
 #include "core/backends/hl2/Hl2ModeTable.h"
@@ -332,8 +333,22 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     if (m_freqCalPpb != 0)
         qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
 
+    // A HackRF Pro may only use the sample rates its firmware tunes correctly.
+    m_board = m_worker->isPro() ? HackRfBoard::Pro : HackRfBoard::One;
+
+    // A restored rate outside the zoom steps snaps to the nearest one, and each
+    // session starts with the panadapter centred on the slice. A restored 2 or
+    // 4 MS/s becomes that span shown from the 8 MS/s capture (planForSpan).
+    {
+        const auto& rates = hardwareRatesHz(m_board);
+        const ZoomPlan plan = planForSpan(chooseSampleRate(rates, m_sampleRateHz, m_sampleRateHz));
+        m_spanHz = plan.sampleRateHz / plan.decimation;
+        m_sampleRateHz = plan.sampleRateHz;
+        m_rxDsp->setZoomDecimation(plan.decimation);
+    }
+    m_panCenterHz = m_sliceFreqHz;
     if (!m_worker->setSampleRateHz(m_sampleRateHz)
-        || !tuneHardware(m_sliceFreqHz)
+        || !tuneHardware(m_panCenterHz)
         || !m_worker->setVgaGainDb(m_vgaGainDb)
         || !m_worker->setLnaGainDb(m_lnaGainDb)
         || !m_worker->setAmpEnable(m_ampEnabled)) {
@@ -342,15 +357,10 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         return;
     }
 
-    // Single-slice: the DDC's "wideband center" and "slice target" are the
-    // same frequency for now (HackRfWorker tunes directly to the requested
-    // frequency; there's no wider-than-the-slice capture actually being
-    // exploited yet). NCO shift is a no-op today — this sets up the shape
-    // multi-slice will need (a wideband-tuned center with per-slice
-    // offsets) without claiming multi-slice works before HackRfBackend
-    // actually owns more than one HackRfDdc instance.
+    // The DDC's wideband centre is the pan (where the LO sits); its NCO shifts
+    // the slice down from wherever it sits in the span.
     m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
-    m_rxDsp->ddc().setCenterFrequencyHz(m_sliceFreqHz);
+    m_rxDsp->ddc().setCenterFrequencyHz(m_panCenterHz);
     m_rxDsp->ddc().setSliceFrequencyHz(m_sliceFreqHz);
     // Not HackRfDdc's own 48 kHz default — see kAudioDdcRateHz's comment on
     // why WFM needs a wider slice than WDSP's usual 48 kHz input.
@@ -499,30 +509,40 @@ void HackRfBackend::setSliceFrequency(int sliceId, double hz)
 {
     Q_UNUSED(sliceId);  // single slice
     if (!m_connected) return;
-    m_sliceFreqHz = hz;
-    tuneHardware(hz);
-    m_rxDsp->ddc().setCenterFrequencyHz(hz);
-    m_rxDsp->ddc().setSliceFrequencyHz(hz);
-    // Single-slice/single-pan: every VFO retune moves the ENTIRE captured
-    // span (there is no independent "slice inside a wider pan window" the
-    // way RtlSdrBackend has), so the pan model must move with it every time,
-    // unconditionally — matching what setPanCenter() already does below.
-    // Missing this left the pan/waterfall's own centerMhz stale at whatever
-    // it was last explicitly set to (e.g. the connect-time default), while
-    // the hardware — and so the audio, which is genuinely correct — kept
-    // following every real retune. Measured on real hardware (#42): audio
-    // correctly tuned to a real station while the waterfall's peak appeared
-    // at the wrong position relative to the VFO cursor, by an amount that
-    // grew with how far the operator had retuned since the last event that
-    // happened to touch the pan center — a moving target, not a fixed
-    // offset, which is exactly what a stale label produces.
-    emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6,
-                                   m_sampleRateHz / 1e6);
+    // Inside the span only the DDC's NCO moves: no hardware retune, no
+    // waterfall jump. Outside it the pan recentres on the slice.
+    bool panMoved = false;
+    const PanSlice r = tuneSlice({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, panMoved);
+    applyPanSlice(r.panHz, r.sliceHz, panMoved, /*sliceMoved=*/true);
+}
 
-    SliceDelta delta;
-    delta.frequency = m_sliceFreqHz / 1e6;
-    delta.mode = m_sliceMode;
-    emit sliceChanged(0, delta);
+void HackRfBackend::applyPanSlice(double panHz, double sliceHz, bool panMoved, bool sliceMoved)
+{
+    m_panCenterHz = panHz;
+    m_sliceFreqHz = sliceHz;
+    // The hardware sits on the pan for RX and on the slice for TX
+    // (onArbiterWantTxStart); retune whichever applies right now.
+    if (m_transmitting)
+        tuneHardware(m_sliceFreqHz);
+    else if (panMoved)
+        tuneHardware(m_panCenterHz);
+    m_rxDsp->ddc().setCenterFrequencyHz(m_panCenterHz);
+    m_rxDsp->ddc().setSliceFrequencyHz(m_sliceFreqHz);
+    // THE PAN MODEL MUST FOLLOW EVERY LO MOVE. An earlier version left the
+    // waterfall's centre label stale while the hardware followed the VFO, and
+    // the peak drifted away from the cursor by however far the operator had
+    // retuned (#42). The label is the LO, so it is re-emitted whenever the LO
+    // moves -- and, now that the slice moves inside the span, only then.
+    if (panMoved) {
+        emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), m_panCenterHz / 1e6,
+                                       m_spanHz / 1e6);
+    }
+    if (sliceMoved) {
+        SliceDelta delta;
+        delta.frequency = m_sliceFreqHz / 1e6;
+        delta.mode = m_sliceMode;
+        emit sliceChanged(0, delta);
+    }
 }
 
 void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
@@ -591,13 +611,73 @@ void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdD
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
 {
     Q_UNUSED(panId);
-    Q_UNUSED(intent);  // this pan's window is not slaved to the VFO independently of it (single slice == the pan)
     if (!m_connected) return;
-    m_sliceFreqHz = hz;
-    tuneHardware(hz);
-    m_rxDsp->ddc().setCenterFrequencyHz(hz);
-    m_rxDsp->ddc().setSliceFrequencyHz(hz);
-    emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), hz / 1e6, m_sampleRateHz / 1e6);
+    if (intent == PanCenterIntent::Range) {
+        // The centre riding along with a zoom: the zoom's anchor (Ctrl+wheel keeps
+        // the frequency under the pointer still), never a retune. Followed as
+        // far as the slice stays inside the CAPTURE, which on a narrow zoom is
+        // far wider than the view, so in practice exactly as the GUI asked.
+        const PanSlice r = rangePan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz);
+        applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
+        return;
+    }
+    // A drag: move the view, keep the slice unless it would leave the span.
+    bool sliceMoved = false;
+    const PanSlice r = dragPan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, hz, sliceMoved);
+    applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, sliceMoved);
+}
+
+void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
+{
+    Q_UNUSED(panId);
+    if (!m_connected) return;
+    const double span = chooseSampleRate(zoomSpansHz(m_board), m_spanHz, hz);
+    const ZoomPlan plan = planForSpan(span);
+    auto reassert = [this] {
+        // The pan is re-told the real span so the zoom control snaps back to it.
+        emit panCenterBandwidthChanged(QString::fromLatin1(kPanId), m_panCenterHz / 1e6,
+                                       m_spanHz / 1e6);
+    };
+    if (span == m_spanHz) {
+        reassert();
+        return;
+    }
+    if (plan.sampleRateHz != m_sampleRateHz) {
+        // A hardware rate change: refused mid-transmission or mid-switch (the
+        // TX modulator runs at this rate), and done with RX stopped.
+        const bool rxStreaming = m_arbiter
+            && m_arbiter->state() == HackRfTxRxArbiter::State::RxStreaming;
+        if (m_keyed || !rxStreaming) {
+            reassert();
+            return;
+        }
+        m_worker->stopRx();
+        if (!m_worker->setSampleRateHz(plan.sampleRateHz)) {
+            m_worker->setSampleRateHz(m_sampleRateHz);   // back to what worked
+            m_worker->startRx();
+            reassert();
+            return;
+        }
+        m_sampleRateHz = plan.sampleRateHz;
+        m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
+        HackRfTxDsp::Config txCfg = m_txDsp->config();
+        txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
+        m_txDsp->configure(txCfg);
+        m_worker->startRx();
+    }
+    // Narrow spans only change the spectrum's decimation: no RX restart.
+    m_rxDsp->setZoomDecimation(plan.decimation);
+    m_spanHz = span;
+
+    // Zooming never retunes the slice: if it would leave the CAPTURE (a rate
+    // change narrowed it), the view recentres on it. Off-screen inside the
+    // capture is fine -- it still has audio -- so a zoom otherwise goes exactly
+    // where the GUI anchored it. The span changed even if the centre did not: always re-report it.
+    bool viewMoved = false;
+    const PanSlice r = applySpan({m_panCenterHz, m_sliceFreqHz}, m_sampleRateHz, viewMoved);
+    applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
+    qCInfo(lcHackRf) << "HackRF: span" << m_spanHz / 1e3 << "kHz (rate"
+                     << m_sampleRateHz / 1e6 << "MS/s, spectrum decimation" << plan.decimation << ")";
 }
 
 void HackRfBackend::setPanFrameRate(const QString& panId, int fps)
@@ -753,7 +833,7 @@ void HackRfBackend::applyFreqCalPpb(int ppb, bool persist)
     m_freqCalPpb = clamped;
     qCInfo(lcHackRf) << "HackRF: frequency calibration" << clamped << "ppb";
     if (m_connected)
-        tuneHardware(m_sliceFreqHz);
+        tuneHardware(m_transmitting ? m_sliceFreqHz : m_panCenterHz);
 }
 
 void HackRfBackend::setKeying(bool key)
@@ -889,6 +969,7 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
 void HackRfBackend::onArbiterWantRxStart()
 {
     m_transmitting = false;
+    tuneHardware(m_panCenterHz);   // RX: the LO back to the pan centre
     m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/false));
     m_worker->startRx();
     // No separate "confirm" needed on the way INTO Idle/RxStreaming — only
@@ -907,6 +988,10 @@ void HackRfBackend::onArbiterWantTxStart()
     // Amp OFF before the first TX sample: it is one switch for both
     // directions, and the operator's RX Preamp must not add ~14 dB to TX.
     m_transmitting = true;
+    // TX: the carrier is at DC, so the LO goes to the slice frequency (it sits
+    // at the pan centre for RX, possibly MHz away). A PLL retune of a few ms,
+    // inside the RX->TX switch the arbiter is already making.
+    tuneHardware(m_sliceFreqHz);
     m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/true));
     m_worker->startTx();
 }
@@ -951,8 +1036,12 @@ void HackRfBackend::emitInitialState()
     emit radioChanged(rDelta);
 
     const QString panId = QString::fromLatin1(kPanId);
-    emit panCenterBandwidthChanged(panId, m_sliceFreqHz / 1e6, m_sampleRateHz / 1e6);
-    emit panBandwidthLimitsChanged(panId, 1.0, 6000.0);
+    emit panCenterBandwidthChanged(panId, m_panCenterHz / 1e6, m_spanHz / 1e6);
+    // The zoom range, in MHz of span: 62.5 kHz (decimated) to 20 MHz (the top
+    // sample rate). (It said 1 to 6000, the TUNING range, which no zoom could
+    // honour.)
+    emit panBandwidthLimitsChanged(panId, zoomSpansHz(m_board).front() / 1e6,
+                                   zoomSpansHz(m_board).back() / 1e6);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);
     emit panRfGainChanged(panId, m_vgaGainDb);

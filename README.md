@@ -110,6 +110,11 @@ FlexRadio and the Hermes-Lite 2 are supported targets; networked Icom is early.
   defaults.
 - **RTL-SDR** — **experimental, receive-only**. Discovers supported USB dongles
   through `librtlsdr` and provides one panadapter and one host-demodulated slice.
+- **HackRF One / HackRF Pro** — **experimental**. USB through `libhackrf`: one
+  panadapter (Ctrl+wheel zoom from 62.5 kHz to 20 MHz; 16 MHz on a HackRF Pro), one host-demodulated
+  slice, and transmit (SSB, CW, TUNE) with TX drive and frequency calibration.
+  Keep its firmware current: see [docs/HACKRF.md](docs/HACKRF.md) for how to
+  check and update it.
 
 No radio at all? **Demo mode** runs the full UI against a synthetic backend
 that generates its own audio and spectrum.

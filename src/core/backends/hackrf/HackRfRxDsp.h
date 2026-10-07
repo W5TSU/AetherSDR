@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/backends/hackrf/HackRfDdc.h"
+#include "core/backends/hackrf/HackRfZoomDecimator.h"
 #include "core/backends/hl2/Hl2Spectrum.h"
 #include "core/dsp/WdspChannel.h"
 
@@ -57,6 +58,9 @@ public:
 
     HackRfDdc& ddc() { return *m_ddc; }
     void setSpectrumIntervalMs(int ms) { m_spectrumIntervalMs.store(ms); }
+    // Narrow zoom: the spectrum is computed from the capture decimated by this
+    // (1 = the raw capture). Any thread; applied at the next block.
+    void setZoomDecimation(int decimation) { m_zoomDecimation.store(decimation); }
 
     void enqueueIq(QVector<std::complex<float>> block);
     // Blocks dropped because the DSP fell behind, since construction.
@@ -82,7 +86,13 @@ private:
     std::vector<float> m_specBins;
     std::atomic<int> m_spectrumIntervalMs{33};
     QElapsedTimer m_clock;
-    qint64 m_lastSpectrumMs{-1};
+    // Samples still to go before the next spectrum frame. Gated on the SAMPLE
+    // clock so the frame rate does not depend on how much IQ one USB transfer
+    // carries (65 ms at 2 MS/s, 6.5 ms at 20 MS/s).
+    std::int64_t m_samplesToNextFrame{0};
+    void processSpectrum(const std::complex<float>* data, std::size_t n, double rateHz);
+    std::atomic<int> m_zoomDecimation{1};
+    HackRfZoomDecimator m_zoom;   // this thread only
 
     // Input queue. Touched by the producer thread and this one, under m_queueMutex.
     std::mutex m_queueMutex;

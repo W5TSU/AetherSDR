@@ -4,6 +4,7 @@
 #include "core/backends/hackrf/HackRfDdc.h"
 #include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
+#include "core/backends/hackrf/HackRfTuning.h"
 #include "core/backends/hackrf/HackRfTxRxArbiter.h"
 #include "core/backends/hl2/Hl2Spectrum.h"
 #include "core/backends/IRadioBackend.h"
@@ -117,6 +118,10 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     void setPanCenter(const QString& panId, double hz, PanCenterIntent intent) override;
+    // Wheel zoom, 62.5 kHz .. 20 MHz. 2-20 MHz steps the sample rate
+    // (restarting RX; refused while transmitting); below 2 MHz the spectrum
+    // decimates the 2 MS/s capture (HackRfZoomDecimator), with no restart.
+    void setPanBandwidth(const QString& panId, double hz) override;
     void setPanFrameRate(const QString& panId, int fps) override;
 
     // VGA (baseband) gain, 0-62dB/2dB steps — the continuous slider. LNA and
@@ -233,6 +238,24 @@ private:
 
     bool m_connected{false};
     QString m_serial;
+
+    // Where the hardware LO sits: the centre of the captured span (the
+    // panadapter). The slice (m_sliceFreqHz) is tuned inside it by the DDC, so
+    // dragging the spectrum moves this and not the slice. On TX the hardware
+    // is retuned to the slice, and back here for RX. See HackRfTuning.h.
+    double m_panCenterHz{100'000'000.0};
+    // The DISPLAYED span: the sample rate, or below 2 MHz the 2 MS/s capture
+    // decimated for the spectrum. The slice's limits use the CAPTURE
+    // (m_sampleRateHz), not this: a slice off-screen but inside the capture
+    // still has audio, and holding it on-screen fought the GUI's
+    // pointer-anchored zoom.
+    double m_spanHz{8'000'000.0};
+    // Which HackRF is connected: the Pro may only use some sample rates
+    // (HackRfTuning.h, hardwareRatesHz). Set at connect.
+    HackRfBoard m_board{HackRfBoard::One};
+    // Applies the result of a HackRfTuning operation: retunes the hardware and
+    // the DDC, and reports whatever moved.
+    void applyPanSlice(double panHz, double sliceHz, bool panMoved, bool sliceMoved);
 
     // A connect whose hardware is open and whose RX channel is still being
     // built. connectRadio() returns at once; onRxChannelBuilt() finishes it.
