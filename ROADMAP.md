@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.4
+## Current cycle: post-v26.10.5
 
 ### In flight
 
@@ -195,8 +195,10 @@ Highlights from the last 30 days — full list in
   break-in (v26.10.2); then drag and Ctrl+wheel zoom from 62.5 kHz with the
   slice kept apart from the view, plus fixes for two HackRF Pro hardware
   quirks: stations folding in near the capture edge, and three sample rates
-  its firmware mis-tunes (v26.10.4). Driving goal: FM amateur-satellite work.
-  Fork-only.
+  its firmware mis-tunes (v26.10.4); and every mode in both directions
+  (SSB, digital, AM, DSB, FM, CW; WFM receive-only), with receive sidebands
+  corrected, CW at the pitch, cleaner FM and a remembered AGC (v26.10.5).
+  Driving goal: FM amateur-satellite work. Fork-only.
 - **The workspace canvas** — pans and applets become freely placed, resizable,
   layered items on a canvas that can span several top-level windows, with named
   workspaces, full-recall switching, radio-profile bindings and an Edit Layout

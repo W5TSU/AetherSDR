@@ -8,6 +8,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.5] — 2026-10-08
+
+### HackRF: every mode, both ways (#69)
+
+The HackRF now receives and transmits in every mode it offers, except
+broadcast WFM, which stays receive-only.
+
+| Mode | Receive | Transmit |
+|---|---|---|
+| USB, LSB | yes | **new** |
+| DIGU, DIGL, RTTY | **new** | **new** |
+| CW, CWR | **fixed** | yes |
+| AM, SAM | yes | **new** |
+| DSB, DFM | **new** | **new** |
+| FM, FMN | yes | cleaner |
+| WFM | yes | no |
+
+- **SSB was on the wrong sideband.** On receive, USB was hearing the lower
+  sideband and LSB the upper, and DIGU, DIGL and CW likewise. FM and AM
+  sound the same either way, which is why it went unnoticed. Every mode
+  now hears the sideband it names.
+- **CW is audible at your pitch.** A CW signal tuned correctly used to come
+  out at 0 Hz, which you can't hear. Changing the CW pitch now takes effect
+  too.
+- **Mode and filter changes take effect at once.** They used to wait behind
+  incoming audio.
+- **New transmit modes:** USB, LSB, DIGU, DIGL, RTTY, AM and DSB. SSB uses
+  the same modulator as the Hermes-Lite 2.
+- **Cleaner FM.** FM used to put out faint copies of the signal at
+  multiples of 24 kHz, only 42–62 dB down. Every mode is now clean to at
+  least 90 dB. FM also uses much less CPU at 16 MS/s.
+- **TUNE sends a carrier in any mode.** In USB or DSB it used to send
+  nothing.
+- **Transmit in the new modes is tested in software but not yet on the
+  air.** Start at low power into a dummy load, and listen on a second
+  receiver before going on the air.
+
+### HackRF: AGC is remembered
+
+- Your AGC mode and threshold are saved and come back when you reconnect.
+  Every session used to start on Medium.
+- The AGC control now shows what the radio is actually running, right from
+  connect.
+- A setting made before connecting is no longer lost.
+
 ## [v26.10.4.1] — 2026-10-07
 
 ### Hotfix: Linux AppImages for 26.10.4
