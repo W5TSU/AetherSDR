@@ -86,9 +86,11 @@ int main(int argc, char** argv)
         check(spy.size() == 1, "constant audio produces one emission");
         if (spy.size() == 1) {
             const auto iq = spy.at(0).at(0).value<QVector<std::complex<float>>>();
-            // Skip the first few samples (settling from the initial phase=0 start).
+            // The second half only: the audio is interpolated (filtered) before
+            // the phase is integrated, so a step takes the filters' group delay
+            // (a fraction of a millisecond) to settle.
             bool allAtMaxDeviation = true;
-            for (int i = 10; i < iq.size(); ++i) {
+            for (int i = iq.size() / 2; i < iq.size(); ++i) {
                 const double freq = instantaneousFreqHz(iq[i - 1], iq[i], cfg.outputSampleRateHz);
                 if (std::abs(freq - cfg.maxDeviationHz) > 1.0) allAtMaxDeviation = false;
             }
@@ -103,7 +105,7 @@ int main(int argc, char** argv)
         if (spy2.size() == 1) {
             const auto iq = spy2.at(0).at(0).value<QVector<std::complex<float>>>();
             bool allAtMinDeviation = true;
-            for (int i = 10; i < iq.size(); ++i) {
+            for (int i = iq.size() / 2; i < iq.size(); ++i) {
                 const double freq = instantaneousFreqHz(iq[i - 1], iq[i], cfg.outputSampleRateHz);
                 if (std::abs(freq + cfg.maxDeviationHz) > 1.0) allAtMinDeviation = false;
             }
@@ -127,7 +129,7 @@ int main(int argc, char** argv)
         if (spy.size() == 1) {
             const auto iq = spy.at(0).at(0).value<QVector<std::complex<float>>>();
             bool clampedToMax = true;
-            for (int i = 10; i < iq.size(); ++i) {
+            for (int i = iq.size() / 2; i < iq.size(); ++i) {
                 const double freq = instantaneousFreqHz(iq[i - 1], iq[i], cfg.outputSampleRateHz);
                 if (std::abs(freq - cfg.maxDeviationHz) > 1.0) clampedToMax = false;
             }

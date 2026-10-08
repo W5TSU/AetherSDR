@@ -16,6 +16,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace AetherSDR::hackrf {
@@ -80,6 +81,11 @@ private:
     void processBlock(const QVector<std::complex<float>>& block);
     void onDecimated(const QVector<std::complex<float>>& iq);
     void applySettingsNow(const RxSettings& s);
+    void applyPendingSettings();
+    // The latest applySettings(), not yet applied. Any thread writes it; this
+    // thread applies it between blocks (drain) or when idle.
+    std::mutex m_settingsMutex;
+    std::optional<RxSettings> m_pendingSettings;
 
     HackRfDdc* m_ddc;   // child: moves with this object
     hl2::Hl2Spectrum m_spectrum;

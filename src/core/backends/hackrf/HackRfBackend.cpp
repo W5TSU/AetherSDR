@@ -4,6 +4,7 @@
 #include "core/backends/hackrf/HackRfWorker.h"
 #include "core/backends/hl2/Hl2FreqCal.h"
 #include "core/backends/hl2/Hl2ModeTable.h"
+#include "core/backends/hl2/Hl2TxLevelPolicy.h"
 #include "core/RadioSettingsScope.h"
 
 #include <QJsonObject>
@@ -78,6 +79,78 @@ std::pair<int, int> HackRfBackend::defaultPassbandForMode(const QString& mode) n
     if (u == QLatin1String("FMN")) return hl2::defaultPassbandForMode(QStringLiteral("FM"));
     if (u == QLatin1String("CWR")) return hl2::defaultPassbandForMode(QStringLiteral("CW"));
     return hl2::defaultPassbandForMode(mode);
+}
+
+QStringList HackRfBackend::supportedModes()
+{
+    // Every mode the WDSP receive channel can demodulate from this backend's
+    // IQ (hackrf_rx_modes_test). Not FreeDV, DRM or D-STAR: nothing here
+    // decodes them.
+    return {QStringLiteral("USB"), QStringLiteral("LSB"), QStringLiteral("CW"), QStringLiteral("CWR"),
+            QStringLiteral("AM"), QStringLiteral("SAM"), QStringLiteral("DSB"), QStringLiteral("FM"),
+            QStringLiteral("FMN"), QStringLiteral("DFM"), QStringLiteral("WFM"), QStringLiteral("DIGU"),
+            QStringLiteral("DIGL"), QStringLiteral("RTTY")};
+}
+
+bool HackRfBackend::canTransmitMode(const QString& mode)
+{
+    // Everything the VFO offers but broadcast WFM: 75 kHz-deviation FM is not
+    // an amateur transmit mode. CW goes through HackRfCwTx, the rest through
+    // HackRfTxDsp (hackrf_tx_modes_test).
+    const QString u = mode.trimmed().toUpper();
+    return u != QLatin1String("WFM") && u != QLatin1String("WBFM");
+}
+
+HackRfTxDsp::Config HackRfBackend::txConfigFor(const QString& mode, HackRfTxDsp::Config base)
+{
+    using M = HackRfTxDsp::Config::Modulation;
+    const QString u = mode.trimmed().toUpper();
+    if (u == QLatin1String("USB") || u == QLatin1String("DIGU") || u == QLatin1String("RTTY"))
+        base.modulation = M::Usb;
+    else if (u == QLatin1String("LSB") || u == QLatin1String("DIGL"))
+        base.modulation = M::Lsb;
+    else if (u == QLatin1String("AM") || u == QLatin1String("SAM"))
+        base.modulation = M::Am;
+    else if (u == QLatin1String("DSB"))
+        base.modulation = M::Dsb;
+    else
+        base.modulation = M::Fm;
+    // FMN is narrow FM: half the deviation.
+    base.maxDeviationHz = u == QLatin1String("FMN") ? 2'500.0 : 5'000.0;
+    // The HL2's transmit passband policy, so the two radios agree.
+    const QByteArray name = u.toUtf8();
+    const auto [lo, hi] = hl2::defaultTxPassbandForModeName(
+        std::string_view(name.constData(), static_cast<std::size_t>(name.size())));
+    base.filterLowHz = lo;
+    base.filterHighHz = hi;
+    return base;
+}
+
+double HackRfBackend::cwBfoHz(const QString& mode, int pitchHz) noexcept
+{
+    const QString u = mode.trimmed().toUpper();
+    if (u == QLatin1String("CW") || u == QLatin1String("CWU"))
+        return static_cast<double>(pitchHz);
+    if (u == QLatin1String("CWR") || u == QLatin1String("CWL"))
+        return -static_cast<double>(pitchHz);
+    return 0.0;
+}
+
+HackRfRxDsp::RxSettings HackRfBackend::rxSettingsFor(const QString& mode, int filterLowHz,
+                                                     int filterHighHz, int cwPitchHz,
+                                                     int agcMode, double agcMaxGainDb)
+{
+    // CW's passband is carrier-relative (centred on the dial, the app-wide
+    // convention); the DDC puts the carrier a BFO above zero, so the
+    // passband moves with it. Same geometry as Hl2Backend::dspFilterHz.
+    const int bfo = static_cast<int>(cwBfoHz(mode, cwPitchHz));
+    HackRfRxDsp::RxSettings s;
+    s.mode = wdspModeFromString(mode);
+    s.filterLowHz = filterLowHz + bfo;
+    s.filterHighHz = filterHighHz + bfo;
+    s.agcMode = agcMode;
+    s.agcMaxGainDb = agcMaxGainDb;
+    return s;
 }
 
 HackRfBackend::HackRfBackend(QObject* parent)
@@ -171,16 +244,17 @@ RadioCapabilities HackRfBackend::capabilities() const
     c.model = QStringLiteral("HackRF");
     c.manufacturer = QStringLiteral("Great Scott Gadgets");
 
-    // TX — full RX+TX (design doc v1), FM/CW only. receiveOnlyModes gates
-    // the other demodulatable-but-not-transmittable modes; the engine TX
-    // guard (RFC §6) is what actually enforces it.
+    // TX — every mode but broadcast WFM: SSB (USB/LSB/DIGU/DIGL/RTTY), AM,
+    // DSB and FM through HackRfTxDsp, CW through HackRfCwTx. receiveOnlyModes
+    // is what the engine TX guard (RFC §6) enforces.
     c.canTransmit = true;
     c.txPowerMaxWatts = 0.015;  // ~15 dBm typical max, no PA — hackrf.readthedocs.io
     c.hostModulates = true;         // WDSP TXA on this host, once wired — see the class comment
     c.takesTxAudioOverSeam = true;  // audio reaches this backend via submitTxAudio, not DAX/VITA-49
     c.hasRadioPttReadback = false;  // no readback plane, matches HL2 — setKeying's command edge is the only edge
-    c.receiveOnlyModes = {QStringLiteral("AM"), QStringLiteral("SAM"), QStringLiteral("WFM"),
-                          QStringLiteral("USB"), QStringLiteral("LSB")};
+    for (const QString& m : supportedModes())
+        if (!canTransmitMode(m))
+            c.receiveOnlyModes.append(m);
     c.agcModes = {QStringLiteral("off"), QStringLiteral("slow"),
                   QStringLiteral("med"), QStringLiteral("fast")};
     c.alcMeterUnit = QStringLiteral("dBFS");
@@ -215,7 +289,10 @@ RadioCapabilities HackRfBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::Passband
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
                             | RadioCapabilities::ClientSettingsDomain::RfGain
-                            | RadioCapabilities::ClientSettingsDomain::Memories;
+                            | RadioCapabilities::ClientSettingsDomain::Memories
+                            // The AGC runs in WDSP on this host: the client is
+                            // the only place its mode and threshold can live.
+                            | RadioCapabilities::ClientSettingsDomain::Agc;
 
     // A free-running crystal (+-20 ppm on a stock HackRF One, ~8.7 kHz at
     // 435 MHz) with no calibration register: correcting it is the client's job,
@@ -248,6 +325,8 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     m_vgaGainDb = 20;
     m_lnaGainDb = 16;
     m_ampEnabled = false;
+    m_agcMode = QStringLiteral("med");
+    m_agcThreshold = 65;
 
     if (state.rfFrequencyHz > 0) {
         m_sliceFreqHz = state.rfFrequencyHz;
@@ -262,6 +341,14 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     if (state.sampleRateHz > 0) {
         m_sampleRateHz = state.sampleRateHz;
     }
+    // The Agc domain. -1 is "not stored" (0 is a real threshold).
+    const QString agc = state.agcMode.trimmed().toLower();
+    if (isKnownAgcMode(agc))
+        m_agcMode = agc;
+    if (state.agcThreshold >= 0)
+        m_agcThreshold = std::clamp(state.agcThreshold, 0, 100);
+    m_agcModeIndex = wdspAgcModeFromString(m_agcMode);
+    m_agcMaxGainDb = m_agcThreshold * 1.0;
     const QJsonValue gainVal = state.extension.value(QStringLiteral("rfGain"));
     if (gainVal.isObject()) {
         const QJsonObject obj = gainVal.toObject();
@@ -282,6 +369,8 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
     state.filterLowHz = m_sliceFilterLow;
     state.filterHighHz = m_sliceFilterHigh;
     state.sampleRateHz = static_cast<int>(m_sampleRateHz);
+    state.agcMode = m_agcMode;
+    state.agcThreshold = m_agcThreshold;
     state.extensionSchemaVersion = 1;
     state.extension[QStringLiteral("rfGain")] = QJsonObject{
         {QStringLiteral("vgaGainDb"), m_vgaGainDb},
@@ -361,7 +450,7 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     // the slice down from wherever it sits in the span.
     m_rxDsp->ddc().setInputSampleRateHz(m_sampleRateHz);
     m_rxDsp->ddc().setCenterFrequencyHz(m_panCenterHz);
-    m_rxDsp->ddc().setSliceFrequencyHz(m_sliceFreqHz);
+    m_rxDsp->ddc().setSliceFrequencyHz(ddcSliceHz());
     // Not HackRfDdc's own 48 kHz default — see kAudioDdcRateHz's comment on
     // why WFM needs a wider slice than WDSP's usual 48 kHz input.
     m_rxDsp->ddc().setOutputSampleRateHz(kAudioDdcRateHz);
@@ -436,7 +525,7 @@ void HackRfBackend::completeConnect()
 {
     HackRfTxDsp::Config txCfg;
     txCfg.outputSampleRateHz = m_sampleRateHz;   // TX and RX share HackRF's one clock
-    m_txDsp->configure(txCfg);
+    m_txDsp->configure(txConfigFor(m_sliceMode, txCfg));
     // The RF Power slider's drive. RadioModel also pushes it on connect, but
     // the value it last set is applied here so the first key-down never runs
     // at libhackrf's default TX gain.
@@ -527,7 +616,7 @@ void HackRfBackend::applyPanSlice(double panHz, double sliceHz, bool panMoved, b
     else if (panMoved)
         tuneHardware(m_panCenterHz);
     m_rxDsp->ddc().setCenterFrequencyHz(m_panCenterHz);
-    m_rxDsp->ddc().setSliceFrequencyHz(m_sliceFreqHz);
+    m_rxDsp->ddc().setSliceFrequencyHz(ddcSliceHz());
     // THE PAN MODEL MUST FOLLOW EVERY LO MOVE. An earlier version left the
     // waterfall's centre label stale while the hardware followed the VFO, and
     // the peak drifted away from the cursor by however far the operator had
@@ -569,7 +658,10 @@ void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
     // per-mode notion of the passband, discarding whatever setFilter() set
     // before it. The filter must be re-pushed AFTER setMode() on every call,
     // not only when the mode actually changed.
+    m_rxDsp->ddc().setSliceFrequencyHz(ddcSliceHz());   // the CW BFO follows the mode
     m_rxDsp->applySettings(rxSettings());   // mode, THEN filter, on the DSP thread
+    // The transmit modulator follows the mode too (SSB, AM, DSB or FM).
+    m_txDsp->configure(txConfigFor(m_sliceMode, m_txDsp->config()));
 
     SliceDelta delta;
     delta.frequency = m_sliceFreqHz / 1e6;
@@ -598,14 +690,35 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
 void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
 {
     Q_UNUSED(sliceId);
-    if (!m_connected) return;
-    m_agcModeIndex = wdspAgcModeFromString(mode);
+    // Kept even before connect: the app pushes the saved slice's AGC ahead of
+    // connectRadio(), and that used to be dropped here.
+    const QString m = mode.trimmed().toLower();
+    if (isKnownAgcMode(m))
+        m_agcMode = m;
+    else
+        qCWarning(lcHackRf) << "HackRF: ignoring unknown AGC mode" << mode << "- keeping" << m_agcMode;
+    m_agcThreshold = std::clamp(thresholdDb, 0, 100);
+    m_agcModeIndex = wdspAgcModeFromString(m_agcMode);
     // 0..100 -> 0..100 dB ceiling — see the m_agcMaxGainDb header comment on
     // why this is 1:1 rather than Hl2Backend's *0.6 map (measured on real
     // hardware: WBFM's raw discriminator output needs far more headroom than
     // SSB/AM's mixer output does before it clips).
-    m_agcMaxGainDb = std::clamp(thresholdDb, 0, 100) * 1.0;
+    m_agcMaxGainDb = m_agcThreshold * 1.0;
     m_rxDsp->applySettings(rxSettings());
+    if (!m_connected) return;
+    // Echo what the demodulator now runs, so the AGC control shows it, and
+    // let RadioModel save it.
+    SliceDelta delta;
+    delta.agcMode = m_agcMode;
+    delta.agcThreshold = m_agcThreshold;
+    emit sliceChanged(0, delta);
+    emit operatingStateChanged();
+}
+
+bool HackRfBackend::isKnownAgcMode(const QString& mode) noexcept
+{
+    return mode == QLatin1String("off") || mode == QLatin1String("slow")
+        || mode == QLatin1String("med") || mode == QLatin1String("fast");
 }
 
 void HackRfBackend::setPanCenter(const QString& panId, double hz, PanCenterIntent intent)
@@ -800,11 +913,14 @@ void HackRfBackend::setTune(bool on, int tunePowerPercent)
 void HackRfBackend::feedTuneCarrier()
 {
     if (!m_tuning || !m_keyed) return;
-    const int rate = m_txDsp->config().audioSampleRateHz;
-    const std::vector<float> silence(static_cast<std::size_t>(std::max(1, rate / 50)), 0.0f);  // 20 ms
+    // A plain full-scale carrier, at the output rate. Not silence through the
+    // modulator, which is what this used to be: that is a carrier only in FM.
+    // In USB, LSB or DSB silence transmits nothing, and in AM half power.
+    const QVector<std::complex<float>> carrier(
+        static_cast<qsizetype>(std::max(1.0, m_sampleRateHz / 50.0)), {1.0f, 0.0f});  // 20 ms
     for (int guard = 0; guard < 10
          && shouldFeedTuneCarrier(m_worker->txQueueDepth(), m_sampleRateHz, 100); ++guard) {
-        m_txDsp->processAudioBlock(silence);
+        m_worker->submitTxIq(carrier);
     }
 }
 
@@ -1055,11 +1171,9 @@ void HackRfBackend::emitInitialState()
     sDelta.mode = m_sliceMode;
     sDelta.filterLow = m_sliceFilterLow;
     sDelta.filterHigh = m_sliceFilterHigh;
-    sDelta.modeList = QStringList{QStringLiteral("AM"), QStringLiteral("SAM"),
-                                  QStringLiteral("FM"), QStringLiteral("FMN"),
-                                  QStringLiteral("WFM"), QStringLiteral("USB"),
-                                  QStringLiteral("LSB"), QStringLiteral("CW"),
-                                  QStringLiteral("CWR")};
+    sDelta.agcMode = m_agcMode;          // what the demodulator runs, so the
+    sDelta.agcThreshold = m_agcThreshold;   // AGC control shows it from connect
+    sDelta.modeList = supportedModes();
     sDelta.active = true;
     // HackRF's one slice is also its transmit slice. Without this RadioModel
     // had no TX slice at all, so every key request (PTT, MOX, TUNE) was refused
@@ -1071,13 +1185,28 @@ void HackRfBackend::emitInitialState()
 
 HackRfRxDsp::RxSettings HackRfBackend::rxSettings() const
 {
-    HackRfRxDsp::RxSettings s;
-    s.mode = wdspModeFromString(m_sliceMode);
-    s.filterLowHz = m_sliceFilterLow;
-    s.filterHighHz = m_sliceFilterHigh;
-    s.agcMode = m_agcModeIndex;
-    s.agcMaxGainDb = m_agcMaxGainDb;
-    return s;
+    return rxSettingsFor(m_sliceMode, m_sliceFilterLow, m_sliceFilterHigh, m_cwPitchHz,
+                         m_agcModeIndex, m_agcMaxGainDb);
+}
+
+double HackRfBackend::ddcSliceHz() const
+{
+    // The receiver's zero sits a BFO below the dial in CW, so the carrier on
+    // the dial lands on the pitch. MINUS, as Hl2Backend::rxShiftHz explains:
+    // pushing the zero down lifts the carrier up onto the pitch.
+    return m_sliceFreqHz - cwBfoHz(m_sliceMode, m_cwPitchHz);
+}
+
+void HackRfBackend::setCwPitch(int hz)
+{
+    // TransmitModel's own range; a pitch of 0 would put CW back on DC.
+    hz = std::clamp(hz, 100, 6000);
+    if (hz == m_cwPitchHz) return;
+    m_cwPitchHz = hz;
+    if (!m_connected || cwBfoHz(m_sliceMode, 1) == 0.0) return;
+    // The BFO is in both the DDC offset and the passband: move them together.
+    m_rxDsp->ddc().setSliceFrequencyHz(ddcSliceHz());
+    m_rxDsp->applySettings(rxSettings());
 }
 
 WdspChannel::Config HackRfBackend::rxChannelConfig() const

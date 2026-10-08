@@ -3,14 +3,34 @@
 #include <QObject>
 #include <QVector>
 
+#include "core/backends/hackrf/HackRfTxInterpolator.h"
+
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <vector>
+
+namespace AetherSDR::hl2 { class Hl2TxDsp; }
 
 namespace AetherSDR::hackrf {
 
-// Hand-rolled FM transmit modulator: processed TX audio in, baseband IQ out
-// at HackRF's own TX sample rate, ready for HackRfWorker::submitTxIq().
+// HackRF's transmit modulator: processed TX audio in, baseband IQ out at
+// HackRF's own TX sample rate, ready for HackRfWorker::submitTxIq().
+//
+// MODES. FM was the only one at first; SSB, AM and DSB were refused as
+// receive-only. Now (hackrf_tx_modes_test):
+//   - FM (FM, FMN, DFM): phase integration, as described below.
+//   - SSB (USB/DIGU/RTTY, LSB/DIGL): Hl2TxDsp's phasing modulator -- the one
+//     proven on the air for the HL2, with its transmit bandpass and
+//     protection-only ALC -- at 48 kHz. Its output is conjugated for the
+//     HPSDR wire, whose handedness is the opposite of the analytic
+//     convention; HackRF's IQ is analytic, so it is conjugated back here.
+//   - AM (AM, SAM): carrier plus band-limited audio, carrier at half scale so
+//     full modulation peaks at full scale. DSB: the audio alone.
+// Every mode then goes through HackRfTxInterpolator up to the hardware rate,
+// FM included (its audio, before integration): holding samples left copies
+// of the signal at multiples of the low rate only 13-60 dB down, which go
+// out on the air.
 //
 // NOT WdspChannel's TXA mode, and that is a considered choice, not an
 // oversight — see HackRfBackend's own class comment for the full reasoning.
@@ -42,11 +62,18 @@ class HackRfTxDsp : public QObject {
 
 public:
     explicit HackRfTxDsp(QObject* parent = nullptr);
+    ~HackRfTxDsp() override;
 
     struct Config {
         int audioSampleRateHz = 24'000;             // AudioEngine's TX rate (matches Hl2Backend's own submitTxAudio expectation)
         double outputSampleRateHz = 8'000'000.0;    // HackRF's TX (== RX) sample rate
         double maxDeviationHz = 5'000.0;            // narrow-FM voice convention
+        enum class Modulation { Fm, Usb, Lsb, Am, Dsb };
+        Modulation modulation = Modulation::Fm;
+        // The audio passband for SSB, AM and DSB (positive, audio-domain:
+        // the modulation picks the sideband). hl2::defaultTxPassbandForModeName.
+        double filterLowHz = 300.0;
+        double filterHighHz = 2700.0;
     };
 
     Q_INVOKABLE void configure(const Config& config);
@@ -67,9 +94,17 @@ signals:
     void iqReady(const QVector<std::complex<float>>& iq);   // at outputSampleRateHz
 
 private:
+    void emitInterpolated(const std::vector<std::complex<float>>& baseband);
+    void designAudioBandpass();
+
     Config m_config;
-    double m_phase = 0.0;            // radians, wrapped to (-pi, pi]
-    double m_resamplePhase = 0.0;    // fractional output-sample accumulator
+    double m_phase = 0.0;            // FM: radians, wrapped to (-pi, pi]
+    HackRfTxInterpolator m_interp;   // baseband (audio rate, or 48 kHz SSB) -> output rate
+    std::unique_ptr<hl2::Hl2TxDsp> m_ssb;   // SSB only
+    // AM/DSB: a windowed-sinc audio bandpass at the audio rate.
+    std::vector<float> m_bandpass;
+    std::vector<float> m_bpHist;
+    std::size_t m_bpPos = 0;
 };
 
 }  // namespace AetherSDR::hackrf

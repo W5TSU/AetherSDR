@@ -2,8 +2,23 @@
 
 AetherSDR drives a HackRF One or HackRF Pro over USB through `libhackrf`:
 one panadapter (zoom 62.5 kHz – 20 MHz with Ctrl+wheel; 16 MHz on a Pro), one slice
-demodulated on the host (WDSP), and transmit (SSB, CW, TUNE) with TX drive
-and frequency calibration in Radio Setup.
+demodulated on the host (WDSP), and transmit, with TX drive and frequency
+calibration in Radio Setup.
+
+## Modes
+
+| Mode | Receive | Transmit |
+|---|---|---|
+| USB, LSB | yes | yes |
+| DIGU, DIGL, RTTY (AFSK on USB) | yes | yes |
+| CW, CWR | yes, at your CW pitch | yes (keyer, break-in) |
+| AM, SAM | yes | yes (SAM transmits AM) |
+| DSB | yes | yes |
+| FM, FMN, DFM | yes | yes (5 kHz deviation; FMN 2.5 kHz) |
+| WFM (broadcast) | yes | no |
+
+TUNE sends a plain carrier in any mode. FreeDV, DRM and D-STAR aren't
+available: nothing in the HackRF path decodes them.
 
 ## Check your firmware first
 

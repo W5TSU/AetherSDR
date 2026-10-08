@@ -55,6 +55,10 @@ void HackRfRxDsp::drain()
             block = std::move(m_queue.front());
             m_queue.pop_front();
         }
+        // A settings change lands at the next block, not after the queue
+        // empties: this loop runs as long as IQ keeps arriving, and a change
+        // queued behind it on the event loop waited that long.
+        applyPendingSettings();
         processBlock(block);
     }
 
@@ -157,8 +161,16 @@ void HackRfRxDsp::onDecimated(const QVector<std::complex<float>>& iq)
     std::size_t consumed = 0;
     while (m_audioIq.size() - consumed >= m_audioBlock) {
         for (std::size_t n = 0; n < m_audioBlock; ++n) {
+            // CONJUGATED. WDSP's RXA, as this repo configures it, selects the
+            // OPPOSITE sign to its passband bounds: USB [+100, +2900] passes
+            // NEGATIVE frequencies (measured, and the reason Hl2RxDsp feeds
+            // it the HPSDR wire, which is itself conjugated). HackRF's IQ is
+            // analytic -- a signal above the dial is a positive frequency --
+            // so fed straight in, USB heard the lower sideband and LSB the
+            // upper (hackrf_rx_modes_test). FM and AM are symmetric, which is
+            // how it went unnoticed.
             m_audioI[n] = m_audioIq[consumed + n].real();
-            m_audioQ[n] = m_audioIq[consumed + n].imag();
+            m_audioQ[n] = -m_audioIq[consumed + n].imag();
         }
         consumed += m_audioBlock;
         // blockForOutput: waits for WDSP's worker. On THIS thread, which is the
@@ -193,8 +205,23 @@ void HackRfRxDsp::installChannel(std::shared_ptr<WdspChannel> channel, RxSetting
 
 void HackRfRxDsp::applySettings(RxSettings settings)
 {
-    QMetaObject::invokeMethod(this, [this, settings] { applySettingsNow(settings); },
-                              Qt::QueuedConnection);
+    {
+        const std::lock_guard<std::mutex> lock(m_settingsMutex);
+        m_pendingSettings = settings;
+    }
+    // Also queued, for when no IQ is flowing to carry it in.
+    QMetaObject::invokeMethod(this, [this] { applyPendingSettings(); }, Qt::QueuedConnection);
+}
+
+void HackRfRxDsp::applyPendingSettings()
+{
+    std::optional<RxSettings> s;
+    {
+        const std::lock_guard<std::mutex> lock(m_settingsMutex);
+        s.swap(m_pendingSettings);
+    }
+    if (s)
+        applySettingsNow(*s);
 }
 
 void HackRfRxDsp::applySettingsNow(const RxSettings& s)

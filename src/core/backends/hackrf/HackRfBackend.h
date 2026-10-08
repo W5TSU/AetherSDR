@@ -153,6 +153,7 @@ public:
     // shaped carrier by HackRfCwTx; with break-in, key-down raises PTT and a
     // hang timer drops it after the operator's delay.
     void setCwKeying(bool down, bool breakIn, int breakInDelayMs) override;
+    void setCwPitch(int hz) override;
     void invokeExtension(const QString& ns, const QString& verb,
                          quint64 requestId, const QVariant& arg = {}) override;
 
@@ -187,6 +188,8 @@ public:
     // off=0, slow=2, fast=4, anything else (including "med" and unknown
     // strings) falls back to WDSP's own medium default of 3.
     static int wdspAgcModeFromString(const QString& mode) noexcept;
+    // One of the AGC modes capabilities() publishes (lower case).
+    static bool isKnownAgcMode(const QString& mode) noexcept;
 
     // Mode-appropriate default RX passband, Hz relative to carrier.
     // Delegates to hl2::defaultPassbandForMode for every name the two
@@ -195,6 +198,25 @@ public:
     // Public and static for the same testability reason as the two maps
     // above.
     static std::pair<int, int> defaultPassbandForMode(const QString& mode) noexcept;
+
+    // The modes the VFO offers (published on every SliceDelta).
+    static QStringList supportedModes();
+
+    // Whether a mode can be transmitted (the rest are receiveOnlyModes).
+    static bool canTransmitMode(const QString& mode);
+    // The transmit modulator's configuration for a mode, from `base` (rates).
+    static HackRfTxDsp::Config txConfigFor(const QString& mode, HackRfTxDsp::Config base);
+
+    // CW's beat-frequency offset: the receiver's zero sits this far below the
+    // dial, so a carrier on the dial is heard at the pitch. +pitch for CW/CWU,
+    // -pitch for CWR/CWL, 0 in every other mode.
+    static double cwBfoHz(const QString& mode, int pitchHz) noexcept;
+
+    // The demodulator settings for a mode. The passband is the operator's
+    // carrier-relative cuts moved by the BFO, so it lands where the audio is.
+    static HackRfRxDsp::RxSettings rxSettingsFor(const QString& mode, int filterLowHz,
+                                                 int filterHighHz, int cwPitchHz,
+                                                 int agcMode, double agcMaxGainDb);
 
     // Emits IRadioBackend::dspSetupProgress/dspSetupFinished around the one
     // receive chain a connect builds off the GUI thread (connectRadio).
@@ -269,6 +291,10 @@ private:
     // Slice 0 / pan state — single slice for now, see the class comment.
     double m_sliceFreqHz{100'000'000.0};   // 100.0 MHz FM broadcast — safe RX default
     QString m_sliceMode{QStringLiteral("WFM")};
+    // The operator's CW pitch: where a carrier on the dial is heard.
+    int m_cwPitchHz{600};
+    // Where the DDC is tuned: the dial, less the CW BFO.
+    double ddcSliceHz() const;
     int m_sliceFilterLow{-40'000};   // matches defaultPassbandForMode("WFM")
     int m_sliceFilterHigh{40'000};
     double m_sampleRateHz{8'000'000.0};
@@ -312,6 +338,10 @@ private:
     HackRfRxDsp* m_rxDsp{nullptr};
 
     // RX demodulator settings (the channel itself lives in m_rxDsp).
+    // The operator's AGC, in the app's terms ("off" | "slow" | "med" | "fast",
+    // threshold 0..100): echoed on the slice and saved (the Agc domain).
+    QString m_agcMode{QStringLiteral("med")};
+    int m_agcThreshold{65};
     int m_agcModeIndex{3};       // WDSP AGC mode; 3 = medium, WDSP's own default
     // 0..100 threshold * 1.0 dB, at the slice default of 65 -- NOT Hl2Backend's
     // 0.6 map. Measured on real hardware (#42): the WBFM discriminator's own

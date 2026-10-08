@@ -2735,18 +2735,16 @@ target_include_directories(hackrf_ddc_test PRIVATE src)
 target_link_libraries(hackrf_ddc_test PRIVATE Qt6::Core)
 add_test(NAME hackrf_ddc_test COMMAND hackrf_ddc_test)
 
-# HackRF backend (#42): the hand-rolled FM transmit modulator (phase
-# integration from audio, interpolated up to HackRF's TX sample rate) —
-# see HackRfTxDsp.h's own comment for why this isn't WdspChannel's TXA mode.
-add_executable(hackrf_txdsp_test
-    tests/hackrf_txdsp_test.cpp
-    src/core/backends/hackrf/HackRfTxDsp.cpp
-)
-target_include_directories(hackrf_txdsp_test PRIVATE src)
-target_link_libraries(hackrf_txdsp_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME hackrf_txdsp_test COMMAND hackrf_txdsp_test)
-
 if(AETHER_BACKEND_HACKRF)
+    # HackRF backend (#42): the hand-written transmit modulator (FM by phase
+    # integration; SSB on Hl2TxDsp; AM, DSB), raised to HackRF's TX sample
+    # rate by HackRfTxInterpolator -- see HackRfTxDsp.h for why this isn't
+    # WdspChannel's TXA mode. Links aethercore for those two.
+    add_executable(hackrf_txdsp_test tests/hackrf_txdsp_test.cpp)
+    target_include_directories(hackrf_txdsp_test PRIVATE src)
+    target_link_libraries(hackrf_txdsp_test PRIVATE aethercore Qt6::Core Qt6::Test)
+    add_test(NAME hackrf_txdsp_test COMMAND hackrf_txdsp_test)
+
     # HackRfBackend capabilities declaration and restore-state contract.
     # Never calls connectRadio() — no hardware needed — mirroring
     # rtl_backend_test's own approach exactly.
@@ -2783,6 +2781,26 @@ if(AETHER_BACKEND_HACKRF)
     target_include_directories(hackrf_rx_dsp_test PRIVATE src)
     target_link_libraries(hackrf_rx_dsp_test PRIVATE aethercore Qt6::Core)
     add_test(NAME hackrf_rx_dsp_test COMMAND hackrf_rx_dsp_test)
+
+    # Every receive mode through the real chain (DDC -> WDSP): sidebands,
+    # CW at the operator's pitch, AM/SAM/DSB and every FM flavour.
+    add_executable(hackrf_rx_modes_test tests/hackrf_rx_modes_test.cpp)
+    target_include_directories(hackrf_rx_modes_test PRIVATE src)
+    target_link_libraries(hackrf_rx_modes_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_rx_modes_test COMMAND hackrf_rx_modes_test)
+
+    # Transmit baseband up to the HackRF's rate with every image 60 dB down.
+    add_executable(hackrf_tx_interpolator_test tests/hackrf_tx_interpolator_test.cpp)
+    target_include_directories(hackrf_tx_interpolator_test PRIVATE src)
+    target_link_libraries(hackrf_tx_interpolator_test PRIVATE aethercore)
+    add_test(NAME hackrf_tx_interpolator_test COMMAND hackrf_tx_interpolator_test)
+
+    # Every transmit mode through the real modulator: sideband, carrier,
+    # AM/DSB/FM structure, and no rate-conversion images.
+    add_executable(hackrf_tx_modes_test tests/hackrf_tx_modes_test.cpp)
+    target_include_directories(hackrf_tx_modes_test PRIVATE src)
+    target_link_libraries(hackrf_tx_modes_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_tx_modes_test COMMAND hackrf_tx_modes_test)
 
     # A cold HackRF connect must not freeze the GUI while WDSP plans its FFTs.
     # Needs a real HackRF and AETHER_HACKRF_HW_TEST=1; exits 77 (skipped)
