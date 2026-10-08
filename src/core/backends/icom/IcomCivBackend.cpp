@@ -1056,6 +1056,10 @@ void IcomCivBackend::disconnectRadio()
     m_controlsValueKnown.clear();
     m_controlsSeen.clear();
     m_confirmedState.clear();
+    // stop() emits no disconnected(), so onSessionDisconnected's reset does
+    // not run for an operator disconnect; the next connect's 0 is not ours.
+    m_squelchOnAtZero = false;
+    m_squelchOn = false;
     ++m_stateContext;
     m_controlsSent.clear();
     m_controlsScheduled.clear();
@@ -1686,6 +1690,8 @@ void IcomCivBackend::onSessionDisconnected(const QString& reason)
     m_accessoryModLevelPercent = -1;
     m_networkModLevelPercent = -1;
     m_micGainReported = false;
+    m_squelchOnAtZero = false;
+    m_squelchOn = false;
     m_pcAudioEnabled.reset();
     m_dataOffModRestore.reset();
     m_lastModInputWarning.clear();
@@ -2303,10 +2309,22 @@ void IcomCivBackend::onCivFrame(const CivFrame& frame,
             confirmState(QStringLiteral("civ.20.3"), pct);
             m_squelchPercent = pct;
             SliceDelta d;
-            d.squelchLevel = pct;
             // NO SEPARATE ENABLE on this radio — the threshold IS the control,
-            // so a non-zero threshold is what "squelch on" means here.
-            d.squelchOn = pct > 0;
+            // so a non-zero threshold means "on". A zero is "off" unless it is
+            // the echo of our own on-at-0 write; a radio-side non-zero value
+            // ends that, so its later return to 0 reads as off again. Judged on
+            // the raw threshold: raw 1..2 round to 0 % but are not 0.
+            if (*raw > 0) {
+                m_squelchOnAtZero = false;
+            }
+            m_squelchOn = *raw > 0 || m_squelchOnAtZero;
+            d.squelchOn = m_squelchOn;
+            // An Off 0 is not a level. Publishing it would replace the slice's
+            // remembered manual threshold with 0, so the next SQL -> Manual
+            // would come back on at a threshold that gates nothing.
+            if (m_squelchOn) {
+                d.squelchLevel = pct;
+            }
             emit sliceChanged(sliceId(), d);
             return;
         }
@@ -4900,13 +4918,18 @@ bool IcomCivBackend::queueTunerReadIfSupported(
 
 void IcomCivBackend::setSliceSquelch(int, bool on, int level)
 {
+    // sendUserCommand drops a write outside a connected session; record no
+    // on-at-0 intent for a write that never reaches the radio.
+    if (!m_session || !m_connected)
+        return;
     m_squelchPercent = on ? level : 0;
-    // NO SQUELCH ENABLE EXISTS on this radio — the threshold IS the control,
-    // and squelch is "off" when it sits at zero. Mapping the UI's toggle onto
-    // the threshold is the only honest translation available; the alternative
-    // is a switch that does nothing.
-    sendUserCommand(cmdSetLevel(m_session ? m_session->civAddress() : 0xA4,
-                                level::kSquelch, on ? percentToLevelRaw(level) : 0));
+    // NO SQUELCH ENABLE EXISTS on this radio — the threshold IS the control.
+    // Off writes 0; on writes the level, and on-at-0 is remembered so its own
+    // 0 readback stays on (the kSquelch decode). Mapping the UI's toggle onto
+    // the threshold is the only honest translation available.
+    const int raw = on ? percentToLevelRaw(level) : 0;
+    m_squelchOnAtZero = on && raw == 0;
+    sendUserCommand(cmdSetLevel(m_session->civAddress(), level::kSquelch, raw));
 }
 
 void IcomCivBackend::setSliceFmToneMode(int, const QString& mode)
@@ -5911,7 +5934,7 @@ bool IcomCivBackend::scrubDrive(const icom::ControlSpec& c)
                                    : QStringLiteral("ANT1"));
         return true;
     }
-    if (id == QLatin1String("squelch"))  { setSliceSquelch(slice, m_squelchPercent > 0, m_squelchPercent); return true; }
+    if (id == QLatin1String("squelch"))  { setSliceSquelch(slice, m_squelchOn, m_squelchPercent); return true; }
     if (id == QLatin1String("agc"))      { setSliceAgc(slice, m_agcMode, 0); return true; }
     if (id == QLatin1String("tx.power")) { writeTxPowerLevel(m_txPowerPercent); return true; }
     if (id == QLatin1String("mic.gain")) {
