@@ -573,7 +573,7 @@ private:
     // re-asserts exactly this rather than re-deriving it.
     bool    m_squelchOn = false;
     int     m_micGainPercent = 0;
-    int     m_compLevelPercent = 0;
+    int     m_compLevel = 0;
     bool    m_compEnable = false;
     bool    m_monitorOn = false;
     int     m_monitorLevelPercent = 0;
