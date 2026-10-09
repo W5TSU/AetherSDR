@@ -2160,6 +2160,7 @@ void MainWindow::wirePanLifecycle()
         markProfileLoadPanDimensionsReady(panId, yPixels);
         if (auto* sw = m_panStack->spectrum(panId)) {
             sw->prepareForFftPixelScaleChange();
+            sw->setEncoderYPixels(yPixels);
         }
     });
 

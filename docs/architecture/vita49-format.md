@@ -32,6 +32,29 @@ dBm = max_dbm - (sample / (y_pixels - 1.0)) × (max_dbm − min_dbm)
 `y_pixels` comes from `display pan` status (must be tracked per-stream via
 `PanadapterStream::setYPixels()`).
 
+An owned-pan range write can be accepted with `R<seq>|0|` and no matching
+`display pan` status (FlexLib 4.1.5.39794, `Panadapter.cs`
+`SetLowDbmReply`/`SetHighDbmReply`, returns on `resp_val == 0` without touching
+the range). The range handshake applies a validated, dispatched request to the
+decoder; its reply retires the pending guard and converges the pan model. A
+radio status received after the write wins over the request, accepted or not
+(Principle II); with none, an accepted write stands and a rejected one restores
+the range the radio last confirmed. FlexLib's per-endpoint handlers adopt a
+rejection's reply body as that endpoint's value; this client writes both
+endpoints in one command, whose rejection body has no documented shape, so it
+is not parsed. Superseded replies cannot complete a newer
+request; ordinary status updates refresh the same per-pan encoder cache.
+
+The encoder range is separate from the auto-floor display axis. Headroom
+recovery runs only with Auto Floor on and only on a pan this client owns, since
+Flex stores `min_dbm`/`max_dbm` per band. It expands only the clipped endpoint, bounded by -180 dBm, +20 dBm
+(FlexLib limits), and the client's 180 dB span limit. Native pixel auto floor
+preserves its axis across encoder changes and reacquires once after the existing
+750 ms settle window plus three floors within 1 dB over at least 100 ms. This
+settling gate also holds headroom requests during the transition; clipped
+floors cannot acquire a baseline. It does not identify VITA frames by the TCP
+range generation or suppress all decoded-trace transients.
+
 ### FFT Frame Assembly
 
 FFT data may span multiple VITA-49 packets. A 12-byte sub-header at offset 28

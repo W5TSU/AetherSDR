@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/DbmRangePlausibility.h"
+
 #include <QtGlobal>
 #include <QVector>
 #include <QVarLengthArray>
@@ -14,6 +16,16 @@ struct Range {
     float minDbm{0.0f};
     float maxDbm{0.0f};
 };
+
+template<typename Dispatch, typename Commit>
+bool dispatchValidatedRange(const Range& range, Dispatch dispatch, Commit commit)
+{
+    if (!dbmRangeLooksPlausible(range.minDbm, range.maxDbm) || !dispatch()) {
+        return false;
+    }
+    commit();
+    return true;
+}
 
 inline bool materiallyDifferent(const Range& lhs, const Range& rhs,
                                 float thresholdDb = 0.05f)
@@ -100,6 +112,22 @@ public:
 
     bool active() const { return m_active; }
 
+    HandshakeDecision completeReply(quint64 expectedGeneration, bool accepted,
+                                     const Range& previousRange)
+    {
+        if (!m_active || m_generation != expectedGeneration) {
+            return {};
+        }
+        // Principle II: a radio status received after the write is the truth,
+        // accepted or not, as in FlexLib (an accepted reply changes nothing).
+        // With no intervening status an accepted write stands; a rejected one
+        // falls back to the prior range.
+        const Range range = m_authoritativeRange.value_or(
+            accepted ? m_requestedRange : previousRange);
+        clear();
+        return {HandshakeAction::ReconcileRadioRange, range};
+    }
+
 private:
     static bool rangesMatch(const Range& left, const Range& right)
     {
@@ -174,8 +202,27 @@ inline Range clippedFloorRecoveryRange(float currentMinDbm,
                                        float currentMaxDbm,
                                        float headroomStepDb = 6.0f)
 {
-    const float stepDb = std::max(0.0f, headroomStepDb);
-    return {currentMinDbm - stepDb, currentMaxDbm - stepDb};
+    if (!std::isfinite(headroomStepDb) || headroomStepDb <= 0.0f) {
+        return {currentMinDbm, currentMaxDbm};
+    }
+    // Keep the opposite endpoint: floor recovery must not clip existing peaks.
+    // Flex's lower endpoint is -180 dBm; the supported aperture is <=180 dB.
+    const float minDbm = std::min(currentMinDbm, std::max(
+        {currentMinDbm - headroomStepDb, -180.0f, currentMaxDbm - 180.0f}));
+    return {minDbm, currentMaxDbm};
+}
+
+inline Range clippedPeakRecoveryRange(float currentMinDbm,
+                                      float currentMaxDbm,
+                                      float headroomStepDb = 24.0f)
+{
+    if (!std::isfinite(headroomStepDb) || headroomStepDb <= 0.0f) {
+        return {currentMinDbm, currentMaxDbm};
+    }
+    // FlexLib Panadapter.HighDbm caps the radio encoder ceiling at +20 dBm.
+    const float maxDbm = std::max(currentMaxDbm, std::min(
+        {currentMaxDbm + headroomStepDb, 20.0f, currentMinDbm + 180.0f}));
+    return {currentMinDbm, maxDbm};
 }
 
 struct Evaluation {

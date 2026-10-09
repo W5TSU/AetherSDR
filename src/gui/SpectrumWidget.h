@@ -279,6 +279,16 @@ public:
     void setNoiseFloorPosition(int pos);
     void setNoiseFloorEnable(bool on);
     void prepareForFftScaleChange();
+    void setEncoderDbmRange(float minDbm, float maxDbm);
+    // A y_pixels change re-scales the encoder rows but needs no settle of its
+    // own here: the pixel-scale path (prepareForFftPixelScaleChange) owns that.
+    void setEncoderYPixels(int yPixels) {
+        if (yPixels > 1 && m_encoderYPixels != yPixels) {
+            m_encoderYPixels = yPixels;
+            ++m_encoderRangeGeneration;
+            m_encoderRangeChangedMs = QDateTime::currentMSecsSinceEpoch();
+        }
+    }
     void prepareForFftPixelScaleChange();
     // Arm the DSS FFT-pixel-scale settle gate without switching the decoder or
     // resetting smoothing. Called when a y_pixels change is *requested* (before
@@ -359,7 +369,24 @@ public:
     // again, forever. Kept separate from m_noiseFloorEnable, which is the
     // OPERATOR's toggle — clobbering that would fight the overlay menu and
     // persist to the next radio. See RadioCapabilities::radioOwnsDbmScale.
-    void setRadioOwnsDbmScale(bool on) { m_radioOwnsDbmScale = on; }
+    // Each wirePanadapter() pass takes a new epoch; replies and timers armed
+    // by an earlier pass compare theirs and stand down.
+    quint64 advanceDbmRangeWireEpoch() { return ++m_dbmRangeWireEpoch; }
+    quint64 dbmRangeWireEpoch() const { return m_dbmRangeWireEpoch; }
+    // Whether this session may command the pan's dBm range (it owns the pan).
+    // Unset means yes, matching PanadapterModel::ownedByClient's fail-open.
+    void setDbmRangeCommandEligibility(std::function<bool()> eligible) {
+        m_dbmRangeCommandEligible = std::move(eligible);
+    }
+    bool canCommandDbmRange() const {
+        return !m_dbmRangeCommandEligible || m_dbmRangeCommandEligible();
+    }
+    void setRadioOwnsDbmScale(bool on) {
+        m_radioOwnsDbmScale = on;
+        if (!on) {
+            m_noiseFloorReacquisition.cancel();
+        }
+    }
     bool radioOwnsDbmScale() const { return m_radioOwnsDbmScale; }
     // RadioCapabilities::panBinsAbsolute(): the bins do not move with the
     // reference level, so the auto-floor converges without an echo and a
@@ -369,6 +396,9 @@ public:
         if (m_panBinsAbsolute != on)
             resetWfBlankerState();  // the blanker ring's unit follows this flag
         m_panBinsAbsolute = on;
+        if (on) {
+            m_noiseFloorReacquisition.cancel();
+        }
     }
     bool panBinsAbsolute() const { return m_panBinsAbsolute; }
     double centerMhz()    const { return m_centerMhz; }
@@ -924,9 +954,8 @@ signals:
     // Emitted when the user adjusts the dBm scale (drag or arrows).
     void dbmRangeChangeRequested(float minDbm, float maxDbm);
     void dbmRangeDragFinished(float minDbm, float maxDbm);
-    // The radio FFT encoder is pinned to its lower endpoint. Request more
-    // radio-side headroom without moving the client-side 3D presentation.
-    void radioDbmHeadroomRecoveryRequested(float headroomDb);
+    // Recover clipped encoder endpoints without moving the presentation axis.
+    void radioDbmHeadroomRecoveryRequested(float lowerHeadroomDb, float upperHeadroomDb);
     void noiseFloorPositionResolved(int pos);
     void dssFloorDepthResolved(int dB);
     void waterfallLineDurationChangeRequested(int ms);
@@ -1316,6 +1345,9 @@ private:
     // every time the floor drifted).
     void applyNoiseFloorAutoAdjust(qint64 nowMs);
     bool noiseFloorAutoAdjustHeld(qint64 nowMs);
+    void recordRenderedTrace(float floorDbm);
+    bool flexHeadroomRecoveryAllowed() const;
+    bool flexFloorClipAwaitsRecovery() const;
     void armNoiseFloorFastLock(int freshFrames, int snapFrames);
     void moveRefLevelToward(float targetRef, qint64 nowMs);
     void sendNoiseFloorRangeCommand(qint64 nowMs, bool force);
@@ -1505,6 +1537,21 @@ private:
 
     float m_refLevel{-50.0f};       // top of display (dBm)
     float m_dynamicRange{100.0f};   // dB range shown in spectrum (-50 to -150)
+    float m_encoderMinDbm{0.0f};
+    float m_encoderMaxDbm{0.0f};
+    bool m_encoderRangeValid{false};
+    int m_encoderYPixels{700};
+    quint64 m_encoderRangeGeneration{0};
+    quint64 m_dbmRangeWireEpoch{0};
+    std::function<bool()> m_dbmRangeCommandEligible;
+    qint64 m_encoderRangeChangedMs{0};
+    quint64 m_fftFrameSequence{0};
+    quint64 m_renderedFftFrameSequence{0};
+    quint64 m_renderedEncoderRangeGeneration{0};
+    qint64 m_renderedTraceMs{0};
+    float m_renderedRefLevelDbm{0.0f};
+    float m_renderedDynamicRangeDb{0.0f};
+    float m_renderedFloorDbm{-1000.0f};
     bool  m_resetFftSmoothingOnNextFrame{false};
     bool  m_pendingDbmRangeEcho{false};
     bool  m_pendingDbmRangeEchoFromAutoFloor{false};
@@ -1552,6 +1599,7 @@ private:
     int    m_noiseFloorCandidateFrames{0};
     int    m_noiseFloorFreshFrameCount{0};
     int    m_noiseFloorFastLockFrames{0};
+    NoiseFloorReacquisition m_noiseFloorReacquisition;
 
     // Percentile EWMA used for the amber floor overlay line and auto-squelch.
     // Tracked separately from m_measuredNoiseFloorDbm (two-pass trimmed mean)

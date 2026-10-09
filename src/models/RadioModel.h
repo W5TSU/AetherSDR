@@ -915,8 +915,10 @@ public:
     void setPanDbmRange(float minDbm, float maxDbm);
     // A user's dBm scale for one pan: wire text on a radio with a command
     // plane, IRadioBackend::setPanDbmRange on one without. False when it was
-    // not dispatched.
-    bool requestPanDbmRange(const QString& panId, float minDbm, float maxDbm);
+    // not dispatched. onReply reports the radio's reply to the wire text; the
+    // seam path has no reply and never calls it.
+    bool requestPanDbmRange(const QString& panId, float minDbm, float maxDbm,
+                            std::function<void(int code, const QString& body)> onReply = {});
 
     // #4142 — the ONLY supported way for a USER-INTENT path to write a pan's
     // center/bandwidth/band to the radio.
@@ -1470,8 +1472,8 @@ public:
     void createRxAudioStream();
     void removeRxAudioStream();
 
-    // Send a command with a response callback (for firmware uploader, etc.)
-    void sendCmdPublic(const QString& cmd, std::function<void(int code, const QString& body)> cb);
+    // True only when dispatched; the callback reports the later radio reply.
+    bool sendCmdPublic(const QString& cmd, std::function<void(int code, const QString& body)> cb);
     void requestFileUploadPort(qint64 size, const QString& uploadKind,
                                std::function<void(int code, const QString& body)> cb);
     void requestFileDownloadPort(const QString& downloadKind,

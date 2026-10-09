@@ -6498,6 +6498,7 @@ set(AETHER_SETTINGS_CONSUMERS
     spectrum_overlay_fft_fps_bounds_test
     gui_nested_lifetime_test
     rx_applet_squelch_reconciliation_test
+    panadapter_dbm_range_test
     rtl_slice_settings_test
     automation_persist_diagnostics_test
     weather_radar_loading_test
