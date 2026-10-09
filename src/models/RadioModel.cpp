@@ -2242,6 +2242,7 @@ RadioModel::RadioModel(QObject* parent)
     });
     connect(this, &RadioModel::sliceRemoved, this, &RadioModel::updateTuneAvailability);
     connect(this, &RadioModel::capabilitiesChanged, this, &RadioModel::updateTuneAvailability);
+    qRegisterMetaType<SpectrumDecodeScale>();
     qRegisterMetaType<SliceDelta>();
     qRegisterMetaType<TransmitDelta>();
     qRegisterMetaType<MeterDef>();

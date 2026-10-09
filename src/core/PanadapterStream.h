@@ -2,6 +2,7 @@
 
 #include "PacketLossConcealment.h"
 #include "VitaBinCoverage.h"
+#include "SpectrumDecodeScale.h"
 
 #include <QObject>
 #include <QUdpSocket>
@@ -71,7 +72,7 @@ public:
     bool    isRunning() const;
 
     // Update the dBm range used to scale incoming FFT bins for a specific stream.
-    void setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho = false);
+    SpectrumDecodeScale setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho = false);
     // Abandon an in-flight client range request so the next radio-authoritative
     // range can update the FFT decoder immediately (for example, on a band change).
     bool cancelPendingDbmRange(quint32 streamId);
@@ -211,7 +212,8 @@ signals:
 
     void daxAudioReady(int channel, const QByteArray& pcm);
     void iqDataReady(int channel, const QByteArray& rawPayload, int sampleRate);
-    void spectrumReady(quint32 streamId, const QVector<float>& binsDbm, qint64 emittedNs);
+    void spectrumReady(quint32 streamId, const QVector<float>& binsDbm, qint64 emittedNs,
+                       const AetherSDR::SpectrumDecodeScale& decodeScale);
     // One row of waterfall data (intensity values, Width bins).
     void waterfallRowReady(quint32 streamId, const QVector<float>& binsDbm,
                            double lowFreqMhz, double highFreqMhz,
@@ -231,6 +233,7 @@ private slots:
     void onDatagramReady();
 
 private:
+    friend struct PanadapterDbmRangeTestAccess;
     void processDatagram(const QByteArray& data);
     // Raise the kernel receive buffer (SO_RCVBUF) on the bound VITA-49 socket so
     // bursts / brief drain stalls don't overflow it and surface as false
@@ -369,6 +372,8 @@ private:
     quint16         m_localPort{0};
 
     QMap<quint32, QPair<float,float>> m_dbmRanges;  // streamId → (min, max)
+    QMap<quint32, quint64> m_dbmRangeGenerations;
+    quint64 m_nextDbmRangeGeneration{0};
     QMap<quint32, QPair<float,float>> m_pendingDbmRanges;  // streamId → pending echoed range
     QMap<quint32, int> m_yPixels;  // streamId → ypixels for FFT bin scaling
     RadioConnection* m_conn{nullptr};

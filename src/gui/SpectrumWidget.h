@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AutoBlackMode.h"
+#include "DbmRangeTransition.h"
 #include "RfGainPresentation.h"
 
 #include <limits>
@@ -244,7 +245,7 @@ public:
                                    int durationMs = 5000);
 
     // Feed a new FFT frame. bins are scaled dBm values.
-    void updateSpectrum(const QVector<float>& binsDbm);
+    void updateSpectrum(const QVector<float>& binsDbm, const SpectrumDecodeScale& decodeScale = {});
 
     // Feed a single waterfall row from a VITA-49 waterfall tile.
     // lowFreqMhz/highFreqMhz describe the tile's frequency span.
@@ -279,7 +280,7 @@ public:
     void setNoiseFloorPosition(int pos);
     void setNoiseFloorEnable(bool on);
     void prepareForFftScaleChange();
-    void setEncoderDbmRange(float minDbm, float maxDbm);
+    void setEncoderDbmRange(float minDbm, float maxDbm, quint64 decodeGeneration = 0);
     // A y_pixels change re-scales the encoder rows but needs no settle of its
     // own here: the pixel-scale path (prepareForFftPixelScaleChange) owns that.
     void setEncoderYPixels(int yPixels) {
@@ -504,6 +505,7 @@ public:
     }
     void setRfGain(int gain) {
         if (m_rfGainValue != gain) {
+            clearDbmReleaseRebase();
             m_rfGainValue = gain;
             reacquireNoiseFloorLock();
         }
@@ -1355,7 +1357,7 @@ private:
     bool requestFlexRadioHeadroom(qint64 nowMs);
     void beginDbmRangeTransition(float oldMinDbm, float oldMaxDbm,
                                  float newMinDbm, float newMaxDbm);
-    void clearDbmReleaseRebase();
+    void clearDbmReleaseRebase(bool forgetFrames = true);
     void armDssZoomFloorSyncAfterSettle();
     void syncDssRangeFromFreshZoomFrame(const QVector<float>& bins);
     // Reset the baseline tracker — called on any input change (zoom,
@@ -1399,7 +1401,7 @@ private:
     void endTxDbmRangeFreeze();
     void resetTxDbmRangeFreeze();
     void deferTxDbmRange(float minDbm, float maxDbm);
-    void applyDbmRangeImmediate(float minDbm, float maxDbm);
+    void applyDbmRangeImmediate(float minDbm, float maxDbm, bool preserveFrameTransition = false);
     void reprojectBinsToFrozenTxDbmRange(QVector<float>& bins) const;
     void clearWaterfallRows();
     QVector<float> smoothKiwiSdrWaterfallBins(const QVector<float>& bins);
@@ -1537,6 +1539,7 @@ private:
 
     float m_refLevel{-50.0f};       // top of display (dBm)
     float m_dynamicRange{100.0f};   // dB range shown in spectrum (-50 to -150)
+    DbmRangeTransition::FrameGuard m_dbmFrameGuard;
     float m_encoderMinDbm{0.0f};
     float m_encoderMaxDbm{0.0f};
     bool m_encoderRangeValid{false};

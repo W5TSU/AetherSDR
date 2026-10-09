@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/CommandParser.h"   // MessageSeverity for radioMessageReceived
+#include "core/SpectrumDecodeScale.h"
 #include "core/GuiClientRegistrationState.h"
 #include "core/RadioSettingsScope.h"  // RFC #4603 radio-scoped feature documents
 #include "core/backends/GpsDelta.h"     // applyGpsChanges payload (aetherd 2.3)
@@ -1164,7 +1165,8 @@ signals:
     // Per-RadioModel → per-session, which is exactly what the two-panadapter end
     // state needs.
     void panFeedSpectrumReady(quint32 streamId, const QVector<float>& binsDbm,
-                              qint64 emittedNs);
+                              qint64 emittedNs,
+                              const AetherSDR::SpectrumDecodeScale& decodeScale = {});
     void panFeedWaterfallRowReady(quint32 streamId, const QVector<float>& binsDbm,
                                   double lowFreqMhz, double highFreqMhz,
                                   quint32 timecode, qint64 emittedNs);

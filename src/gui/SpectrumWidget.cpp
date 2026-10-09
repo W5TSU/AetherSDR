@@ -3172,11 +3172,12 @@ void SpectrumWidget::prepareForFftScaleChange()
     m_noiseFloorCandidateFrames = 0;
 }
 
-void SpectrumWidget::setEncoderDbmRange(float minDbm, float maxDbm)
+void SpectrumWidget::setEncoderDbmRange(float minDbm, float maxDbm, quint64 decodeGeneration)
 {
     if (!dbmRangeLooksPlausible(minDbm, maxDbm)) {
         return;
     }
+    m_dbmFrameGuard.setTargetScale({minDbm, maxDbm, decodeGeneration});
     if (m_encoderRangeValid && m_encoderMinDbm == minDbm && m_encoderMaxDbm == maxDbm) {
         return;
     }
@@ -3696,6 +3697,11 @@ void SpectrumWidget::beginDbmRangeTransition(float oldMinDbm, float oldMaxDbm,
     m_pendingDbmRangeEchoStartMs = nowMs;
     m_pendingMinDbm = newMinDbm;
     m_pendingMaxDbm = newMaxDbm;
+    m_dbmFrameGuard.arm(
+        m_encoderRangeValid
+            ? DbmRangeTransition::Range{m_encoderMinDbm, m_encoderMaxDbm}
+            : DbmRangeTransition::Range{oldMinDbm, oldMaxDbm},
+        {newMinDbm, newMaxDbm}, nowMs, kDbmRangeHandshakeTimeoutMs);
     m_dbmReleasePreviewOldMinDbm = oldMinDbm;
     m_dbmReleasePreviewOldMaxDbm = oldMaxDbm;
     m_dbmReleasePreviewNewMinDbm = newMinDbm;
@@ -3798,8 +3804,11 @@ bool SpectrumWidget::requestFlexRadioHeadroom(qint64 nowMs)
     return floorRecoverable;
 }
 
-void SpectrumWidget::clearDbmReleaseRebase()
+void SpectrumWidget::clearDbmReleaseRebase(bool forgetFrames)
 {
+    if (forgetFrames) {
+        m_dbmFrameGuard.clear();
+    }
     m_dbmReleaseRebaseUntilMs = 0;
     m_dbmReleasePreviewOldMinDbm = 0.0f;
     m_dbmReleasePreviewOldMaxDbm = 0.0f;
@@ -7810,6 +7819,9 @@ void SpectrumWidget::setFrequencyRangeInternal(double centerMhz, double bandwidt
     // Nudges shift center by ~10% of halfBw; 25% threshold comfortably separates the two.
     const double halfBw = bandwidthMhz / 2.0;
     const bool bwChanged = (bandwidthMhz != m_bandwidthMhz);
+    if (bwChanged || !mhzNearlyEqual(centerMhz, oldCenterMhz)) {
+        clearDbmReleaseRebase();
+    }
     // Only a change away from an already-established span is a zoom. This is
     // the radio-echo entry point, so the first geometry push of a pan (no
     // prior bandwidth) is the radio establishing it on connect — re-anchoring
@@ -7957,6 +7969,7 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
         }
     }
 
+    bool preserveFrameTransition = false;
     if (m_pendingDbmRangeEcho) {
         const bool matchesPending = std::abs(minDbm - m_pendingMinDbm) < 0.01f
             && std::abs(maxDbm - m_pendingMaxDbm) < 0.01f;
@@ -7974,6 +7987,7 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
                 return;
             }
         }
+        preserveFrameTransition = matchesPending;
         m_pendingDbmRangeEcho = false;
         m_pendingDbmRangeEchoFromAutoFloor = false;
         m_pendingDbmRangeEchoStartMs = 0;
@@ -7984,7 +7998,7 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
         }
     }
 
-    applyDbmRangeImmediate(minDbm, maxDbm);
+    applyDbmRangeImmediate(minDbm, maxDbm, preserveFrameTransition);
 }
 
 void SpectrumWidget::cancelPendingDbmRangeChange()
@@ -7996,7 +8010,7 @@ void SpectrumWidget::cancelPendingDbmRangeChange()
     m_resetFftSmoothingOnNextFrame = true;
 }
 
-void SpectrumWidget::applyDbmRangeImmediate(float minDbm, float maxDbm)
+void SpectrumWidget::applyDbmRangeImmediate(float minDbm, float maxDbm, bool preserveFrameTransition)
 {
     if (!clampDbmRange(minDbm, maxDbm)) {
         return;
@@ -8016,7 +8030,9 @@ void SpectrumWidget::applyDbmRangeImmediate(float minDbm, float maxDbm)
     if (ref == m_refLevel && dyn == m_dynamicRange) {
         return;
     }
-    clearDbmReleaseRebase();
+    if (!preserveFrameTransition) {
+        clearDbmReleaseRebase();
+    }
     m_refLevel     = ref;
     m_dynamicRange = dyn;
     m_resetFftSmoothingOnNextFrame = true;
@@ -8492,7 +8508,7 @@ void SpectrumWidget::setSliceInfo(int sliceId, bool isTxSlice)
     if (idx >= 0) { m_sliceOverlays[idx].isTxSlice = isTxSlice; markOverlayDirty(); }
 }
 
-void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
+void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm, const SpectrumDecodeScale& decodeScale)
 {
     ++m_fftFrameSequence;
     PerfUpdateScope perfScope(PerfUpdateScope::Kind::Panadapter);
@@ -8520,14 +8536,24 @@ void SpectrumWidget::updateSpectrum(const QVector<float>& binsDbm)
 
     // The stream decoder switches to the requested dBm range immediately, but
     // the radio can continue sending FFT frames encoded with the old range for
-    // several hundred milliseconds. Compare both interpretations with the last
-    // corrected frame so arrows and drags never feed the transition glitch into
-    // the trace, noise-floor tracker, waterfall fallback, or 3D history.
+    // several hundred milliseconds. Carry the observation's decoder scale and
+    // compare in-flight apertures against the last corrected frame before the
+    // trace, floor tracker, waterfall fallback, or 3D history consume it.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     if (m_dbmReleaseRebaseUntilMs > 0 && nowMs > m_dbmReleaseRebaseUntilMs) {
         clearDbmReleaseRebase();
     }
-    if (m_dbmReleaseRebaseUntilMs > 0) {
+    if (decodeScale.valid() && !m_panBinsAbsolute && !m_txDbmRangeFrozen) {
+        DbmRangeTransition::Evaluation evaluation =
+            m_dbmFrameGuard.evaluate(*spectrumBins, m_bins, decodeScale, nowMs);
+        if (evaluation.useRebasedBins) {
+            adjustedBins = std::move(evaluation.rebasedBins);
+            spectrumBins = &adjustedBins;
+        }
+        if (evaluation.newEncodingObserved) {
+            clearDbmReleaseRebase(false);
+        }
+    } else if (m_dbmReleaseRebaseUntilMs > 0) {
         const QVector<float>& sourceBins = *spectrumBins;
         const float oldRange =
             m_dbmReleasePreviewOldMaxDbm - m_dbmReleasePreviewOldMinDbm;

@@ -455,6 +455,7 @@ void PanadapterStream::unregisterPanStream(quint32 streamId)
     m_knownPanStreams.remove(streamId);
     m_frames.remove(streamId);
     m_dbmRanges.remove(streamId);
+    m_dbmRangeGenerations.remove(streamId);
     m_pendingDbmRanges.remove(streamId);
 }
 
@@ -473,6 +474,7 @@ void PanadapterStream::clearRegisteredStreams()
     m_frames.clear();
     m_wfFrames.clear();
     m_dbmRanges.clear();
+    m_dbmRangeGenerations.clear();
     m_pendingDbmRanges.clear();
     m_daxStreamIds.clear();
     m_iqStreamIds.clear();
@@ -519,18 +521,29 @@ void PanadapterStream::resetOrphanStreams()
     m_orphanStreams.clear();
 }
 
-void PanadapterStream::setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho)
+SpectrumDecodeScale PanadapterStream::setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho)
 {
     minDbm = std::max(minDbm, kMinSpectrumDbm);
     maxDbm = std::max(maxDbm, minDbm + 10.0f);
 
     QMutexLocker lock(&m_streamMutex);
+    const auto currentScale = [&]() {
+        const QPair<float, float> range = m_dbmRanges.value(streamId, {-130.0f, -40.0f});
+        return SpectrumDecodeScale{range.first, range.second, m_dbmRangeGenerations.value(streamId)};
+    };
+    const auto applyScale = [&]() {
+        if (!m_dbmRanges.contains(streamId)
+            || m_dbmRanges.value(streamId) != QPair<float, float>{minDbm, maxDbm}) {
+            m_dbmRangeGenerations[streamId] = ++m_nextDbmRangeGeneration;
+        }
+        m_dbmRanges[streamId] = {minDbm, maxDbm};
+    };
     if (waitForEcho) {
         m_pendingDbmRanges[streamId] = {minDbm, maxDbm};
-        m_dbmRanges[streamId] = {minDbm, maxDbm};
+        applyScale();
         qCDebug(lcVita49) << "PanadapterStream: pending dBm range for 0x" + QString::number(streamId, 16)
                  << minDbm << "->" << maxDbm;
-        return;
+        return currentScale();
     } else {
         const auto pendingIt = m_pendingDbmRanges.constFind(streamId);
         if (pendingIt != m_pendingDbmRanges.constEnd()) {
@@ -540,14 +553,15 @@ void PanadapterStream::setDbmRange(quint32 streamId, float minDbm, float maxDbm,
                 qCDebug(lcVita49) << "PanadapterStream: ignored stale dBm range for 0x"
                          + QString::number(streamId, 16)
                          << minDbm << "->" << maxDbm;
-                return;
+                return currentScale();
             }
             m_pendingDbmRanges.remove(streamId);
         }
     }
-    m_dbmRanges[streamId] = {minDbm, maxDbm};
+    applyScale();
     qCDebug(lcVita49) << "PanadapterStream: dBm range for 0x" + QString::number(streamId, 16)
              << minDbm << "->" << maxDbm;
+    return currentScale();
 }
 
 bool PanadapterStream::cancelPendingDbmRange(quint32 streamId)
@@ -959,10 +973,19 @@ void PanadapterStream::decodeFFT(const uchar* raw, int totalBytes, bool hasTrail
 
     // Convert to dBm using per-stream range
     QPair<float,float> dbmRange;
+    SpectrumDecodeScale decodeScale;
     int yPixVal;
     {
         QMutexLocker lock(&m_streamMutex);
         dbmRange = m_dbmRanges.value(streamId, {-130.0f, -40.0f});
+        // A stream whose range was never written (status matched the -130/-40
+        // default) still needs a nonzero generation, or its frames can't be told
+        // apart from a later write's and the release guard is bypassed.
+        quint64& generation = m_dbmRangeGenerations[streamId];
+        if (generation == 0) {
+            generation = ++m_nextDbmRangeGeneration;
+        }
+        decodeScale = {dbmRange.first, dbmRange.second, generation};
         yPixVal = m_yPixels.value(streamId, 700);
     }
     auto [minDbm, maxDbm] = dbmRange;
@@ -994,7 +1017,7 @@ void PanadapterStream::decodeFFT(const uchar* raw, int totalBytes, bool hasTrail
     }
 
     const qint64 emittedNs = PerfTelemetry::instance().enabled() ? PerfTelemetry::nowNs() : 0;
-    emit spectrumReady(streamId, bins, emittedNs);
+    emit spectrumReady(streamId, bins, emittedNs, decodeScale);
 }
 
 // ─── Waterfall tile decode ───────────────────────────────────────────────────
