@@ -1506,6 +1506,10 @@ private:
     QPointer<ContributeDialog> m_contributeDialog;
     QPointer<AetherDspDialog> m_dspDialog;
     QPointer<QDialog> m_nr2WisdomDialog;
+    // The running NR2 wisdom worker and its cancel flag, so shutdown can stop
+    // it before AudioEngine teardown needs the FFTW planner lock (#6287).
+    QPointer<QThread> m_nr2WisdomThread;
+    std::shared_ptr<std::atomic_bool> m_nr2WisdomCancel;
 #ifdef HAVE_MQTT
     QPointer<MqttSettingsDialog> m_mqttSettingsDialog;
 #endif

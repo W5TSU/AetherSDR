@@ -31,6 +31,7 @@
 #include "OpusTxPacer.h"
 
 class QMediaDevices;
+class QThread;
 
 #include <functional>
 #include <algorithm>
@@ -602,6 +603,14 @@ public:
     static SpectralNR::WisdomResult generateWisdom(
         SpectralNR::WisdomProgressCb progress = nullptr,
         SpectralNR::WisdomCancelCb shouldCancel = nullptr);
+
+    // Shutdown join for the audio thread (#6287). Teardown on that thread
+    // (NNR, NR2, NR4) waits for the FFTW planner locks, and a plan held by
+    // another thread can't be interrupted. So this keeps waiting while either
+    // planner lock is held, logging under `phase` every 5 s, and gives up only
+    // after `idleBudgetMs` of consecutive waiting with both locks free.
+    static bool joinThreadWhilePlannerBusy(QThread& thread, int idleBudgetMs,
+                                           const char* phase);
 
     // Device selection (restarts the stream if currently running)
     void setOutputDevice(const QAudioDevice& dev);
