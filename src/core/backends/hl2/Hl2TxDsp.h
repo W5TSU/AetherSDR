@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/backends/hl2/Hl2TxAlc.h"
 #include "core/dsp/WdspChannel.h"
 
 #include <QObject>
@@ -76,12 +77,8 @@ public:
         // that cannot pull down on a transient is a splatter generator.
         bool alcEnabled = true;
         double alcTargetPeak = 0.85;   // leave headroom below clipping
-        // NO ATTACK CONSTANT. Reduction is instantaneous — see
-        // processAudioBlock. A configurable attack was in this struct until it
-        // was measured to be the mechanism by which the stage overshot: at a
-        // 512-sample block on 24 kHz the 5 ms constant already closed 98.6% of
-        // the error in one block, so it was not buying smoothing, it was
-        // leaving 1.4% of a 40 dB step above the clamp.
+        // No attack constant: each sample that needs the reduction has it
+        // (Hl2TxAlc.h), so nothing overshoots into the hard clamp.
         double alcReleaseSec = 0.500;  // slow enough not to pump between words
     };
 
@@ -180,7 +177,7 @@ private:
     bool m_configured = false;
     double m_micGain = 1.0;
     int m_upsample = 2;
-    double m_alcGain = 1.0;      // current ALC gain, carried across blocks
+    Hl2TxAlc m_alc;              // level chain; its gain carries across blocks
 
     std::vector<float> m_bandpass;      // real bandpass
     std::vector<float> m_hilbert;       // quadrature half of the analytic bandpass
@@ -188,6 +185,9 @@ private:
     std::size_t m_histPos = 0;
 
     std::vector<float> m_inBuffer;      // pending input audio
+    // Levelled audio for one call, the ALC's output and the modulator's
+    // input. Reused across calls so the real-time path does not allocate.
+    std::vector<float> m_levelled;
     std::vector<std::complex<float>> m_iq;
 };
 
