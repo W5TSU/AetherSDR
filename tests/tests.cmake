@@ -1323,6 +1323,9 @@ add_executable(app_settings_safety_test
     # + QUdpSocket; the test only calls its static helpers).
     src/core/backends/hl2/Hl2Discovery.cpp
     src/core/backends/hl2/MetisProtocol.cpp
+    # Hl2Discovery logs on lcDiscovery, which LogManager defines.
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
 )
 set_target_properties(app_settings_safety_test PROPERTIES AUTOMOC ON)
 target_include_directories(app_settings_safety_test PRIVATE src)
@@ -6489,6 +6492,22 @@ target_include_directories(hl2_rx_panel_gain_test PRIVATE src)
 target_link_libraries(hl2_rx_panel_gain_test PRIVATE aethercore Qt6::Core)
 add_test(NAME hl2_rx_panel_gain_test COMMAND hl2_rx_panel_gain_test)
 
+# HL2 discovery's log lines (#6285 item 3): failed bind, no usable interface,
+# a run of unanswered sweeps, each once per occurrence. Socket-free: drives
+# DiscoveryNotices and captures the real aether.discovery category.
+add_executable(hl2_discovery_logging_test
+    tests/hl2_discovery_logging_test.cpp
+    src/core/backends/hl2/Hl2Discovery.cpp
+    src/core/backends/hl2/MetisProtocol.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+)
+set_target_properties(hl2_discovery_logging_test PROPERTIES AUTOMOC ON)
+target_include_directories(hl2_discovery_logging_test PRIVATE src)
+target_link_libraries(hl2_discovery_logging_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME hl2_discovery_logging_test COMMAND hl2_discovery_logging_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
@@ -6496,6 +6515,7 @@ add_test(NAME hl2_rx_panel_gain_test COMMAND hl2_rx_panel_gain_test)
 set(AETHER_SETTINGS_CONSUMERS
     hl2_tune_memory_test
     hl2_tune_tail_test
+    hl2_discovery_logging_test
     reroute_dead_controls_test
     hl2_bandstack_digital_agc_test
     shortcut_passthrough_test
