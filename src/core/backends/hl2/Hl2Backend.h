@@ -928,6 +928,11 @@ private:
     // clock is a plain monotonic source started on the first telemetry frame.
     AdcOverloadLogGate m_adcOverloadGate;
     QElapsedTimer m_telemetryClock;
+    // Session totals of Hl2Telemetry::forwardPowerSamples + forwardPowerSkipped,
+    // and of the skipped ones alone. Published in healthSnapshot(), driving
+    // nothing; the first is what makes a skipped count of 0 a reading.
+    quint64 m_fwdTotalResponses = 0;
+    quint64 m_fwdTotalSkipped = 0;
     bool m_keyed = false;
     bool m_tuning = false;
     bool m_cwAutoKeyed = false;

@@ -278,6 +278,7 @@ bool MetisClient::start(const Params& params)
     m_fwdWindow.clear();
     m_telemetry.forwardPowerPeakRaw.reset();
     m_telemetry.forwardPowerSamples = 0;
+    m_telemetry.forwardPowerSkipped = 0;
     // The gate's counters belong to the session for the same reason the wire
     // ones do. Left standing they survive a reconnect while every sibling is
     // zeroed here and m_link is replaced below, so resetBandscopeMirrors()
@@ -1774,6 +1775,7 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
         m_telemetryEmitClock.restart();
         m_telemetry.forwardPowerPeakRaw = m_fwdWindow.peak;
         m_telemetry.forwardPowerSamples = m_fwdWindow.samples;
+        m_telemetry.forwardPowerSkipped = m_fwdWindow.skipped;
         m_fwdWindow.clear();
         emit telemetryUpdated(m_telemetry);
     }

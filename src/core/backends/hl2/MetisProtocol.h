@@ -752,8 +752,12 @@ struct Hl2Telemetry {
     // reports forward power ~190 times a second at 48 kHz; the 10 Hz emit kept
     // only the last one, which almost never lands on a speech peak, so SSB read
     // ~4 dB under true PEP. Filled by MetisClient at each emit, not by apply().
+    // ForwardPowerWindow::observe skips responses that carry no measurement.
     std::optional<int>  forwardPowerPeakRaw;
     int forwardPowerSamples = 0;
+    // The window's RADDR-1 responses skipped as isNonMeasurementRaddr1(). A unit
+    // whose temperature word is always 0 has every response here and no peak.
+    int forwardPowerSkipped = 0;
 
     // Merge a decoded response in, leaving untouched fields alone.
     //
@@ -767,16 +771,33 @@ struct Hl2Telemetry {
     void apply(const Ep6Response& r) noexcept;
 };
 
-// Accumulates the forward-power readings of one telemetry window: the peak and
-// the count. Non-ACK RADDR 1 only; the forward-power field is the low 16 bits.
+// A non-ACK RADDR-1 response whose temperature word, DATA[31:16], is 0 is not a
+// measurement. hl2TemperatureCelsius puts 0 C at 0.5 V, so 0 counts is 0 V,
+// which no working sensor reads. Gateware 74.2 sends a few such responses just
+// after the T/R switch-over, and their forward word can be far above the carrier.
+[[nodiscard]] constexpr bool isNonMeasurementRaddr1(const Ep6Response& r) noexcept
+{
+    return !r.ack && r.raddr == 0x01 && (r.data >> 16) == 0;
+}
+
+// Accumulator for Hl2Telemetry::forwardPowerPeakRaw: the maximum of DATA[15:0]
+// over non-ACK RADDR-1 responses that carry a measurement. Kept here so the
+// rule is testable without a socket.
 struct ForwardPowerWindow {
     std::optional<int> peak;
     int samples = 0;
+    int skipped = 0;
 
     void observe(const Ep6Response& r) noexcept
     {
         if (r.ack || r.raddr != 0x01)
             return;
+        // Only this window skips it: Hl2Telemetry::apply() still takes both
+        // halves of the word as last values.
+        if (isNonMeasurementRaddr1(r)) {
+            ++skipped;
+            return;
+        }
         const int v = static_cast<int>(r.data & 0xFFFF);
         if (!peak || v > *peak)
             peak = v;
@@ -786,6 +807,7 @@ struct ForwardPowerWindow {
     {
         peak.reset();
         samples = 0;
+        skipped = 0;
     }
 };
 
