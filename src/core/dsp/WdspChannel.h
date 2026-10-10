@@ -577,6 +577,9 @@ public:
     // overwrote the input block the worker had not yet copied out. 0 restores
     // the shipping path.
     static void setWorkerHandoffPauseForTest(unsigned microseconds) noexcept;
+    // Test only (#6179, WDSP patch 22): queue PSRestoreCorr(path) on this TX
+    // channel's PureSignal correction thread, on the WDSP the core drives.
+    void restorePureSignalCorrectionForTest(const char* path) const noexcept;
 
     // Shared FFTW-planner serialization guard. FORWARDS to
     // AetherSDR::fftwPlannerLock() (core/dsp/FftwPlannerLock.h), which owns

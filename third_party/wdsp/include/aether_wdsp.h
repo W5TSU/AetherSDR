@@ -258,6 +258,9 @@ uint64_t wdspPortOutstandingAllocations(void);
 // which is the window in which #5734's input overwrite happened. 0 (the
 // default) is a single relaxed load and no sleep. Process-global.
 void wdspPortSetHandoffPauseForTest(unsigned microseconds);
+// Queues a correction-file restore on a TX channel's PureSignal correction
+// thread. AetherSDR calls it only from wdsp_calcc_teardown_test (patch 22).
+void PSRestoreCorr(int channel, char* filename);
 
 #ifdef __cplusplus
 }
