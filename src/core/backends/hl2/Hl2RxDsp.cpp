@@ -129,6 +129,8 @@ bool Hl2RxDsp::configure(const Config& config, std::string* error)
     // therefore comes up at whichever length the current notch set needs, and
     // addNotch/removeNotch flip it at runtime via WdspChannel::setFilterTaps.
     wc.filterTaps = m_notches.empty() ? kRxFilterTapsShort : kRxFilterTapsLong;
+    // Unity panel gain after the AGC, not WDSP's x4 (#5942); see the header.
+    wc.rxPanelGain = kRxPanelGain;
 
     auto channel = WdspChannel::create(wc, error);
     if (!channel)

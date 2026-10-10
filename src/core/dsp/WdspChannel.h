@@ -51,6 +51,9 @@ public:
         int dspSampleRate = 48000;
         int outputSampleRate = 48000;
         Mode mode = Mode::Usb;
+        // RXA output panel gain, linear, applied after the AGC. Unset keeps
+        // WDSP's create_rxa() default of 4.0 (+12.04 dB, #5942).
+        std::optional<double> rxPanelGain;
         double filterLowHz = 150.0;
         double filterHighHz = 3000.0;
         int agcMode = 3;

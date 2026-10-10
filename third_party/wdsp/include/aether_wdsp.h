@@ -36,6 +36,8 @@ int SetChannelState(int channel, int state, int dmode);
 void fexchange2(int channel, float* inputI, float* inputQ,
                 float* outputLeft, float* outputRight, int* error);
 void SetRXAMode(int channel, int mode);
+// RXA output panel gain, linear; create_rxa() opens it at 4.0.
+void SetRXAPanelGain1(int channel, double gain);
 void SetRXABandpassFreqs(int channel, double lowHz, double highHz);
 // Canonical passband setter. RXASetPassband() is what both reference clients
 // (Thetis, pihpsdr) call: it sets the bandpass AND the SNBA output bandwidth

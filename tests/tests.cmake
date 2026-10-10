@@ -6475,6 +6475,13 @@ add_test(NAME phone_cw_acc_availability_test
 set_tests_properties(phone_cw_acc_availability_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# #5942: the HL2 RX chain opens RXA's panel at unity, not WDSP's 4.0. A real
+# Hl2RxDsp fed a known tone; socket-free.
+add_executable(hl2_rx_panel_gain_test tests/hl2_rx_panel_gain_test.cpp)
+target_include_directories(hl2_rx_panel_gain_test PRIVATE src)
+target_link_libraries(hl2_rx_panel_gain_test PRIVATE aethercore Qt6::Core)
+add_test(NAME hl2_rx_panel_gain_test COMMAND hl2_rx_panel_gain_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.

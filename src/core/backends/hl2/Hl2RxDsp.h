@@ -66,6 +66,11 @@ public:
                   "RX filter taps no longer allow a 50 Hz notch; the width "
                   "presets in the TNF menu assume one.");
 
+    // RXA panel gain, applied after the AGC: unity removes WDSP's x4, which put
+    // every HL2 mode 12.04 dB past the AGC's level (#5942). Bandpass, speak and
+    // mpeak still run between the AGC and the panel, so this bounds no peak.
+    static constexpr double kRxPanelGain = 1.0;
+
     struct Config {
         int inputSampleRateHz = 48000;   // HL2 IQ sample rate
         // Demodulated-audio rate. 24 kHz because that is AudioEngine's native
