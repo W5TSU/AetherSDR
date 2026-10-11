@@ -11,6 +11,8 @@
 #include <QUdpSocket>
 #include <QTimer>
 #include <QVector>
+#include "AudioDevicePreferencePolicy.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -612,9 +614,12 @@ public:
     static bool joinThreadWhilePlannerBusy(QThread& thread, int idleBudgetMs,
                                            const char* phase);
 
-    // Device selection (restarts the stream if currently running)
-    void setOutputDevice(const QAudioDevice& dev);
-    void setInputDevice(const QAudioDevice& dev);
+    // Device selection (restarts the stream if currently running). Only an
+    // operator's choice is written to AudioOutputDeviceId / AudioInputDeviceId.
+    void setOutputDevice(const QAudioDevice& dev,
+                         AudioDeviceSelection selection = AudioDeviceSelection::OperatorChoice);
+    void setInputDevice(const QAudioDevice& dev,
+                        AudioDeviceSelection selection = AudioDeviceSelection::OperatorChoice);
 #ifdef Q_OS_MAC
     void setAllowBluetoothTelephonyOutput(bool on);
 #endif
