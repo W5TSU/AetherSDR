@@ -115,6 +115,18 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   on 10 m, with a Hermes-Lite 2 listening, mode by mode. It also has to
   catch a wrong-sideband transmit, the mistake the HL2 once shipped.
   Receive was verified on hardware against a UHF TV pilot carrier.
+  - **2026-10-13, first attempt (HackRF Pro, 28.400 MHz, dummy load):** no
+    signal seen on the receiver in any mode, TUNE or MOX, up to RF power 96
+    and TUNE power 56. The HL2 was not on the network (its Ethernet port
+    had no link), so a separate receiver listened. The software path checks
+    out: a 3 s TUNE logged keying at 28 400 000 Hz, TX VGA 5 dB with the amp
+    off, and 25.4 M samples at 8 MS/s, 98% of them carrier. Still open:
+    whether the output is simply too weak to hear (the amp is always off on
+    transmit, and TX VGA scales 0–47 dB with the slider), or the Pro's HF
+    transmit path does not work. Next: a `hackrf_transfer` carrier at the
+    same frequency and gain as a reference outside the app, then the HL2
+    test as planned. MOX in USB/LSB/DSB with no microphone audio transmits
+    nothing by design. Use TUNE or a tone for these checks.
 - **HackRF — multi-slice receive** — the one goal of the HackRF design not
   yet shipped: several independent slices across the HackRF's wide capture,
   each with its own DDC. The backend is single-slice today. Design:
