@@ -2,7 +2,10 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
+#include <QHash>
 #include <QSet>
+
+#include <cstdint>
 
 #ifdef AETHER_BACKEND_HACKRF
 #include "core/backends/hackrf/HackRfLibraryLock.h"
@@ -102,13 +105,45 @@ void HackRfDiscovery::onScanTimer()
                     }
                     usedSerials.insert(info.serial);
 
-                    QString model = QStringLiteral("HackRF");
-                    if (list->usb_board_ids) {
+                    // The USB product id cannot tell a HackRF Pro from a One —
+                    // both enumerate as USB_BOARD_ID_HACKRF_ONE (0x6089), so
+                    // the Pro was listed as "HackRF One". The board id can,
+                    // but only with the device open: read it once per serial
+                    // and remember it. An open that fails (the device is
+                    // already streaming for a backend) falls back to the USB
+                    // name and is retried on a later scan. The cache is only
+                    // touched under the library lock held above.
+                    static QHash<QString, QString> boardNameBySerial;
+                    QString model = boardNameBySerial.value(info.serial);
+                    if (model.isEmpty()) {
+                        hackrf_device* dev = nullptr;
+                        if (hackrf_device_list_open(list, i, &dev) == HACKRF_SUCCESS && dev) {
+                            std::uint8_t id = BOARD_ID_UNDETECTED;
+                            if (hackrf_board_id_read(dev, &id) == HACKRF_SUCCESS
+                                && id != BOARD_ID_UNDETECTED) {
+                                // Board id 5 named by hand: the older libhackrf
+                                // the AppImages build against predates the Pro
+                                // and would name it "Unknown" (see #67).
+                                constexpr std::uint8_t kBoardIdPraline = 5;
+                                const char* boardName = id == kBoardIdPraline
+                                    ? "HackRF Pro"
+                                    : hackrf_board_id_name(static_cast<hackrf_board_id>(id));
+                                if (boardName && *boardName) {
+                                    model = QString::fromUtf8(boardName);
+                                    boardNameBySerial.insert(info.serial, model);
+                                }
+                            }
+                            hackrf_close(dev);
+                        }
+                    }
+                    if (model.isEmpty() && list->usb_board_ids) {
                         const char* boardName = hackrf_usb_board_id_name(list->usb_board_ids[i]);
                         if (boardName && *boardName) {
                             model = QString::fromUtf8(boardName);
                         }
                     }
+                    if (model.isEmpty())
+                        model = QStringLiteral("HackRF");
                     info.model = model;
                     info.name = model;
                     info.status = QStringLiteral("Available");
