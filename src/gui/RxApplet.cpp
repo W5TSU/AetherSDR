@@ -2443,35 +2443,33 @@ void RxApplet::connectSlice(SliceModel* s)
     updateTxBadge(s->isTxSlice());
     connect(s, &SliceModel::txSliceChanged, this, updateTxBadge);
 
-    // Mode combo
-    {
+    // Mode combo. The selection follows the SLICE's mode, never the combo's
+    // previous text: the static fallback list has no WFM, so a HackRF slice
+    // restored in WFM found no entry, stayed on index 0 ("USB"), and the
+    // radio's own list then carried that stale "USB" forward — the combo read
+    // USB over a slice still in WFM, and choosing USB was a no-op.
+    auto repopulateModes = [this](const QStringList& modes) {
         QSignalBlocker b(m_modeCombo);
-        int idx = m_modeCombo->findText(s->mode());
-        if (idx >= 0) m_modeCombo->setCurrentIndex(idx);
-    }
-    connect(s, &SliceModel::modeListChanged, this, [this](const QStringList& modes) {
-        if (modes.isEmpty()) return;          // keep static fallback list (#891)
-        QSignalBlocker b(m_modeCombo);
-        QString cur = m_modeCombo->currentText();
+        const QString cur = m_modeCombo->currentText();
         m_modeCombo->clear();
         m_modeCombo->addItems(filterUnavailableDigitalVoiceModes(modes));
 #ifdef HAVE_RADE
         if (m_modeCombo->findText("RADE") < 0)
             m_modeCombo->addItem("RADE");
 #endif
-        int idx = m_modeCombo->findText(cur);
+        int idx = m_slice ? m_modeCombo->findText(m_slice->mode()) : -1;
+        if (idx < 0) idx = m_modeCombo->findText(cur);
         if (idx >= 0) m_modeCombo->setCurrentIndex(idx);
+    };
+    connect(s, &SliceModel::modeListChanged, this, [repopulateModes](const QStringList& modes) {
+        if (modes.isEmpty()) return;          // keep static fallback list (#891)
+        repopulateModes(modes);
     });
-    if (!s->modeList().isEmpty()) {
+    if (!s->modeList().isEmpty())
+        repopulateModes(s->modeList());
+    {
         QSignalBlocker b(m_modeCombo);
-        QString cur = m_modeCombo->currentText();
-        m_modeCombo->clear();
-        m_modeCombo->addItems(filterUnavailableDigitalVoiceModes(s->modeList()));
-#ifdef HAVE_RADE
-        if (m_modeCombo->findText("RADE") < 0)
-            m_modeCombo->addItem("RADE");
-#endif
-        int idx = m_modeCombo->findText(cur);
+        int idx = m_modeCombo->findText(s->mode());
         if (idx >= 0) m_modeCombo->setCurrentIndex(idx);
     }
     connect(s, &SliceModel::modeChanged, this, [this](const QString& mode) {
