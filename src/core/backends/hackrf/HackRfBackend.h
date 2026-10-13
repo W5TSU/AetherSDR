@@ -2,6 +2,7 @@
 
 #include "core/backends/hackrf/HackRfCwTx.h"
 #include "core/backends/hackrf/HackRfDdc.h"
+#include "core/backends/hackrf/HackRfIq.h"
 #include "core/backends/hackrf/HackRfRxDsp.h"
 #include "core/backends/hackrf/HackRfTxDsp.h"
 #include "core/backends/hackrf/HackRfTuning.h"
@@ -301,13 +302,21 @@ private:
     int m_vgaGainDb{20};
     int m_lnaGainDb{16};
     // The operator's Preamp setting. The hardware amp follows it on RECEIVE
-    // only: transmit always runs with the amp off (ampEnabledFor()).
+    // only: on transmit the amp is part of the drive (m_txDrive).
     bool m_ampEnabled{false};
     // True between the arbiter's TX start and its next RX start, so a Preamp
     // change while keyed is remembered for RX instead of switching the amp on
     // under a live transmission.
     bool m_transmitting{false};
     int m_txPowerPercent{0};
+    // The TX gain last applied: VGA always, amp only while keyed.
+    HackRfTxDrive m_txDrive;
+    void applyTxDrive(int percent);
+    // The operator's TUNE power, learned when TUNE is keyed (it reaches this
+    // backend only through setTune()); -1 until then. Saved with RF power in
+    // the txSetpoints extension and echoed back up on connect.
+    int m_tunePowerPercent{-1};
+    bool m_haveRestoredTxSetpoints{false};
     bool m_tuning{false};
     QTimer m_tuneFeedTimer;   // feeds silence to the FM modulator while tuning
     void feedTuneCarrier();

@@ -144,6 +144,13 @@ private:
     void readBoardId();
     std::atomic<bool> m_rxStreaming{false};
     std::atomic<bool> m_txStreaming{false};
+    // What the hardware was last told, and what each transmission actually
+    // drained: logged at start/stop so "nothing came out" can be told apart
+    // into "never streamed", "streamed silence" and "streamed a signal".
+    int m_txVgaDb{-1};
+    bool m_ampOn{false};
+    std::atomic<std::uint64_t> m_txSamplesSent{0};
+    std::atomic<std::uint64_t> m_txSamplesPadded{0};
 
     // Producer (submitTxIq(), any thread) / consumer (txCallback(),
     // libhackrf's internal thread) queue. A plain mutex-protected deque

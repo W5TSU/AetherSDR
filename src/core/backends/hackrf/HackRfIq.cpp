@@ -43,15 +43,15 @@ int clampLnaGainDb(int requestedDb)   { return clampStep(requestedDb, 40, 8); }
 int clampVgaGainDb(int requestedDb)   { return clampStep(requestedDb, 62, 2); }
 int clampTxVgaGainDb(int requestedDb) { return clampStep(requestedDb, 47, 1); }
 
-int txVgaGainDbForPowerPercent(int percent)
+HackRfTxDrive txDriveForPowerPercent(int percent)
 {
+    constexpr int kVgaMaxDb = 47;
     const int p = std::clamp(percent, 0, 100);
-    return static_cast<int>(std::lround(p * 47.0 / 100.0));
-}
-
-bool ampEnabledFor(bool preampSetting, bool transmitting)
-{
-    return preampSetting && !transmitting;
+    const int totalDb = static_cast<int>(
+        std::lround(p * (kVgaMaxDb + kHackRfTxAmpGainDb) / 100.0));
+    if (totalDb <= kVgaMaxDb)
+        return {totalDb, false};
+    return {totalDb - kHackRfTxAmpGainDb, true};
 }
 
 bool shouldFeedTuneCarrier(std::size_t queuedSamples, double outputRateHz, int targetMs)

@@ -45,14 +45,29 @@ int clampVgaGainDb(int requestedDb);
 // TX IF ("VGA") gain: 0-47 dB in 1 dB steps (i.e. a plain range clamp).
 int clampTxVgaGainDb(int requestedDb);
 
-// RF Power slider percent (0-100) -> TX VGA gain in dB (0-47). Linear, rounded
-// to the nearest dB so the top of the slider reaches the top of the range.
-int txVgaGainDbForPowerPercent(int percent);
+// The RF amp's gain on transmit, approximately (Great Scott Gadgets quote
+// ~11 dB). It only sets where the slider hands over from VGA to amp.
+inline constexpr int kHackRfTxAmpGainDb = 11;
 
-// The RF amp is a single switch shared by receive and transmit. Receive gets
-// the operator's Preamp setting; transmit always runs with it OFF, because the
-// amp's ~14 dB on top of TX VGA is easy to overdrive into whatever follows.
-bool ampEnabledFor(bool preampSetting, bool transmitting);
+// The two transmit gain controls, as one setting.
+struct HackRfTxDrive {
+    int vgaDb = 0;      // TX IF ("VGA") gain, 0-47 dB
+    bool amp = false;   // the RF amp, ~kHackRfTxAmpGainDb more
+};
+
+// RF Power slider percent (0-100) -> the whole TX gain range, 0 to 47 + 11 dB,
+// linear and rounded to the nearest dB. The VGA alone covers the first 47 dB;
+// above that the amp switches in and the VGA backs off by its gain, so the
+// total keeps rising and 100 % is VGA 47 dB + amp — the most the HackRF puts
+// out. (Before this, transmit never used the amp: full slider was ~11 dB short
+// of the hardware's output, and low settings were too weak to hear through a
+// dummy load.)
+HackRfTxDrive txDriveForPowerPercent(int percent);
+
+// The RF amp is a single switch shared by receive and transmit. On RECEIVE it
+// is the operator's Preamp setting; on transmit it belongs to the drive
+// (txDriveForPowerPercent), never the Preamp — an RX setting must not add
+// ~11 dB to a transmission.
 
 // Hardware tune command for a TRUE frequency, given the crystal's error in ppb.
 // Convention shared with Hl2FreqCal and the Calibration page: ppb > 0 means the
