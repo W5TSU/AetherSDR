@@ -69,11 +69,34 @@ _owned_app = None
 # Bridge client (mirrors tools/automation_probe.py)
 # --------------------------------------------------------------------------
 
+def _entry_alive(d):
+    """Whether a discovery entry's app is still running.
+
+    An app that is killed (SIGKILL, a crash, a SIGTERM that skips the
+    shutdown path) leaves its entries behind, and the "latest instance" file
+    then points every request at a dead socket even while another instance is
+    up. Dead entries are skipped rather than deleted: the files are the app's.
+    """
+    pid = d.get("pid")
+    if sys.platform != "win32":
+        if not os.path.exists(d["socket"]):
+            return False
+        if isinstance(pid, int) and pid > 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                pass  # alive, owned by someone else
+    return True
+
+
 def discover_sockets():
     """All live bridge endpoints, newest first.
 
     The app writes <temp>/aethersdr-automation.json (latest instance) and
-    <temp>/aethersdr-automation/<pid>.json (one per instance).
+    <temp>/aethersdr-automation/<pid>.json (one per instance). Entries whose
+    process is gone are left out (see _entry_alive).
     """
     tmp = tempfile.gettempdir()
     entries = []
@@ -82,7 +105,7 @@ def discover_sockets():
         try:
             with open(path) as f:
                 d = json.load(f)
-            if d.get("socket"):
+            if d.get("socket") and _entry_alive(d):
                 entries.append(d)
         except (OSError, ValueError):
             continue
