@@ -214,6 +214,14 @@ private:
     friend struct Hl2RitXitTestAccess;
     friend struct Hl2TuneTailTestAccess;
     friend struct Hl2TuneMemoryTestAccess;
+    // Feeds EP6 status frames to the backend's own MetisClient on its I/O thread,
+    // for hl2_hardware_ptt_state_test.
+    friend struct Hl2HardwarePttTestAccess;
+    // The radio keyed or unkeyed itself (MetisClient::radioPttChanged). Observation
+    // only: it publishes the transmit state and mutes receive, and keys nothing.
+    void onRadioPttChanged(bool keyed);
+    // Emit transmitChanged{mox} when m_keyed || m_radioPtt changes, and only then.
+    void publishTransmitState();
     // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
     // timer's key-up is the only caller that passes true.
     void applyKeying(bool key, bool cwBreakIn);
@@ -986,6 +994,10 @@ private:
     quint64 m_fwdTotalResponses = 0;
     quint64 m_fwdTotalSkipped = 0;
     bool m_keyed = false;
+    // The radio reports its own PTT/key (EP6 ptt_resp). Never an input to keying.
+    bool m_radioPtt = false;
+    // What transmitChanged last carried as mox: m_keyed || m_radioPtt.
+    bool m_publishedTransmit = false;
     bool m_tuning = false;
     bool m_cwAutoKeyed = false;
     QTimer* m_cwHangTimer = nullptr;

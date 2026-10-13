@@ -265,6 +265,7 @@ RadioCapabilities FlexBackend::capabilities() const
     // The keyed edge is decoded from `interlock` status inside RadioModel, not
     // published through this seam — see RadioCapabilities::hasRadioPttReadback.
     caps.hasRadioPttReadback = false;
+    caps.radioPttObservation = std::nullopt;   // same reason: interlock, not this seam
 
     // EMPTY = continuous or unknown, so the RX applet keeps the operator's own
     // configurable width list. A Flex's filters are continuous.

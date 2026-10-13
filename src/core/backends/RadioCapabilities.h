@@ -762,6 +762,14 @@ struct RadioCapabilities {
     // Icom: ✅ (decoded CI-V `1C 00`).
     bool hasRadioPttReadback = false;
 
+    // The backend also publishes on transmitChanged the keying the radio did by
+    // itself (its PTT or key input), which setKeying() never commanded. Observed
+    // state: it reaches radioTransmittingChanged and nothing that keys. setKeying()
+    // stays the authority for host keying, so RadioModel keeps the command-edge
+    // fallback and ORs the two. HL2: EP6 ptt_resp, which host MOX never raises.
+    struct RadioPttObservation {};
+    std::optional<RadioPttObservation> radioPttObservation;
+
     // The RX filter widths this radio can actually reach, in Hz. EMPTY means
     // "continuous, or unknown" and the UI keeps its own configurable list.
     //

@@ -1772,6 +1772,11 @@ public:
     {
         stageSessionModelsForReconnect();
     }
+    // setBackendForTest() does not connect transmitChanged; this is that handler.
+    void applyBackendTransmitDeltaForTest(const TransmitDelta& delta)
+    {
+        applyBackendTransmitDelta(delta);
+    }
     void emitBackendSliceChangedForTest(int sliceId, const SliceDelta& delta)
     {
         if (m_backend) {
@@ -2035,6 +2040,9 @@ private:
     bool        m_cwxDrainArmed{false}; // CWX drain-release latch, immune to interlock flicker (#3949)
     bool        m_txAudioGate{false}; // actual TX audio gate state
     bool        m_radioTransmitting{false}; // raw interlock TX state, any owner
+    // Last mox a RadioCapabilities::radioPttObservation backend published; ORed
+    // into the command-edge fallback. Always false for every other backend.
+    bool        m_backendObservedTransmit{false};
     bool        m_operatorTransmitting{false}; // owned MOX/PTT/VOX (not tune/ATU/TCI/DAX)
     int         m_txFilterKillSamples{0};      // consecutive qualifying meter packets (#4649)
     bool        m_txFilterKillReported{false}; // latched, so we speak once per transmission
@@ -2158,6 +2166,9 @@ private:
     void updateOperatorTransmit();
     // Raw-TX edge for backends with no interlock status plane (HL2). No-op on
     // Flex, where the edge is decoded from `interlock` status instead.
+    // IRadioBackend::transmitChanged: backend MOX is radio state, published
+    // as the raw TX edge, never as local intent.
+    void applyBackendTransmitDelta(const TransmitDelta& delta);
     void publishBackendTransmitEdge(bool tx);
     // Command-edge fallback for a backend with no radio TX readback. One that
     // declares RadioCapabilities::hasRadioPttReadback (Icom) waits for the

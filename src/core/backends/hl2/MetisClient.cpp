@@ -285,6 +285,7 @@ bool MetisClient::start(const Params& params)
 {
     if (m_running)
         stop();
+    clearRadioPtt();
 
     m_params = params;
     m_host = params.host;
@@ -700,6 +701,7 @@ void MetisClient::onWatchdogTick()
             bandscopeDisarm(/*expectTrailing=*/m_bsState != BandscopeState::Arming);
         resetBandscopeGate();
         m_params.bandscope = false;
+        clearRadioPtt();
         emit linkDown();
     }
 }
@@ -774,6 +776,7 @@ void MetisClient::stop()
     // does the quarantine's reason for existing: nothing the next stream
     // delivers can be a reply to a request from this one.
     dropControlRequest();
+    clearRadioPtt();
     if (m_linkUp) {
         m_linkUp = false;
         emit linkDown();
@@ -2041,6 +2044,7 @@ bool MetisClient::bandscopeInterlocked() const noexcept
 // ptt_resp rather than by anything this client asked for.
 void MetisClient::onRadioPttEdge(bool keyed)
 {
+    emit radioPttChanged(keyed);
     if (keyed) {
         if (m_bsState != BandscopeState::Idle)
             bandscopeDisarm(/*expectTrailing=*/m_bsState != BandscopeState::Arming);
@@ -2051,6 +2055,15 @@ void MetisClient::onRadioPttEdge(bool keyed)
     // Not conditioned on m_mox: if the host is still keyed the interlock holds
     // on m_mox anyway, and this timer only starts mattering once it drops.
     m_sinceUnkey.restart();
+}
+
+void MetisClient::clearRadioPtt()
+{
+    if (!m_telemetry.ptt) {
+        return;
+    }
+    m_telemetry.ptt = false;
+    onRadioPttEdge(false);
 }
 
 void MetisClient::sendBandscopeRunByte(bool wideSpectrum)

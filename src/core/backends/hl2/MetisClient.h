@@ -552,6 +552,11 @@ signals:
     // bits of the fill level, and no sample count at all. See
     // Hl2Telemetry::apply().
     void telemetryUpdated(const AetherSDR::hl2::Hl2Telemetry& t);
+    // The radio's own keying changed: ptt_resp = cw_on | ext_ptt (control.v:456,
+    // gateware 74), the PTT/key jack or the internal keyer. Host MOX never raises
+    // it. An observation, per edge and unthrottled; false is also emitted when the
+    // stream ends or goes silent with the bit set.
+    void radioPttChanged(bool keyed);
     // ONE ACCEPTED BANDSCOPE BLOCK — 2048 contiguous converter samples, merged
     // from the four in-phase EP4 packets the gate kept. Never per packet: a
     // packet is a quarter of the record and its peak is not the record's.
@@ -632,6 +637,8 @@ private:
     // A ptt_resp transition reported by the radio: the bandscope's interlock
     // edges for keying this client did not initiate.
     void onRadioPttEdge(bool keyed);
+    // No stream, no observation: drop a PTT the radio last reported, with its edge.
+    void clearRadioPtt();
     void bandscopeOnPacket(std::uint32_t seq, std::uint32_t drops,
                            std::span<const std::uint8_t> bytes);
     // Begin one arming cycle: raise wide_spectrum, clear the accumulator, arm

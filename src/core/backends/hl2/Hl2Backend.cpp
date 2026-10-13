@@ -361,7 +361,7 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         // A re-key inside the window stops this timer, so reaching here keyed
         // should be impossible; this check keeps "should" from becoming an
         // unmute in the middle of a transmission.
-        if (m_keyed && !m_txMonitor) {
+        if ((m_keyed || m_radioPtt) && !m_txMonitor) {
             return;
         }
         applyRxAudioMute(false);
@@ -492,7 +492,11 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         // stated value instead of whatever the widget happened to hold.
         publishWideState();
     });
+    connect(m_metis, &MetisClient::radioPttChanged, this, &Hl2Backend::onRadioPttChanged);
     connect(m_metis, &MetisClient::linkDown, this, [this] {
+        // No link, no observation: a PTT the radio last reported ends here, so the
+        // model never stays in transmit on a radio it can no longer hear.
+        onRadioPttChanged(false);
         if (m_connected) {
             m_connected = false;
             m_ceilingAnnouncer.reset();   // #5594 (M1): re-seeded on the next connect
@@ -1382,6 +1386,50 @@ void Hl2Backend::publishWideState()
         emit panWideChanged(ids.panId, spanned);
 }
 
+void Hl2Backend::publishTransmitState()
+{
+    const bool transmitting = m_keyed || m_radioPtt;
+    if (transmitting == m_publishedTransmit) {
+        return;
+    }
+    m_publishedTransmit = transmitting;
+    TransmitDelta delta;
+    delta.mox = transmitting;
+    emit transmitChanged(delta);
+}
+
+void Hl2Backend::onRadioPttChanged(bool keyed)
+{
+    Q_ASSERT_X(thread() == QThread::currentThread(), "onRadioPttChanged",
+               "called off the Hl2Backend's own thread");
+    if (m_radioPtt == keyed) {
+        return;
+    }
+    m_radioPtt = keyed;
+    publishTransmitState();
+    // While the host is keyed its own key owns the mute and, at its unkey, the
+    // release. Nothing here reaches MetisClient: the radio keyed itself, and the
+    // host follows it for display and receive audio only (#5998).
+    if (m_keyed) {
+        return;
+    }
+    if (!keyed) {
+        // The same hold as a host unkey: the PA is decaying either way.
+        releaseRxAudioMuteAfterHold();
+        return;
+    }
+    if (m_txMonitor) {
+        return;
+    }
+    if (m_unkeyUnmuteTimer) {
+        m_unkeyUnmuteTimer->stop();
+    }
+    applyRxAudioMute(true);
+    for (auto& q : m_mixPending) {
+        q.clear();
+    }
+}
+
 void Hl2Backend::mixReceiverAudio(int ddc, const std::vector<float>& pcm)
 {
     // Belt and braces with the demodulator mute. This drops any block that was
@@ -1810,8 +1858,11 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.hostModulates = true;
     // Same tap, same seam — see RadioCapabilities::takesTxAudioOverSeam.
     c.takesTxAudioOverSeam = true;             // PC runs the modulator; no on-radio mic jacks
-    // No PTT status plane: the command edge is the only keyed edge there is.
+    // ptt_resp is cw_on | ext_ptt (control.v:456): it never follows host MOX, so
+    // the command edge stays the keyed edge for our own keying and the readback is
+    // declared as an observation of the radio's own inputs only.
     c.hasRadioPttReadback = false;
+    c.radioPttObservation = RadioCapabilities::RadioPttObservation{};
     c.txPowerMaxWatts = 0.0;            // uncalibrated; see the oracle on power counts
     // HL2 publishes an instantaneous directional estimate; preserve the
     // established client-side PEP response above the backend seam.
@@ -4063,16 +4114,12 @@ void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
 
     const bool keyChanged = m_keyed != key;
     m_keyed = key;
-    if (keyChanged) {
-        // Manual PTT is already mirrored optimistically by RadioModel, but CW
-        // break-in keys inside this backend. Publish that edge so the TX
-        // indicator, TCI clients and receive-side TX gates see the real state.
-        // TransmitDelta::mox is observed state, not client intent, so this does
-        // not start microphone capture or feed a second key command back down.
-        TransmitDelta delta;
-        delta.mox = key;
-        emit transmitChanged(delta);
-    }
+    // Manual PTT is already mirrored optimistically by RadioModel, but CW
+    // break-in keys inside this backend. Publish that edge so the TX
+    // indicator, TCI clients and receive-side TX gates see the real state.
+    // TransmitDelta::mox is observed state, not client intent, so this does
+    // not start microphone capture or feed a second key command back down.
+    publishTransmitState();
     // MUTE RECEIVE AUDIO WHILE TRANSMITTING.
     //
     // The HL2 keeps receiving while it transmits, and what it receives is our
@@ -4096,7 +4143,8 @@ void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
     // transmitter by construction. The monitor is off by default and only a
     // measurement turns it on. Applied to every receiver for the same reason the
     // mute is: whichever one the capture is taken from must not be silenced.
-    const bool muteWhileKeyed = key && !m_txMonitor;
+    // A PTT the radio itself still reports keeps the mute through a host unkey.
+    const bool muteWhileKeyed = (key || m_radioPtt) && !m_txMonitor;
     // Mute at once on key-down; the UNMUTE waits until MOX-off is on the queue
     // (below) and then for the unkey hold (upstream #5850).
     if (muteWhileKeyed) {
@@ -4636,12 +4684,13 @@ void Hl2Backend::setTxAudioMonitor(bool on)
     // Enabling the monitor mid-transmission is the second way sampling resumes,
     // and the one where the held peak is most likely still fresh by age — the
     // key-down that froze it may be only milliseconds old. Same gate, same site.
-    if (m_keyed && !on) {
+    const bool keyed = m_keyed || m_radioPtt;
+    if (keyed && !on) {
         if (m_unkeyUnmuteTimer) {
             m_unkeyUnmuteTimer->stop();
         }
         applyRxAudioMute(true);
-    } else if (!on && !m_keyed && m_unkeyUnmuteTimer && m_unkeyUnmuteTimer->isActive()) {
+    } else if (!on && !keyed && m_unkeyUnmuteTimer && m_unkeyUnmuteTimer->isActive()) {
         // Turning the monitor OFF inside an unkey hold: the hold is still
         // covering the turnaround, so leave it to finish.
     } else {
@@ -7262,8 +7311,11 @@ void Hl2Backend::pushInitialState()
     }
 
     // Keying state is ours, not the radio's: a reconnect must never come up
-    // keyed because the previous session ended mid-transmission.
+    // keyed because the previous session ended mid-transmission. The radio's own
+    // PTT is re-read from the first EP6 frame after this.
     m_keyed = false;
+    m_radioPtt = false;
+    publishTransmitState();
     m_tuning = false;
     cancelTxTail();
     m_rfDriveOwed = false;

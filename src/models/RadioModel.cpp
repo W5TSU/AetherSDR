@@ -1314,18 +1314,8 @@ void RadioModel::setupBackend(const QString& family)
     // into a typed TransmitDelta; RadioModel drives the TransmitModel. Driven
     // synchronously from the matching decode*Status() calls in the status
     // handlers (main-thread AutoConnection → DirectConnection).
-    connect(m_backend.get(), &IRadioBackend::transmitChanged, this,
-            [this](const TransmitDelta& delta) {
-                // A backend-reported MOX edge is radio state, not local intent.
-                // Keep it out of TransmitModel::moxChanged, whose consumers
-                // own this client's audio, DAX, recorder and serial PTT.
-                if (delta.mox)
-                    publishBackendTransmitEdge(*delta.mox);
-                m_transmitModel.applyChanges(delta);
-                if (delta.cwSpeed && !usesFlexCommandPlane()) {
-                    m_cwxModel.adoptSpeed(*delta.cwSpeed);
-                }
-            });
+    connect(m_backend.get(), &IRadioBackend::transmitChanged,
+            this, &RadioModel::applyBackendTransmitDelta);
     connect(m_backend.get(), &IRadioBackend::keyingStateConfirmed,
             this, &RadioModel::radioTransmitConfirmed);
 
@@ -1954,6 +1944,7 @@ void RadioModel::wireBackendReceiverState()
 void RadioModel::teardownBackend()
 {
     ++m_backendReceiverGeneration;
+    m_backendObservedTransmit = false;   // an observation dies with its backend
     // Answer, then drop, every command still waiting on the backend that is
     // about to die. The generation guard on commandResponse means a reply
     // arriving after this point is discarded, so without this the callback —
@@ -4935,6 +4926,24 @@ bool RadioModel::refuseKeyWithInterlock(const QString& message, const QString& k
     return false;
 }
 
+void RadioModel::applyBackendTransmitDelta(const TransmitDelta& delta)
+{
+    // A backend-reported MOX edge is radio state, not local intent. Keep it
+    // out of TransmitModel::moxChanged, whose consumers own this client's
+    // audio, DAX, recorder and serial PTT.
+    if (delta.mox) {
+        // Remembered only for a backend whose mox also carries the radio's own
+        // keying, so a host unkey cannot clear a PTT the radio still reports.
+        m_backendObservedTransmit = *delta.mox && m_backend
+            && m_backend->capabilities().radioPttObservation.has_value();
+        publishBackendTransmitEdge(*delta.mox);
+    }
+    m_transmitModel.applyChanges(delta);
+    if (delta.cwSpeed && !usesFlexCommandPlane()) {
+        m_cwxModel.adoptSpeed(*delta.cwSpeed);
+    }
+}
+
 bool RadioModel::forwardNonFlexCwKeying(bool down)
 {
     if (!m_backend) {
@@ -5039,7 +5048,7 @@ void RadioModel::publishCommandedBackendTransmitEdge(bool tx)
     if (m_backend && m_backend->capabilities().hasRadioPttReadback) {
         return;
     }
-    publishBackendTransmitEdge(tx);
+    publishBackendTransmitEdge(tx || m_backendObservedTransmit);
 }
 
 // Publish the raw TX edge for a backend that has no interlock status plane.
@@ -7976,6 +7985,7 @@ void RadioModel::onDisconnected()
         m_txAudioGate = false;
         emit txAudioGateChanged(false);
     }
+    m_backendObservedTransmit = false;
     m_radioTransmitting = false;
     emit radioTransmittingChanged(false);
     if (m_profileDatabaseImporting) {
