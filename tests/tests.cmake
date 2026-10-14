@@ -65,6 +65,29 @@ unset(_aether_root_code)
 unset(_aether_stray_targets)
 unset(_aether_stray_registrations)
 
+# Exact qWAVE DSCP request/rollback, with injected native operations; no sockets.
+add_executable(vita_dscp_flow_test tests/vita_dscp_flow_test.cpp)
+target_include_directories(vita_dscp_flow_test PRIVATE src)
+add_test(NAME vita_dscp_flow_test COMMAND vita_dscp_flow_test)
+
+# SOCKETS: two ephemeral IPv4 UDP sockets on 127.0.0.1, our own sender/sink.
+# Tests the native marker across close/rebind; no firmware peer or RF.
+add_executable(vita_dscp_socket_test tests/vita_dscp_socket_test.cpp
+    src/core/backends/flex/VitaDscpMarker.cpp)
+target_include_directories(vita_dscp_socket_test PRIVATE src)
+target_link_libraries(vita_dscp_socket_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME vita_dscp_socket_test COMMAND vita_dscp_socket_test)
+set_tests_properties(vita_dscp_socket_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+# SOCKETS: production ephemeral IPv4 VITA socket (LAN uses AnyIPv4, WAN too)
+# plus our own ephemeral loopback sink. Cold RadioConnection never dials;
+# no radio/firmware peer. Injected QoS denial must leave all bind paths usable.
+add_executable(vita_dscp_stream_test tests/vita_dscp_stream_test.cpp)
+target_include_directories(vita_dscp_stream_test PRIVATE src tests)
+target_link_libraries(vita_dscp_stream_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME vita_dscp_stream_test COMMAND vita_dscp_stream_test)
+set_tests_properties(vita_dscp_stream_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
 
 # CwDecoder public lifecycle/configuration race regression. Generated 24 kHz
 # stereo float CW drives the real worker/GGMorse path; no sockets or radio.

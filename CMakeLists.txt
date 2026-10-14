@@ -767,6 +767,7 @@ set(CORE_SOURCES
     src/core/backends/LocalRadioDiscoverySource.cpp  # native discovery below the vendor seam
     src/core/backends/MemoryWireCodec.cpp    # memory kv-set decode, shared by Flex + local bank
     src/core/backends/flex/FlexBackend.cpp   # aetherd RFC step 2.2 (§5.5)
+    src/core/backends/flex/VitaDscpMarker.cpp     # DSCP EF marking for outgoing VITA UDP
     src/core/backends/sim/SimBackend.cpp     # demo mode — 2nd IRadioBackend (RFC #4288)
     src/core/backends/sim/SimSignalSource.cpp  # demo RX engine, worker thread (#4878)
     src/core/backends/sim/SpectrumPatternGenerator.cpp  # demo mode — signal engine (RFC #4288 Phase 2)

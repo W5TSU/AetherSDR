@@ -3,6 +3,7 @@
 #include "PacketLossConcealment.h"
 #include "VitaBinCoverage.h"
 #include "SpectrumDecodeScale.h"
+#include "core/backends/flex/VitaDscpMarker.h"
 
 #include <QObject>
 #include <QUdpSocket>
@@ -16,6 +17,8 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <atomic>
+#include <functional>
+#include <initializer_list>
 
 namespace AetherSDR {
 
@@ -40,6 +43,7 @@ class OpusCodec;
 
 class PanadapterStream : public QObject {
     Q_OBJECT
+    friend class VitaDscpStreamTestAccess;
 
 public:
     static constexpr int VITA49_HEADER_BYTES = 28;
@@ -240,6 +244,7 @@ private:
     // sequence-loss (which the adaptive throttle would react to). Logs the
     // granted size — the kernel caps the request at net.core.rmem_max. (#3810)
     void applyReceiveBufferSize();
+    void applyDscpEf(const QHostAddress& destination, std::initializer_list<quint16> ports);
     void decodeFFT(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
     void decodeWaterfallTile(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
     void decodeNarrowAudio(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
@@ -369,6 +374,9 @@ private:
     QHash<quint32, OrphanRec> m_orphanStreams;
     QElapsedTimer             m_orphanClock;   // monotonic source for lastSeenMs
     QUdpSocket*     m_socket{nullptr};
+    VitaDscpMarker m_dscpMarker;
+    // Inject only the marking attempt; bind/send/teardown remain production.
+    std::function<VitaDscpResult(qintptr, const QHostAddress&, std::initializer_list<quint16>)> m_dscpApplyForTest;
     quint16         m_localPort{0};
 
     QMap<quint32, QPair<float,float>> m_dbmRanges;  // streamId → (min, max)
