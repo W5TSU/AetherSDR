@@ -14,6 +14,7 @@
 #include "core/backends/AmpDelta.h"
 #include "core/backends/GpsDelta.h"
 #include "core/backends/MemoryDelta.h"
+#include "core/backends/ReceiveDispatch.h"
 #include "core/backends/MeterDef.h"
 #include "core/backends/NotchDelta.h"
 #include "core/backends/ProfileDelta.h"
@@ -177,6 +178,9 @@ class IRadioBackend : public QObject {
     Q_OBJECT
 
 public:
+    // Radio-owned identity; client-owned nicknames retain their local store.
+    virtual ReceiveDispatch requestRadioNickname(const QString&)
+    { return ReceiveDispatch::Unsupported; }
     explicit IRadioBackend(QObject* parent = nullptr) : QObject(parent) {}
     ~IRadioBackend() override = default;
 

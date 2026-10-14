@@ -6549,6 +6549,29 @@ target_include_directories(hl2_discovery_logging_test PRIVATE src)
 target_link_libraries(hl2_discovery_logging_test PRIVATE Qt6::Core Qt6::Network)
 add_test(NAME hl2_discovery_logging_test COMMAND hl2_discovery_logging_test)
 
+# Socket-free Flex nickname encoding and production Radio Setup editing.
+add_executable(radio_nickname_test
+    tests/radio_nickname_test.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/RadioSetupDialog.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/SliceColorManager.cpp
+    src/gui/KiwiPublicReceiverPicker.cpp
+    src/gui/GuardedSlider.h
+    ${THEME_TEST_RESOURCES}
+)
+# MainWindow's status-bar consumers have no socket-free construction seam.
+target_compile_definitions(radio_nickname_test PRIVATE
+    AETHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(radio_nickname_test PRIVATE src tests)
+target_link_libraries(radio_nickname_test PRIVATE
+    aetherdesktop_support Qt6::Widgets Qt6::Test)
+add_test(NAME radio_nickname_test COMMAND radio_nickname_test)
+set_tests_properties(radio_nickname_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
@@ -6571,6 +6594,7 @@ set(AETHER_SETTINGS_CONSUMERS
 
     atu_seam_gate_test
     transmit_seam_drop_notice_test
+    radio_nickname_test
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test
