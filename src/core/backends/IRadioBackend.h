@@ -296,6 +296,21 @@ public:
         Q_UNUSED(hz);
     }
 
+    // The operator's display dBm scale for a panadapter. A backend whose radio
+    // keeps no display state (HackRF) stores it, so it survives a restart, and
+    // confirms it on panRangeChanged -- the echo the GUI's range handshake
+    // waits for.
+    //
+    // Default no-op: a Flex radio takes "display pan set … min_dbm=" wire
+    // text, and a backend that does not override this keeps the scale in the
+    // GUI only, as before.
+    virtual void setPanDbmRange(const QString& panId, double minDbm, double maxDbm)
+    {
+        Q_UNUSED(panId);
+        Q_UNUSED(minDbm);
+        Q_UNUSED(maxDbm);
+    }
+
     // Receive RF gain for a panadapter, in dB.
     //
     // The sibling of setPanCenter/setPanBandwidth, and it exists for the same

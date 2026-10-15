@@ -179,6 +179,9 @@ void HackRfRxDsp::onDecimated(const QVector<std::complex<float>>& iq)
             != WdspChannel::ProcessResult::Ok) {
             continue;   // the pipeline is still filling
         }
+        // The average tap, as Hl2RxDsp reads it: S-units are RMS, and a peak
+        // tap reads band noise ~11-14 dB high.
+        emit meterLevel(static_cast<float>(m_channel->meter(WdspChannel::Meter::SignalAverage)));
         const int before = pcm.size();
         pcm.resize(before + static_cast<int>(outN * 2 * sizeof(float)));
         auto* out = reinterpret_cast<float*>(pcm.data() + before);

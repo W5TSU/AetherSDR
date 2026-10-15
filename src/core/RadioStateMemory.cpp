@@ -25,6 +25,7 @@ bool has(const RadioCapabilities& caps, Domain domain)
 // feature documents (one domain, one document — PR 6).
 constexpr const char* kExtRfGainKey = "rfGain";
 constexpr const char* kExtTxSetpointsKey = "txSetpoints";
+constexpr const char* kExtPanDisplayKey = "panDisplay";
 
 } // namespace
 
@@ -102,6 +103,11 @@ RestoredRadioState load(const RadioSettingsScope& scope,
         && storedExt.contains(QLatin1String(kExtTxSetpointsKey))) {
         gatedExt.insert(QLatin1String(kExtTxSetpointsKey),
                         storedExt.value(QLatin1String(kExtTxSetpointsKey)));
+    }
+    if (has(caps, Domain::PanDisplay)
+        && storedExt.contains(QLatin1String(kExtPanDisplayKey))) {
+        gatedExt.insert(QLatin1String(kExtPanDisplayKey),
+                        storedExt.value(QLatin1String(kExtPanDisplayKey)));
     }
     if (!gatedExt.isEmpty()) {
         state.extension = gatedExt;
@@ -211,6 +217,11 @@ bool store(const RadioSettingsScope& scope, const RadioCapabilities& caps,
         && state.extension.contains(QLatin1String(kExtTxSetpointsKey))) {
         gatedExt.insert(QLatin1String(kExtTxSetpointsKey),
                         state.extension.value(QLatin1String(kExtTxSetpointsKey)));
+    }
+    if (has(caps, Domain::PanDisplay)
+        && state.extension.contains(QLatin1String(kExtPanDisplayKey))) {
+        gatedExt.insert(QLatin1String(kExtPanDisplayKey),
+                        state.extension.value(QLatin1String(kExtPanDisplayKey)));
     }
     if (!gatedExt.isEmpty()) {
         doc.insert(QStringLiteral("ext"), gatedExt);

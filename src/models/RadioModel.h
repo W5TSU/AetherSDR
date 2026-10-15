@@ -874,6 +874,10 @@ public:
     void setPanBandwidth(double bandwidthMhz);
     void setPanCenter(double centerMhz);
     void setPanDbmRange(float minDbm, float maxDbm);
+    // A user's dBm scale for one pan: wire text on a radio with a command
+    // plane, IRadioBackend::setPanDbmRange on one without. False when it was
+    // not dispatched.
+    bool requestPanDbmRange(const QString& panId, float minDbm, float maxDbm);
 
     // #4142 — the ONLY supported way for a USER-INTENT path to write a pan's
     // center/bandwidth/band to the radio.

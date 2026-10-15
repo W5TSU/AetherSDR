@@ -93,6 +93,12 @@ int main(int argc, char** argv)
     QObject::connect(dsp, &HackRfRxDsp::spectrumFrame, dsp, [&](const QByteArray&) {
         ++spectrumFrames;
     }, Qt::DirectConnection);
+    std::atomic<int> meterFrames{0};
+    std::atomic<float> lastMeterDbfs{-999.0f};
+    QObject::connect(dsp, &HackRfRxDsp::meterLevel, dsp, [&](float dbfs) {
+        lastMeterDbfs = dbfs;
+        ++meterFrames;
+    }, Qt::DirectConnection);
 
     // A real WFM channel, as HackRfBackend builds it. The suite's isolation TU
     // bounds the FFTW planner, so this opens in well under a second.
@@ -130,6 +136,17 @@ int main(int argc, char** argv)
     check(spinUntil([&] { return audioFrames > 0; }, 10'000), "demodulated audio is produced");
     check(!audioOnCaller, "...on the DSP thread, never the caller's");
     check(spectrumFrames > 0, "spectrum frames are produced");
+    // The S-meter's source. The tone is 0.3 of full scale: -10.5 dBFS. WDSP
+    // averages it over 100 ms, so give it ~0.6 s of tone to settle first.
+    check(meterFrames > 0, "a receive level is produced with the audio");
+    for (int i = 0; i < 36; ++i) {
+        dsp->enqueueIq(toneBlock(kBlock, phase));
+        QThread::msleep(20);
+    }
+    spinUntil([&] { return meterFrames > 150; }, 5'000);   // ~0.4 s through WDSP
+    std::printf("receive level %.2f dBFS\n", static_cast<double>(lastMeterDbfs.load()));
+    check(std::abs(lastMeterDbfs.load() - (-10.46f)) < 2.0f,
+          "the receive level reads the tone's power (-10.5 dBFS)");
 
     // ---- a busy DSP thread drops, it does not pile up ----
     // Deterministic: let the earlier backlog finish, then occupy the DSP thread

@@ -6338,9 +6338,20 @@ void RadioModel::voidPendingPanWrites(const QString& panId, const QString& reaso
 void RadioModel::setPanDbmRange(float minDbm, float maxDbm)
 {
     if (m_activePanId.isEmpty()) return;
-    sendCmd(
+    requestPanDbmRange(m_activePanId, minDbm, maxDbm);
+}
+
+bool RadioModel::requestPanDbmRange(const QString& panId, float minDbm, float maxDbm)
+{
+    // A backend with no command plane would drop the wire text; give it the
+    // range through the seam instead, as setPanBandwidth does.
+    if (!hasCommandPlane() && m_backend) {
+        m_backend->setPanDbmRange(backendPanIdFor(panId), minDbm, maxDbm);
+        return true;
+    }
+    return sendCommand(
         QString("display pan set %1 min_dbm=%2 max_dbm=%3")
-            .arg(m_activePanId)
+            .arg(panId)
             .arg(static_cast<double>(minDbm), 0, 'f', 2)
             .arg(static_cast<double>(maxDbm), 0, 'f', 2));
 }

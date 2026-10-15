@@ -6,6 +6,7 @@
 #include "core/dsp/WdspChannel.h"
 
 #include <QCoreApplication>
+#include <QSignalSpy>
 #include <QJsonObject>
 #include <cstdio>
 #include <memory>
@@ -78,13 +79,19 @@ int main(int argc, char** argv)
         {QStringLiteral("lnaGainDb"), 24},
         {QStringLiteral("ampEnabled"), true},
     };
+    restoredState.extension[QStringLiteral("panDisplay")] = QJsonObject{
+        {QStringLiteral("spanHz"), 2'000'000.0},
+        {QStringLiteral("minDbm"), -100.0},
+        {QStringLiteral("maxDbm"), -20.0},
+    };
     backend->applyRestoredState(restoredState);
 
     const auto op = backend->currentOperatingState();
     check(op.rfFrequencyHz == 146'520'000.0, "restored frequency round-trips");
     check(op.mode == "FM", "restored mode is canonicalized to uppercase");
     check(op.filterLowHz == -8'000 && op.filterHighHz == 8'000, "restored filter round-trips");
-    check(op.sampleRateHz == 10'000'000, "restored sample rate round-trips");
+    check(op.sampleRateHz == 8'000'000,
+          "the saved hardware rate no longer picks the span (8 MS/s runs every narrow zoom)");
     // AGC runs in WDSP on this host, so the client is the only place the
     // operator's mode and threshold can live. It was never saved: every
     // session started on medium/65 whatever had been chosen.
@@ -92,6 +99,12 @@ int main(int argc, char** argv)
           "declares the AGC settings domain");
     check(op.agcMode == QStringLiteral("slow"), "restored AGC mode round-trips");
     check(op.agcThreshold == 40, "restored AGC threshold round-trips");
+    const auto displayObj = op.extension.value(QStringLiteral("panDisplay")).toObject();
+    check(displayObj.value(QStringLiteral("spanHz")).toDouble() == 2'000'000.0,
+          "restored span round-trips");
+    check(displayObj.value(QStringLiteral("minDbm")).toDouble() == -100.0
+              && displayObj.value(QStringLiteral("maxDbm")).toDouble() == -20.0,
+          "restored dBm scale round-trips");
     const auto gainObj = op.extension.value(QStringLiteral("rfGain")).toObject();
     check(gainObj.value(QStringLiteral("vgaGainDb")).toInt() == 30, "restored VGA gain round-trips");
     check(gainObj.value(QStringLiteral("lnaGainDb")).toInt() == 24, "restored LNA gain round-trips");
@@ -104,6 +117,17 @@ int main(int argc, char** argv)
     RestoredRadioState empty;
     backend->applyRestoredState(empty);
     const auto opAfterEmpty = backend->currentOperatingState();
+    // A new session shows ~400 kHz (the 500 kHz zoom step) at 0 to -80 dBm.
+    {
+        check(caps.clientSettingsDomains.testFlag(RadioCapabilities::ClientSettingsDomain::PanDisplay),
+              "declares the pan display settings domain");
+        const auto display = opAfterEmpty.extension.value(QStringLiteral("panDisplay")).toObject();
+        check(display.value(QStringLiteral("spanHz")).toDouble() == 500'000.0,
+              "the default span is 500 kHz");
+        check(display.value(QStringLiteral("minDbm")).toDouble() == -80.0
+                  && display.value(QStringLiteral("maxDbm")).toDouble() == 0.0,
+              "the default dBm scale is 0 to -80");
+    }
     check(opAfterEmpty.rfFrequencyHz == 100'000'000.0,
           "an empty restore resets to the 100.0 MHz FM-broadcast default, not the prior session's value");
     check(opAfterEmpty.mode == "WFM", "an empty restore resets mode to the default");
@@ -127,6 +151,31 @@ int main(int argc, char** argv)
               && backend->currentOperatingState().agcThreshold == 100,
           "the AGC threshold is clamped to 0..100");
     backend->applyRestoredState(empty);
+
+    // ── The dBm scale is kept, saved and echoed ──────────────────────
+    {
+        QSignalSpy range(backend.get(), &IRadioBackend::panRangeChanged);
+        QSignalSpy saved(backend.get(), &IRadioBackend::operatingStateChanged);
+        backend->setPanDbmRange(QStringLiteral("0xh1000000"), -110.0, -30.0);
+        auto display = backend->currentOperatingState().extension.value(QStringLiteral("panDisplay")).toObject();
+        check(display.value(QStringLiteral("minDbm")).toDouble() == -110.0
+                  && display.value(QStringLiteral("maxDbm")).toDouble() == -30.0,
+              "a dBm scale change is kept for the next save");
+        check(saved.count() == 1, "a dBm scale change schedules a save");
+        check(range.count() == 1 && range.at(0).at(1).toDouble() == -110.0
+                  && range.at(0).at(2).toDouble() == -30.0,
+              "a dBm scale change is echoed on panRangeChanged");
+
+        // An inverted range is refused, and the stored one echoed back.
+        backend->setPanDbmRange(QStringLiteral("0xh1000000"), -20.0, -60.0);
+        display = backend->currentOperatingState().extension.value(QStringLiteral("panDisplay")).toObject();
+        check(display.value(QStringLiteral("minDbm")).toDouble() == -110.0,
+              "an inverted dBm range is refused");
+        check(saved.count() == 1, "a refused dBm range does not save");
+        check(range.count() == 2 && range.at(1).at(1).toDouble() == -110.0,
+              "a refused dBm range echoes the stored one");
+        backend->applyRestoredState(empty);
+    }
 
     // ── Setters before connect are safe no-ops, never crash ────────────
     backend->setSliceFrequency(0, 14'074'000.0);

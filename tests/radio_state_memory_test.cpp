@@ -302,6 +302,40 @@ int main(int argc, char** argv)
               "an undeclared ext domain's sub-object is NOT handed over");
     }
 
+    // ---- the pan display (span + dBm scale) rides on its own domain ------
+    // HackRF keeps the operator's span and dBm scale here; a backend that does
+    // not declare PanDisplay neither writes nor gets it.
+    {
+        const RadioSettingsScope hackrf(QStringLiteral("hackrf"),
+                                        QStringLiteral("0000000000000000a06063c8"));
+        RadioCapabilities caps;
+        caps.family = QStringLiteral("hackrf");
+        caps.clientSettingsDomains = Domain::Tuning | Domain::PanDisplay;
+        RestoredRadioState state;
+        state.rfFrequencyHz = 100'100'000.0;
+        state.extensionSchemaVersion = 1;
+        state.extension = QJsonObject{
+            {QStringLiteral("panDisplay"),
+             QJsonObject{{QStringLiteral("spanHz"), 250'000.0},
+                         {QStringLiteral("minDbm"), -90.0},
+                         {QStringLiteral("maxDbm"), -10.0}}}};
+        check(RadioStateMemory::store(hackrf, caps, state),
+              "a PanDisplay state stores");
+        const QJsonObject display = RadioStateMemory::load(hackrf, caps)
+                                        .extension.value(QStringLiteral("panDisplay"))
+                                        .toObject();
+        check(display.value(QStringLiteral("spanHz")).toDouble() == 250'000.0
+                  && display.value(QStringLiteral("minDbm")).toDouble() == -90.0
+                  && display.value(QStringLiteral("maxDbm")).toDouble() == -10.0,
+              "the pan display round-trips under PanDisplay");
+
+        RadioCapabilities tuningOnly = caps;
+        tuningOnly.clientSettingsDomains = Domain::Tuning;
+        check(!RadioStateMemory::load(hackrf, tuningOnly)
+                   .extension.contains(QStringLiteral("panDisplay")),
+              "the pan display is NOT handed to a backend without PanDisplay");
+    }
+
     // ---- store is read-only toward newer documents (PR #4614 review) ------
     // The load→capture→store cycle against a v2 document must refuse, not
     // truncate-and-downgrade.

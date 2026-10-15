@@ -124,6 +124,9 @@ public:
     // decimates the 2 MS/s capture (HackRfZoomDecimator), with no restart.
     void setPanBandwidth(const QString& panId, double hz) override;
     void setPanFrameRate(const QString& panId, int fps) override;
+    // The operator's dBm scale: kept here (the HackRF has no display memory),
+    // saved with the operating state, and echoed on panRangeChanged.
+    void setPanDbmRange(const QString& panId, double minDbm, double maxDbm) override;
 
     // VGA (baseband) gain, 0-62dB/2dB steps — the continuous slider. LNA and
     // the front-end AMP map to setPanPreamp() below; there is no third
@@ -272,7 +275,20 @@ private:
     // (m_sampleRateHz), not this: a slice off-screen but inside the capture
     // still has audio, and holding it on-screen fought the GUI's
     // pointer-anchored zoom.
-    double m_spanHz{8'000'000.0};
+    double m_spanHz{500'000.0};
+    // The display dBm scale (setPanDbmRange). The HackRF's spectrum sits far
+    // above a Flex's, so its default is 0 to -80, not the pan's -40 to -130.
+    double m_minDbm{-80.0};
+    double m_maxDbm{0.0};
+    // The S-meter (SLC:LEVEL): every block's level smoothed, published every
+    // kMeterPublishIntervalMs. Same ballistics as Hl2Backend's.
+    void onMeterLevel(float dbfs);
+    static constexpr qint64 kMeterPublishIntervalMs = 100;
+    static constexpr double kMeterAttackAlpha = 0.5;
+    static constexpr double kMeterDecayAlpha = 0.15;
+    double m_sMeterDbm{0.0};
+    bool m_haveSMeter{false};
+    QElapsedTimer m_sMeterClock;
     // Which HackRF is connected: the Pro may only use some sample rates
     // (HackRfTuning.h, hardwareRatesHz). Set at connect.
     HackRfBoard m_board{HackRfBoard::One};
