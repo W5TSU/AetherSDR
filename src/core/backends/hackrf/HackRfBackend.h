@@ -280,6 +280,15 @@ private:
     // above a Flex's, so its default is 0 to -80, not the pan's -40 to -130.
     double m_minDbm{-80.0};
     double m_maxDbm{0.0};
+    // The S-meter (SLC:LEVEL): every block's level smoothed, published every
+    // kMeterPublishIntervalMs. Same ballistics as Hl2Backend's.
+    void onMeterLevel(float dbfs);
+    static constexpr qint64 kMeterPublishIntervalMs = 100;
+    static constexpr double kMeterAttackAlpha = 0.5;
+    static constexpr double kMeterDecayAlpha = 0.15;
+    double m_sMeterDbm{0.0};
+    bool m_haveSMeter{false};
+    QElapsedTimer m_sMeterClock;
     // Which HackRF is connected: the Pro may only use some sample rates
     // (HackRfTuning.h, hardwareRatesHz). Set at connect.
     HackRfBoard m_board{HackRfBoard::One};

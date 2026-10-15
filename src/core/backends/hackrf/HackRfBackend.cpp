@@ -202,6 +202,7 @@ HackRfBackend::HackRfBackend(QObject* parent)
         emit audioFrameReady(pcm);
         emit sliceAudioFrameReady(0, pcm);
     });
+    connect(m_rxDsp, &HackRfRxDsp::meterLevel, this, &HackRfBackend::onMeterLevel);
     connect(m_txDsp.get(), &HackRfTxDsp::iqReady, this, &HackRfBackend::onTxDspIqReady);
 
     // Polls HackRfTxRxArbiter::tick() for timeout recovery. HackRfWorker's
@@ -859,6 +860,23 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
     emit operatingStateChanged();
 }
 
+void HackRfBackend::onMeterLevel(float dbfs)
+{
+    // Smooth every block, publish on the tick: the value covers the whole
+    // interval, and ~100 blocks a second do not each repaint the meter.
+    if (!m_haveSMeter) {
+        m_sMeterDbm = dbfs;
+        m_haveSMeter = true;
+    } else {
+        const double alpha = (dbfs > m_sMeterDbm) ? kMeterAttackAlpha : kMeterDecayAlpha;
+        m_sMeterDbm = alpha * dbfs + (1.0 - alpha) * m_sMeterDbm;
+    }
+    if (m_sMeterClock.isValid() && m_sMeterClock.elapsed() < kMeterPublishIntervalMs)
+        return;
+    m_sMeterClock.restart();
+    emit meterUpdate(QStringLiteral("SLC:LEVEL"), m_sMeterDbm);
+}
+
 void HackRfBackend::setPanDbmRange(const QString& panId, double minDbm, double maxDbm)
 {
     Q_UNUSED(panId);
@@ -1264,6 +1282,21 @@ void HackRfBackend::emitInitialState()
     emit panBandwidthLimitsChanged(panId, zoomSpansHz(m_board).front() / 1e6,
                                    zoomSpansHz(m_board).back() / 1e6);
     emit panRangeChanged(panId, m_minDbm, m_maxDbm);
+
+    // The S-meter. Nothing on the HackRF assigns meter ids, so the index is
+    // ours; MeterModel binds the slice's meter by SLC/LEVEL. Not calibrated:
+    // it reads the same scale as the spectrum, which also moves with the gain.
+    MeterDef level;
+    level.index = 1;
+    level.source = QStringLiteral("SLC");
+    level.name = QStringLiteral("LEVEL");
+    level.unit = QStringLiteral("dBm");
+    level.low = -140.0;
+    level.high = 0.0;
+    level.description = QStringLiteral("Receive signal level (uncalibrated)");
+    m_haveSMeter = false;
+    m_sMeterClock.invalidate();
+    emit meterDefined(level);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);
     emit panRfGainChanged(panId, m_vgaGainDb);

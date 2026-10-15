@@ -75,6 +75,9 @@ public:
 signals:
     void spectrumFrame(QByteArray binsDbfs);   // float32 bins
     void audioFrame(QByteArray pcmStereoFloat);
+    // The receive level after each demodulated block: WDSP's average signal
+    // meter, in dB relative to the same full scale as spectrumFrame's bins.
+    void meterLevel(float dbfs);
 
 private:
     void drain();
