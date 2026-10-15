@@ -83,6 +83,7 @@ int main(int argc, char** argv)
         {QStringLiteral("spanHz"), 2'000'000.0},
         {QStringLiteral("minDbm"), -100.0},
         {QStringLiteral("maxDbm"), -20.0},
+        {QStringLiteral("dbmScale"), 1},
     };
     backend->applyRestoredState(restoredState);
 
@@ -117,16 +118,36 @@ int main(int argc, char** argv)
     RestoredRadioState empty;
     backend->applyRestoredState(empty);
     const auto opAfterEmpty = backend->currentOperatingState();
-    // A new session shows ~400 kHz (the 500 kHz zoom step) at 0 to -80 dBm.
+    // A new session shows ~400 kHz (the 500 kHz zoom step) at -40 to -140 dBm.
     {
         check(caps.clientSettingsDomains.testFlag(RadioCapabilities::ClientSettingsDomain::PanDisplay),
               "declares the pan display settings domain");
         const auto display = opAfterEmpty.extension.value(QStringLiteral("panDisplay")).toObject();
         check(display.value(QStringLiteral("spanHz")).toDouble() == 500'000.0,
               "the default span is 500 kHz");
-        check(display.value(QStringLiteral("minDbm")).toDouble() == -80.0
-                  && display.value(QStringLiteral("maxDbm")).toDouble() == 0.0,
-              "the default dBm scale is 0 to -80");
+        check(display.value(QStringLiteral("minDbm")).toDouble() == -140.0
+                  && display.value(QStringLiteral("maxDbm")).toDouble() == -40.0,
+              "the default dBm scale is -40 to -140 (calibrated dBm)");
+        check(display.value(QStringLiteral("dbmScale")).toInt() == 1,
+              "the saved dBm scale is marked as calibrated dBm");
+    }
+
+    // A dBm range saved before calibration was raw dBFS: it is not restored.
+    {
+        RestoredRadioState old;
+        old.extension[QStringLiteral("panDisplay")] = QJsonObject{
+            {QStringLiteral("spanHz"), 1'000'000.0},
+            {QStringLiteral("minDbm"), -80.0},
+            {QStringLiteral("maxDbm"), 0.0},
+        };
+        backend->applyRestoredState(old);
+        const auto display = backend->currentOperatingState().extension
+                                 .value(QStringLiteral("panDisplay")).toObject();
+        check(display.value(QStringLiteral("minDbm")).toDouble() == -140.0,
+              "an unmarked (dBFS) dBm range falls back to the calibrated default");
+        check(display.value(QStringLiteral("spanHz")).toDouble() == 1'000'000.0,
+              "...while its span is still restored");
+        backend->applyRestoredState(empty);
     }
     check(opAfterEmpty.rfFrequencyHz == 100'000'000.0,
           "an empty restore resets to the 100.0 MHz FM-broadcast default, not the prior session's value");
@@ -175,6 +196,17 @@ int main(int argc, char** argv)
         check(range.count() == 2 && range.at(1).at(1).toDouble() == -110.0,
               "a refused dBm range echoes the stored one");
         backend->applyRestoredState(empty);
+    }
+
+    // ── Level calibration verbs ──────────────────────────────────────
+    // Like every hackrf.* verb they need a connected device (the correction is
+    // stored against its serial); the connected path is checked on hardware.
+    {
+        check(caps.hostLevelCalibration, "declares host level calibration");
+        QSignalSpy error(backend.get(), &IRadioBackend::extensionError);
+        for (const char* verb : {"levelcal.set", "levelcal.get", "levelcal.calibrate"})
+            backend->invokeExtension(QStringLiteral("hackrf"), QString::fromLatin1(verb), 7, -73.0);
+        check(error.count() == 3, "the levelcal verbs refuse before connect");
     }
 
     // ── Setters before connect are safe no-ops, never crash ────────────

@@ -131,6 +131,7 @@ private:
     // hostFrequencyCalibration — the HL2 today). A Flex calibrates itself and
     // keeps its own Frequency Offset group on the Receive page.
     QWidget* buildCalibrationTab();
+    std::function<void()> buildLevelCalibrationGroup(QVBoxLayout* vbox);
     // Live DDC0 droop-correction sweep, for families with a measured DDC edge
     // droop (RadioCapabilities::hostDroopCalibration -- the ANAN-G2 today).
     // Mirrors buildCalibrationTab()'s own shape (gated on the capability, not

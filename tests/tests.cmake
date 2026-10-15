@@ -2760,6 +2760,13 @@ if(AETHER_BACKEND_HACKRF)
     target_link_libraries(hackrf_tuning_test PRIVATE aethercore)
     add_test(NAME hackrf_tuning_test COMMAND hackrf_tuning_test)
 
+    # dBFS -> dBm: the measured gain table, the offset, and the per-device
+    # correction in the settings store.
+    add_executable(hackrf_dbref_test tests/hackrf_dbref_test.cpp)
+    target_include_directories(hackrf_dbref_test PRIVATE src tests)
+    target_link_libraries(hackrf_dbref_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME hackrf_dbref_test COMMAND hackrf_dbref_test)
+
     # Narrow-zoom spectrum decimator: in-view tones pass, out-of-view tones do
     # not fold in. Pure; no hardware.
     add_executable(hackrf_zoom_decimator_test tests/hackrf_zoom_decimator_test.cpp)

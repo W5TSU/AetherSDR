@@ -10,12 +10,14 @@
 //   - a busy DSP thread makes the queue DROP the oldest blocks (and count them)
 //     instead of growing;
 //   - spectrum frames come out; clearChannel() stops audio.
+#include "core/backends/hackrf/HackRfDbReference.h"
 #include "core/backends/hackrf/HackRfRxDsp.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QThread>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <complex>
@@ -93,6 +95,10 @@ int main(int argc, char** argv)
     QObject::connect(dsp, &HackRfRxDsp::spectrumFrame, dsp, [&](const QByteArray&) {
         ++spectrumFrames;
     }, Qt::DirectConnection);
+    QByteArray toneFrame;   // the latest spectrum frame of the tone
+    QObject::connect(dsp, &HackRfRxDsp::spectrumFrame, dsp, [&](const QByteArray& f) {
+        toneFrame = f;
+    }, Qt::DirectConnection);
     std::atomic<int> meterFrames{0};
     std::atomic<float> lastMeterDbfs{-999.0f};
     QObject::connect(dsp, &HackRfRxDsp::meterLevel, dsp, [&](float dbfs) {
@@ -147,6 +153,16 @@ int main(int argc, char** argv)
     std::printf("receive level %.2f dBFS\n", static_cast<double>(lastMeterDbfs.load()));
     check(std::abs(lastMeterDbfs.load() - (-10.46f)) < 2.0f,
           "the receive level reads the tone's power (-10.5 dBFS)");
+    // The spectrum reads a complex carrier 6.02 dB above its power (real-signal
+    // normalization), which HackRfDbReference::kSpectrumCorrectionDb removes.
+    // Within the Hann window's 1.4 dB scalloping: the tone is 2.56 bins out.
+    {
+        const auto* bins = reinterpret_cast<const float*>(toneFrame.constData());
+        const float peak = *std::max_element(bins, bins + toneFrame.size() / int(sizeof(float)));
+        std::printf("tone spectrum peak %.2f dBFS\n", double(peak));
+        check(std::abs(peak + HackRfDbReference::kSpectrumCorrectionDb - (-10.46)) < 1.6,
+              "the corrected spectrum peak reads the tone's power");
+    }
 
     // ---- a busy DSP thread drops, it does not pile up ----
     // Deterministic: let the earlier backlog finish, then occupy the DSP thread
