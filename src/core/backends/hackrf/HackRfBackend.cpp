@@ -12,6 +12,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <span>
 
@@ -25,6 +26,17 @@ constexpr const char* kPanId = "0xh1000000";
 // choice for the same "USB SDR wideband capture" category of source; twice
 // Hl2RxDsp's default (1024) since HL2's span is narrower to begin with.
 constexpr int kSpectrumFftSize = 2048;
+// A new session's displayed span and dBm scale. 500 kHz is the zoom step
+// nearest the ~400 kHz asked for (zoomSpansHz: 250 kHz, 500 kHz).
+constexpr double kDefaultSpanHz = 500'000.0;
+constexpr double kDefaultMinDbm = -80.0;
+constexpr double kDefaultMaxDbm = 0.0;
+// The same bounds the GUI's dbmRangeLooksPlausible() holds a range to.
+bool dbmRangeUsable(double minDbm, double maxDbm)
+{
+    return std::isfinite(minDbm) && std::isfinite(maxDbm) && minDbm < maxDbm
+        && minDbm >= -180.0 && maxDbm <= 50.0;
+}
 
 // RX audio (WDSP RXA channel) constants — see the class comment.
 //
@@ -288,6 +300,9 @@ RadioCapabilities HackRfBackend::capabilities() const
     c.clientSettingsDomains = RadioCapabilities::ClientSettingsDomain::Tuning
                             | RadioCapabilities::ClientSettingsDomain::Passband
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
+                            // The displayed span and dBm scale: the radio
+                            // keeps no display state of its own.
+                            | RadioCapabilities::ClientSettingsDomain::PanDisplay
                             | RadioCapabilities::ClientSettingsDomain::RfGain
                             // RF and TUNE power: the drive is a host-side TX
                             // VGA setting, so nothing else remembers it.
@@ -325,6 +340,9 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     m_sliceFilterLow = -40'000;
     m_sliceFilterHigh = 40'000;
     m_sampleRateHz = 8'000'000.0;
+    m_spanHz = kDefaultSpanHz;
+    m_minDbm = kDefaultMinDbm;
+    m_maxDbm = kDefaultMaxDbm;
     m_vgaGainDb = 20;
     m_lnaGainDb = 16;
     m_ampEnabled = false;
@@ -344,9 +362,6 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
         m_sliceFilterLow = static_cast<int>(state.filterLowHz);
         m_sliceFilterHigh = static_cast<int>(state.filterHighHz);
     }
-    if (state.sampleRateHz > 0) {
-        m_sampleRateHz = state.sampleRateHz;
-    }
     // The Agc domain. -1 is "not stored" (0 is a real threshold).
     const QString agc = state.agcMode.trimmed().toLower();
     if (isKnownAgcMode(agc))
@@ -364,6 +379,19 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
             m_lnaGainDb = obj.value(QStringLiteral("lnaGainDb")).toInt(m_lnaGainDb);
         if (obj.contains(QStringLiteral("ampEnabled")))
             m_ampEnabled = obj.value(QStringLiteral("ampEnabled")).toBool(m_ampEnabled);
+    }
+    // The span the operator last showed (snapped to this board's zoom steps at
+    // connect) and the dBm scale. Not sampleRateHz: that is the hardware rate,
+    // 8 MS/s under every narrow zoom, so it cannot say which zoom it was.
+    const QJsonObject display = state.extension.value(QStringLiteral("panDisplay")).toObject();
+    const double span = display.value(QStringLiteral("spanHz")).toDouble();
+    if (span > 0)
+        m_spanHz = span;
+    const double minDbm = display.value(QStringLiteral("minDbm")).toDouble(qQNaN());
+    const double maxDbm = display.value(QStringLiteral("maxDbm")).toDouble(qQNaN());
+    if (dbmRangeUsable(minDbm, maxDbm)) {
+        m_minDbm = minDbm;
+        m_maxDbm = maxDbm;
     }
     const QJsonObject tx = state.extension.value(QStringLiteral("txSetpoints")).toObject();
     if (tx.contains(QStringLiteral("rfPower"))) {
@@ -396,6 +424,11 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
     if (m_tunePowerPercent >= 0)
         tx.insert(QStringLiteral("tunePower"), m_tunePowerPercent);
     state.extension[QStringLiteral("txSetpoints")] = tx;
+    state.extension[QStringLiteral("panDisplay")] = QJsonObject{
+        {QStringLiteral("spanHz"), m_spanHz},
+        {QStringLiteral("minDbm"), m_minDbm},
+        {QStringLiteral("maxDbm"), m_maxDbm},
+    };
     return state;
 }
 
@@ -444,12 +477,11 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
     // A HackRF Pro may only use the sample rates its firmware tunes correctly.
     m_board = m_worker->isPro() ? HackRfBoard::Pro : HackRfBoard::One;
 
-    // A restored rate outside the zoom steps snaps to the nearest one, and each
-    // session starts with the panadapter centred on the slice. A restored 2 or
-    // 4 MS/s becomes that span shown from the 8 MS/s capture (planForSpan).
+    // A restored span outside this board's zoom steps snaps to the nearest one
+    // (a Pro has no 10, 12.5 or 20 MHz), and each session starts with the
+    // panadapter centred on the slice.
     {
-        const auto& rates = hardwareRatesHz(m_board);
-        const ZoomPlan plan = planForSpan(chooseSampleRate(rates, m_sampleRateHz, m_sampleRateHz));
+        const ZoomPlan plan = planForSpan(chooseSampleRate(zoomSpansHz(m_board), m_spanHz, m_spanHz));
         m_spanHz = plan.sampleRateHz / plan.decimation;
         m_sampleRateHz = plan.sampleRateHz;
         m_rxDsp->setZoomDecimation(plan.decimation);
@@ -824,6 +856,20 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
     applyPanSlice(r.panHz, r.sliceHz, /*panMoved=*/true, /*sliceMoved=*/false);
     qCInfo(lcHackRf) << "HackRF: span" << m_spanHz / 1e3 << "kHz (rate"
                      << m_sampleRateHz / 1e6 << "MS/s, spectrum decimation" << plan.decimation << ")";
+    emit operatingStateChanged();
+}
+
+void HackRfBackend::setPanDbmRange(const QString& panId, double minDbm, double maxDbm)
+{
+    Q_UNUSED(panId);
+    if (dbmRangeUsable(minDbm, maxDbm) && (minDbm != m_minDbm || maxDbm != m_maxDbm)) {
+        m_minDbm = minDbm;
+        m_maxDbm = maxDbm;
+        emit operatingStateChanged();
+    }
+    // Always echoed, refused or not: the GUI's range handshake waits for it,
+    // and a refusal must put the scale back to what is stored.
+    emit panRangeChanged(QString::fromLatin1(kPanId), m_minDbm, m_maxDbm);
 }
 
 void HackRfBackend::setPanFrameRate(const QString& panId, int fps)
@@ -1217,6 +1263,7 @@ void HackRfBackend::emitInitialState()
     // honour.)
     emit panBandwidthLimitsChanged(panId, zoomSpansHz(m_board).front() / 1e6,
                                    zoomSpansHz(m_board).back() / 1e6);
+    emit panRangeChanged(panId, m_minDbm, m_maxDbm);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);
     emit panRfGainChanged(panId, m_vgaGainDb);

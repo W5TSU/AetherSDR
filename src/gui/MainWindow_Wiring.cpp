@@ -3732,11 +3732,7 @@ void MainWindow::wirePanadapter(PanadapterApplet* applet)
         // #3977 ownership note: foreign-owned pans are refused at the handler
         // entry (before the local decoder commit) and again centrally in
         // RadioModel::sendCommand — no per-command gate needed here.
-        m_radioModel.sendCommand(
-            QString("display pan set %1 min_dbm=%2 max_dbm=%3")
-                .arg(applet->panId())
-                .arg(static_cast<double>(minDbm), 0, 'f', 2)
-                .arg(static_cast<double>(maxDbm), 0, 'f', 2));
+        m_radioModel.requestPanDbmRange(applet->panId(), minDbm, maxDbm);
     };
 
     // Guard: wirePanadapter() is called once at startup (for m_panApplet) and

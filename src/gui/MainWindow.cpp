@@ -10987,10 +10987,7 @@ void MainWindow::restoreBandState(const BandSnapshot& snap)
         // the radio determines bandwidth. Pushing stale saved values causes
         // FFT/waterfall misalignment during the transition (#279, #291).
         // Only restore dBm scale (client-side display preference).
-        m_radioModel.sendCommand(
-            QString("display pan set %1 min_dbm=%2 max_dbm=%3").arg(pan->panId())
-                .arg(static_cast<double>(snap.minDbm), 0, 'f', 2)
-                .arg(static_cast<double>(snap.maxDbm), 0, 'f', 2));
+        m_radioModel.requestPanDbmRange(pan->panId(), snap.minDbm, snap.maxDbm);
     }
     m_radioModel.setPanRfGain(snap.rfGain);
     m_radioModel.setPanWnb(snap.wnbOn);
