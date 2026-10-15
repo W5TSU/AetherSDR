@@ -223,6 +223,7 @@ bool HackRfWorker::setTxVgaGainDb(int requestedDb)
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_set_txvga_gain failed:" << errName(rc);
         return false;
     }
+    m_txVgaDb = db;
     return true;
 }
 
@@ -234,6 +235,7 @@ bool HackRfWorker::setAmpEnable(bool on)
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_set_amp_enable failed:" << errName(rc);
         return false;
     }
+    m_ampOn = on;
     return true;
 }
 
@@ -305,12 +307,16 @@ bool HackRfWorker::startTx()
                                   " arbitration state machine in HackRfBackend)";
         return false;
     }
+    m_txSamplesSent.store(0, std::memory_order_relaxed);
+    m_txSamplesPadded.store(0, std::memory_order_relaxed);
     const int rc = hackrf_start_tx(m_device, &HackRfWorker::txCallback, this);
     if (rc != HACKRF_SUCCESS) {
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_start_tx failed:" << errName(rc);
         return false;
     }
     m_txStreaming.store(true, std::memory_order_relaxed);
+    qCInfo(lcHackRf) << "HackRfWorker: TX streaming, TX VGA" << m_txVgaDb << "dB, amp"
+                     << (m_ampOn ? "on" : "off");
     return true;
 }
 
@@ -318,7 +324,13 @@ bool HackRfWorker::stopTx()
 {
     if (!m_device) return false;
     const int rc = hackrf_stop_tx(m_device);
-    m_txStreaming.store(false, std::memory_order_relaxed);
+    const bool wasStreaming = m_txStreaming.exchange(false, std::memory_order_relaxed);
+    if (wasStreaming) {
+        qCInfo(lcHackRf) << "HackRfWorker: TX stopped —"
+                         << m_txSamplesSent.load(std::memory_order_relaxed) << "samples sent,"
+                         << m_txSamplesPadded.load(std::memory_order_relaxed)
+                         << "of them silence padding (queue empty)";
+    }
     {
         QMutexLocker locker(&m_txQueueMutex);
         m_txQueue.clear();  // stale audio from a previous transmission must not leak into the next
@@ -362,6 +374,7 @@ int HackRfWorker::handleTxTransfer(hackrf_transfer* transfer)
             if (m_txQueue.empty()) {
                 underrun = true;
                 block.emplace_back(0.0f, 0.0f);  // silence-pad rather than transmit garbage
+                m_txSamplesPadded.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
             block.push_back(m_txQueue.front());
@@ -371,6 +384,7 @@ int HackRfWorker::handleTxTransfer(hackrf_transfer* transfer)
 
     packTxIq(block, transfer->buffer);
     transfer->valid_length = static_cast<int>(block.size() * 2);
+    m_txSamplesSent.fetch_add(block.size(), std::memory_order_relaxed);
 
     if (underrun) {
         // Signal emission from a non-Qt thread is fine (see handleRxTransfer);

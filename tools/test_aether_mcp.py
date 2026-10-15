@@ -779,6 +779,40 @@ def test_read_only_reflected():
         os.environ.pop("AETHER_MCP_SOCKET", None)
 
 
+def test_stale_instances_skipped():
+    """A killed app's registry entries must not be picked as the live bridge."""
+    print("stale discovery entries")
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        orig = tempfile.gettempdir
+        tempfile.gettempdir = lambda: tmp
+        try:
+            os.makedirs(os.path.join(tmp, "aethersdr-automation"))
+            live_sock = os.path.join(tmp, "live-sock")
+            dead_sock = os.path.join(tmp, "dead-sock")
+            open(live_sock, "w").close()
+            open(dead_sock, "w").close()
+            # A pid that is guaranteed gone: a child we have already reaped.
+            child = subprocess.Popen([sys.executable, "-c", "pass"])
+            child.wait()
+            live = {"socket": live_sock, "pid": os.getpid(), "startedAt": 1}
+            dead = {"socket": dead_sock, "pid": child.pid, "startedAt": 2}
+            gone = {"socket": os.path.join(tmp, "no-such-sock"),
+                    "pid": os.getpid(), "startedAt": 3}
+            # The newest entries are the dead ones, and the "latest" file
+            # points at one of them — the shape a killed instance leaves.
+            for name, d in (("1.json", live), ("2.json", dead), ("3.json", gone)):
+                with open(os.path.join(tmp, "aethersdr-automation", name), "w") as f:
+                    json.dump(d, f)
+            with open(os.path.join(tmp, "aethersdr-automation.json"), "w") as f:
+                json.dump(dead, f)
+            entries = aether_mcp.discover_sockets()
+            check("only the live instance is discovered",
+                  [e["socket"] for e in entries] == [live_sock], str(entries))
+        finally:
+            tempfile.gettempdir = orig
+
+
 if __name__ == "__main__":
     test_field_mapping()
     test_token_attached()
@@ -790,6 +824,8 @@ if __name__ == "__main__":
     test_fuzzy_suggest()
     test_prompts_and_resources()
     test_read_only_reflected()
+    if sys.platform != "win32":
+        test_stale_instances_skipped()
     if _failures:
         print(f"\n{len(_failures)} FAILED: {_failures}")
         sys.exit(1)

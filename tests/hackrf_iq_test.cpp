@@ -206,27 +206,35 @@ void testClampTxVgaGain()
     expectEqual("20 -> 20 (1 dB steps: no rounding)", clampTxVgaGainDb(20), 20);
 }
 
-// RF Power slider (0-100 %) -> TX VGA dB (0-47, 1 dB steps), linear and
-// rounded to the nearest dB so 100 % really reaches the 47 dB top.
-void testTxVgaForPowerPercent()
+// RF Power slider (0-100 %) -> the whole TX gain range: TX VGA alone for the
+// first 47 dB, then the RF amp (~11 dB) with the VGA backed off by the same
+// amount, so 100 % is VGA 47 dB + amp — the most the HackRF can put out.
+void testTxDriveForPowerPercent()
 {
-    expectEqual("0 % -> 0 dB", txVgaGainDbForPowerPercent(0), 0);
-    expectEqual("100 % -> 47 dB (full scale reached)", txVgaGainDbForPowerPercent(100), 47);
-    expectEqual("50 % -> 24 dB (23.5 rounds to nearest)", txVgaGainDbForPowerPercent(50), 24);
-    expectEqual("1 % -> 0 dB (0.47 rounds down)", txVgaGainDbForPowerPercent(1), 0);
-    expectEqual("2 % -> 1 dB (0.94 rounds up)", txVgaGainDbForPowerPercent(2), 1);
-    expectEqual("-10 % clamps to 0 dB", txVgaGainDbForPowerPercent(-10), 0);
-    expectEqual("150 % clamps to 47 dB", txVgaGainDbForPowerPercent(150), 47);
-}
-
-// The RF amp is one switch for both directions. Receive gets the operator's
-// Preamp setting; transmit always gets it OFF.
-void testAmpForDirection()
-{
-    expectTrue("RX, preamp on -> amp on", ampEnabledFor(true, /*transmitting=*/false));
-    expectTrue("RX, preamp off -> amp off", !ampEnabledFor(false, false));
-    expectTrue("TX, preamp on -> amp OFF", !ampEnabledFor(true, true));
-    expectTrue("TX, preamp off -> amp off", !ampEnabledFor(false, true));
+    auto drive = [](int p) { return txDriveForPowerPercent(p); };
+    expectEqual("0 % -> VGA 0 dB", drive(0).vgaDb, 0);
+    expectTrue("0 % -> amp off", !drive(0).amp);
+    expectEqual("100 % -> VGA 47 dB", drive(100).vgaDb, 47);
+    expectTrue("100 % -> amp ON (full output)", drive(100).amp);
+    expectEqual("50 % -> 29 dB total, VGA only", drive(50).vgaDb, 29);
+    expectTrue("50 % -> amp off", !drive(50).amp);
+    expectEqual("81 % -> 47 dB total, the last VGA-only step", drive(81).vgaDb, 47);
+    expectTrue("81 % -> amp off", !drive(81).amp);
+    expectEqual("82 % -> 48 dB total = amp + VGA 37", drive(82).vgaDb, 37);
+    expectTrue("82 % -> amp on", drive(82).amp);
+    expectEqual("-10 % clamps to VGA 0 dB", drive(-10).vgaDb, 0);
+    expectEqual("150 % clamps to VGA 47 dB", drive(150).vgaDb, 47);
+    expectTrue("150 % clamps to amp on", drive(150).amp);
+    // Total gain never falls as the slider rises.
+    int last = -1;
+    bool monotonic = true;
+    for (int p = 0; p <= 100; ++p) {
+        const HackRfTxDrive d = drive(p);
+        const int total = d.vgaDb + (d.amp ? kHackRfTxAmpGainDb : 0);
+        monotonic = monotonic && total >= last;
+        last = total;
+    }
+    expectTrue("total TX gain is monotonic over 0..100 %", monotonic);
 }
 
 // Frequency correction. Convention (Hl2FreqCal's, shared by the Calibration
@@ -289,8 +297,7 @@ int main()
     testClampVgaGain();
     testClampTxVgaGain();
 
-    testTxVgaForPowerPercent();
-    testAmpForDirection();
+    testTxDriveForPowerPercent();
     testCorrectedTuneHz();
     testTuneCarrierPacing();
 

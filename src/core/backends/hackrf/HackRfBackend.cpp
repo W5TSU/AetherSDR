@@ -289,6 +289,9 @@ RadioCapabilities HackRfBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::Passband
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
                             | RadioCapabilities::ClientSettingsDomain::RfGain
+                            // RF and TUNE power: the drive is a host-side TX
+                            // VGA setting, so nothing else remembers it.
+                            | RadioCapabilities::ClientSettingsDomain::TxSetpoints
                             | RadioCapabilities::ClientSettingsDomain::Memories
                             // The AGC runs in WDSP on this host: the client is
                             // the only place its mode and threshold can live.
@@ -327,6 +330,9 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
     m_ampEnabled = false;
     m_agcMode = QStringLiteral("med");
     m_agcThreshold = 65;
+    m_txPowerPercent = 0;
+    m_tunePowerPercent = -1;
+    m_haveRestoredTxSetpoints = false;
 
     if (state.rfFrequencyHz > 0) {
         m_sliceFreqHz = state.rfFrequencyHz;
@@ -359,6 +365,15 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
         if (obj.contains(QStringLiteral("ampEnabled")))
             m_ampEnabled = obj.value(QStringLiteral("ampEnabled")).toBool(m_ampEnabled);
     }
+    const QJsonObject tx = state.extension.value(QStringLiteral("txSetpoints")).toObject();
+    if (tx.contains(QStringLiteral("rfPower"))) {
+        m_txPowerPercent = std::clamp(tx.value(QStringLiteral("rfPower")).toInt(), 0, 100);
+        m_haveRestoredTxSetpoints = true;
+    }
+    if (tx.contains(QStringLiteral("tunePower"))) {
+        m_tunePowerPercent = std::clamp(tx.value(QStringLiteral("tunePower")).toInt(), 0, 100);
+        m_haveRestoredTxSetpoints = true;
+    }
 }
 
 RestoredRadioState HackRfBackend::currentOperatingState() const
@@ -377,6 +392,10 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
         {QStringLiteral("lnaGainDb"), m_lnaGainDb},
         {QStringLiteral("ampEnabled"), m_ampEnabled},
     };
+    QJsonObject tx{{QStringLiteral("rfPower"), m_txPowerPercent}};
+    if (m_tunePowerPercent >= 0)
+        tx.insert(QStringLiteral("tunePower"), m_tunePowerPercent);
+    state.extension[QStringLiteral("txSetpoints")] = tx;
     return state;
 }
 
@@ -529,7 +548,7 @@ void HackRfBackend::completeConnect()
     // The RF Power slider's drive. RadioModel also pushes it on connect, but
     // the value it last set is applied here so the first key-down never runs
     // at libhackrf's default TX gain.
-    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    applyTxDrive(m_txPowerPercent);
     m_transmitting = false;
 
     m_connected = true;
@@ -558,6 +577,17 @@ void HackRfBackend::completeConnect()
     // saw a live-looking VFO that silently stopped updating. See the
     // regression this produced: dig into the reconnect-staging path if this
     // ordering ever needs to change again.
+    // The remembered RF/TUNE power, BEFORE connected(): RadioModel pushes the
+    // model's power down on connect, and that push would otherwise carry the
+    // model default (100) over the restored value — the HL2 found the same
+    // seam (Hl2Backend, "Seed the DRIVE ... echo it upward NOW").
+    if (m_haveRestoredTxSetpoints) {
+        TransmitDelta tx;
+        tx.rfPower = m_txPowerPercent;
+        if (m_tunePowerPercent >= 0)
+            tx.tunePower = m_tunePowerPercent;
+        emit transmitChanged(tx);
+    }
     emit connected();
     emitInitialState();
 }
@@ -631,6 +661,7 @@ void HackRfBackend::applyPanSlice(double panHz, double sliceHz, bool panMoved, b
         delta.frequency = m_sliceFreqHz / 1e6;
         delta.mode = m_sliceMode;
         emit sliceChanged(0, delta);
+        emit operatingStateChanged();
     }
 }
 
@@ -669,6 +700,7 @@ void HackRfBackend::setSliceMode(int sliceId, const QString& mode)
     delta.filterLow = m_sliceFilterLow;
     delta.filterHigh = m_sliceFilterHigh;
     emit sliceChanged(0, delta);
+    emit operatingStateChanged();
 }
 
 void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
@@ -685,6 +717,7 @@ void HackRfBackend::setSliceFilter(int sliceId, int lowHz, int highHz)
     delta.filterLow = lowHz;
     delta.filterHigh = highHz;
     emit sliceChanged(0, delta);
+    emit operatingStateChanged();
 }
 
 void HackRfBackend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
@@ -815,9 +848,9 @@ void HackRfBackend::setPanPreamp(const QString& panId, int step)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_ampEnabled = (step != 0);
-    // While transmitting the amp stays off (ampEnabledFor); the setting is kept
-    // and the next RX start applies it.
-    if (m_transmitting || m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, false))) {
+    // While transmitting the amp belongs to the drive (applyTxDrive); the
+    // setting is kept and the next RX start applies it.
+    if (m_transmitting || m_worker->setAmpEnable(m_ampEnabled)) {
         emit panPreampChanged(QString::fromLatin1(kPanId), m_ampEnabled ? 1 : 0);
     }
 }
@@ -834,11 +867,31 @@ void HackRfBackend::setPanIfGain(const QString& panId, int gainDb)
 
 void HackRfBackend::setTxPower(int percent)
 {
+    const int previous = m_txPowerPercent;
     m_txPowerPercent = std::clamp(percent, 0, 100);
+    if (m_connected && m_txPowerPercent != previous)
+        emit operatingStateChanged();
     // While tuning the hardware runs at TUNE power; the new RF Power is kept
     // and restored when TUNE ends.
     if (!m_connected || m_tuning) return;   // otherwise applied in completeConnect()
-    m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+    applyTxDrive(m_txPowerPercent);
+}
+
+// One slider position onto both TX gain controls (txDriveForPowerPercent).
+// The VGA is always set; the amp only while transmitting — on receive the
+// amp is the operator's Preamp, and the TX start applies the drive's amp.
+// Crossing the hand-over point while keyed, the step DOWN happens first, so
+// the output never jumps ~11 dB high between the two writes.
+void HackRfBackend::applyTxDrive(int percent)
+{
+    const HackRfTxDrive next = txDriveForPowerPercent(percent);
+    const bool ampChanges = m_transmitting && next.amp != m_txDrive.amp;
+    m_txDrive = next;
+    if (ampChanges && !next.amp)
+        m_worker->setAmpEnable(false);
+    m_worker->setTxVgaGainDb(next.vgaDb);
+    if (ampChanges && next.amp)
+        m_worker->setAmpEnable(true);
 }
 
 bool HackRfBackend::isCwMode() const
@@ -895,8 +948,12 @@ void HackRfBackend::setTune(bool on, int tunePowerPercent)
     if (!m_connected) return;
     if (on) {
         m_tuning = true;
+        if (tunePowerPercent >= 0 && tunePowerPercent != m_tunePowerPercent) {
+            m_tunePowerPercent = std::clamp(tunePowerPercent, 0, 100);
+            emit operatingStateChanged();
+        }
         const int percent = tunePowerPercent >= 0 ? tunePowerPercent : m_txPowerPercent;
-        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(percent));
+        applyTxDrive(percent);
         setKeying(true);
         feedTuneCarrier();          // prime the queue before the first timer tick
         m_tuneFeedTimer.start();
@@ -904,7 +961,7 @@ void HackRfBackend::setTune(bool on, int tunePowerPercent)
         m_tuneFeedTimer.stop();
         m_tuning = false;
         setKeying(false);
-        m_worker->setTxVgaGainDb(txVgaGainDbForPowerPercent(m_txPowerPercent));
+        applyTxDrive(m_txPowerPercent);
     }
 }
 
@@ -1086,7 +1143,7 @@ void HackRfBackend::onArbiterWantRxStart()
 {
     m_transmitting = false;
     tuneHardware(m_panCenterHz);   // RX: the LO back to the pan centre
-    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/false));
+    m_worker->setAmpEnable(m_ampEnabled);   // receive: the operator's Preamp
     m_worker->startRx();
     // No separate "confirm" needed on the way INTO Idle/RxStreaming — only
     // the pending (TxPending/RxPending) states wait for a confirmRxStopped/
@@ -1101,14 +1158,16 @@ void HackRfBackend::onArbiterWantRxStop()
 
 void HackRfBackend::onArbiterWantTxStart()
 {
-    // Amp OFF before the first TX sample: it is one switch for both
-    // directions, and the operator's RX Preamp must not add ~14 dB to TX.
+    // The amp is one switch for both directions. Before the first TX sample it
+    // is set by the DRIVE (applyTxDrive), never the operator's RX Preamp.
     m_transmitting = true;
     // TX: the carrier is at DC, so the LO goes to the slice frequency (it sits
     // at the pan centre for RX, possibly MHz away). A PLL retune of a few ms,
     // inside the RX->TX switch the arbiter is already making.
     tuneHardware(m_sliceFreqHz);
-    m_worker->setAmpEnable(ampEnabledFor(m_ampEnabled, /*transmitting=*/true));
+    m_worker->setAmpEnable(m_txDrive.amp);
+    qCInfo(lcHackRf) << "HackRF: keying at" << qint64(m_sliceFreqHz) << "Hz in" << m_sliceMode
+                     << (m_tuning ? "(TUNE carrier)" : "");
     m_worker->startTx();
 }
 
