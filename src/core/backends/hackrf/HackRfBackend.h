@@ -276,10 +276,9 @@ private:
     // still has audio, and holding it on-screen fought the GUI's
     // pointer-anchored zoom.
     double m_spanHz{500'000.0};
-    // The display dBm scale (setPanDbmRange). The HackRF's spectrum sits far
-    // above a Flex's, so its default is 0 to -80, not the pan's -40 to -130.
-    double m_minDbm{-80.0};
-    double m_maxDbm{0.0};
+    // The display dBm scale (setPanDbmRange), in calibrated dBm.
+    double m_minDbm{-140.0};
+    double m_maxDbm{-40.0};
     // The S-meter (SLC:LEVEL): every block's level smoothed, published every
     // kMeterPublishIntervalMs. Same ballistics as Hl2Backend's.
     void onMeterLevel(float dbfs);
@@ -289,6 +288,8 @@ private:
     double m_sMeterDbm{0.0};
     bool m_haveSMeter{false};
     QElapsedTimer m_sMeterClock;
+    static constexpr qint64 kMeterPrimeMs = 300;   // 3x WDSP's meter time constant
+    QElapsedTimer m_meterPrimeClock;
     // Which HackRF is connected: the Pro may only use some sample rates
     // (HackRfTuning.h, hardwareRatesHz). Set at connect.
     HackRfBoard m_board{HackRfBoard::One};
@@ -349,6 +350,13 @@ private:
     // Crystal error in ppb (Hl2FreqCal's convention: > 0 = fast). Loaded per
     // device at connect; every hardware tune goes through correctedTuneHz().
     int m_freqCalPpb{0};
+    // The operator's level correction for this device (HackRfDbReference),
+    // loaded at connect and saved per serial by levelcal.set.
+    double m_levelCalDb{0.0};
+    // dBFS -> dBm for the current board, gains and correction.
+    double dbOffset() const;
+    void applyLevelCalDb(double db);
+    void holdMeterForGainChange();
     // The key the calibration is stored under: the device's USB serial, or
     // EMPTY when the connect used an enumeration-index locator ("hackrf:N"),
     // which is not a persistent identity (RadioSettingsIdentity.h). Empty means

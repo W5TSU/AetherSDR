@@ -401,6 +401,12 @@ struct RadioCapabilities {
     // varies is whether correcting it is the client's job.
     bool hostFrequencyCalibration = false;
 
+    // The client converts this radio's raw dBFS into dBm and the operator may
+    // correct that conversion per device: the Calibration page's Signal Level
+    // section (levelcal.* extension verbs). True for the HackRF, whose readings
+    // rest on an estimated reference level; see HackRfDbReference.
+    bool hostLevelCalibration = false;
+
     // The client corrects a REAL DDC0 CIC/decimation droop on this radio's
     // own panadapter samples (AnanDroopCorrection.h) because nothing in the
     // wire protocol characterises or corrects it on-radio. True only for the

@@ -2613,6 +2613,8 @@ elseif(HACKRF_FOUND)
         src/core/backends/hackrf/HackRfTxInterpolator.h
         src/core/backends/hackrf/HackRfTuning.cpp
         src/core/backends/hackrf/HackRfTuning.h
+        src/core/backends/hackrf/HackRfDbReference.cpp
+        src/core/backends/hackrf/HackRfDbReference.h
         src/core/backends/hackrf/HackRfRxDsp.cpp
         src/core/backends/hackrf/HackRfRxDsp.h
         src/core/backends/hackrf/HackRfLibraryLock.h)

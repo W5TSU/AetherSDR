@@ -1,4 +1,5 @@
 #include "HackRfBackend.h"
+#include "core/backends/hackrf/HackRfDbReference.h"
 #include "core/backends/hackrf/HackRfIq.h"
 #include "core/backends/hackrf/HackRfTuning.h"
 #include "core/backends/hackrf/HackRfWorker.h"
@@ -27,10 +28,14 @@ constexpr const char* kPanId = "0xh1000000";
 // Hl2RxDsp's default (1024) since HL2's span is narrower to begin with.
 constexpr int kSpectrumFftSize = 2048;
 // A new session's displayed span and dBm scale. 500 kHz is the zoom step
-// nearest the ~400 kHz asked for (zoomSpansHz: 250 kHz, 500 kHz).
+// nearest the ~400 kHz asked for (zoomSpansHz: 250 kHz, 500 kHz). The scale is
+// calibrated dBm (HackRfDbReference): a quiet band's floor sits near -140.
 constexpr double kDefaultSpanHz = 500'000.0;
-constexpr double kDefaultMinDbm = -80.0;
-constexpr double kDefaultMaxDbm = 0.0;
+constexpr double kDefaultMinDbm = -140.0;
+constexpr double kDefaultMaxDbm = -40.0;
+// panDisplay's dBm scale is calibrated dBm from this version on. A range saved
+// without it was on the raw dBFS scale, tens of dB away, so it is not restored.
+constexpr int kPanDisplayDbmScale = 1;
 // The same bounds the GUI's dbmRangeLooksPlausible() holds a range to.
 bool dbmRangeUsable(double minDbm, double maxDbm)
 {
@@ -194,7 +199,13 @@ HackRfBackend::HackRfBackend(QObject* parent)
     connect(m_worker.get(), &HackRfWorker::rxIqReady, m_rxDsp,
             [rxDsp](QVector<std::complex<float>> iq) { rxDsp->enqueueIq(std::move(iq)); },
             Qt::DirectConnection);
-    connect(m_rxDsp, &HackRfRxDsp::spectrumFrame, this, [this](const QByteArray& frame) {
+    connect(m_rxDsp, &HackRfRxDsp::spectrumFrame, this, [this](QByteArray frame) {
+        // dBFS -> dBm at the antenna, so the trace, the waterfall and the
+        // S-meter share one calibrated scale and a gain change moves none of them.
+        const auto offset = static_cast<float>(dbOffset() + HackRfDbReference::kSpectrumCorrectionDb);
+        auto* bins = reinterpret_cast<float*>(frame.data());
+        for (qsizetype i = 0, n = frame.size() / qsizetype(sizeof(float)); i < n; ++i)
+            bins[i] += offset;
         emit spectrumFrameReady(0, frame);
         emit waterfallRowReady(0, frame);
     });
@@ -317,6 +328,9 @@ RadioCapabilities HackRfBackend::capabilities() const
     // 435 MHz) with no calibration register: correcting it is the client's job,
     // so the Calibration page applies. hackrf.freqcal.* implements it.
     c.hostFrequencyCalibration = true;
+    // dBFS -> dBm rests on an estimated reference (HackRfDbReference), so the
+    // operator may correct it per device.
+    c.hostLevelCalibration = true;
 
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};
@@ -390,7 +404,8 @@ void HackRfBackend::applyRestoredState(const RestoredRadioState& state)
         m_spanHz = span;
     const double minDbm = display.value(QStringLiteral("minDbm")).toDouble(qQNaN());
     const double maxDbm = display.value(QStringLiteral("maxDbm")).toDouble(qQNaN());
-    if (dbmRangeUsable(minDbm, maxDbm)) {
+    if (display.value(QStringLiteral("dbmScale")).toInt() == kPanDisplayDbmScale
+        && dbmRangeUsable(minDbm, maxDbm)) {
         m_minDbm = minDbm;
         m_maxDbm = maxDbm;
     }
@@ -429,6 +444,7 @@ RestoredRadioState HackRfBackend::currentOperatingState() const
         {QStringLiteral("spanHz"), m_spanHz},
         {QStringLiteral("minDbm"), m_minDbm},
         {QStringLiteral("maxDbm"), m_maxDbm},
+        {QStringLiteral("dbmScale"), kPanDisplayDbmScale},
     };
     return state;
 }
@@ -474,6 +490,11 @@ void HackRfBackend::connectRadio(const RadioConnectRequest& request)
         : Hl2FreqCal::loadPpb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId));
     if (m_freqCalPpb != 0)
         qCInfo(lcHackRf) << "HackRF: frequency calibration" << m_freqCalPpb << "ppb";
+    m_levelCalDb = m_calibrationId.isEmpty()
+        ? 0.0
+        : HackRfDbReference::loadOffsetDb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId));
+    if (m_levelCalDb != 0.0)
+        qCInfo(lcHackRf) << "HackRF: level calibration" << m_levelCalDb << "dB";
 
     // A HackRF Pro may only use the sample rates its firmware tunes correctly.
     m_board = m_worker->isPro() ? HackRfBoard::Pro : HackRfBoard::One;
@@ -860,16 +881,39 @@ void HackRfBackend::setPanBandwidth(const QString& panId, double hz)
     emit operatingStateChanged();
 }
 
+void HackRfBackend::holdMeterForGainChange()
+{
+    // Blocks already queued were taken at the old gain, and WDSP's average
+    // carries them for ~300 ms: converted with the new offset they would dip or
+    // spike the needle by the gain step. Hold the last reading through it.
+    m_meterPrimeClock.restart();
+}
+
+double HackRfBackend::dbOffset() const
+{
+    return HackRfDbReference::offsetDb(m_board, m_lnaGainDb, m_vgaGainDb, m_ampEnabled,
+                                       m_levelCalDb);
+}
+
 void HackRfBackend::onMeterLevel(float dbfs)
 {
     // Smooth every block, publish on the tick: the value covers the whole
     // interval, and ~100 blocks a second do not each repaint the meter.
+    // Smoothed in dBm, so a gain change does not drag the needle through
+    // the step while the average catches up.
+    // WDSP's average starts at zero and climbs over its 100 ms time constant,
+    // so the first readings of a session are the ramp, not a level.
+    if (!m_meterPrimeClock.isValid())
+        m_meterPrimeClock.start();
+    if (m_meterPrimeClock.elapsed() < kMeterPrimeMs || dbfs < -200.0f)
+        return;
+    const double dbm = dbfs + dbOffset();
     if (!m_haveSMeter) {
-        m_sMeterDbm = dbfs;
+        m_sMeterDbm = dbm;
         m_haveSMeter = true;
     } else {
-        const double alpha = (dbfs > m_sMeterDbm) ? kMeterAttackAlpha : kMeterDecayAlpha;
-        m_sMeterDbm = alpha * dbfs + (1.0 - alpha) * m_sMeterDbm;
+        const double alpha = (dbm > m_sMeterDbm) ? kMeterAttackAlpha : kMeterDecayAlpha;
+        m_sMeterDbm = alpha * dbm + (1.0 - alpha) * m_sMeterDbm;
     }
     if (m_sMeterClock.isValid() && m_sMeterClock.elapsed() < kMeterPublishIntervalMs)
         return;
@@ -902,6 +946,7 @@ void HackRfBackend::setPanRfGain(const QString& panId, int gainDb)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_vgaGainDb = std::clamp(gainDb, 0, 62);
+    holdMeterForGainChange();
     if (m_worker->setVgaGainDb(m_vgaGainDb)) {
         emit panRfGainChanged(QString::fromLatin1(kPanId), m_vgaGainDb);
     }
@@ -912,6 +957,7 @@ void HackRfBackend::setPanPreamp(const QString& panId, int step)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_ampEnabled = (step != 0);
+    holdMeterForGainChange();
     // While transmitting the amp belongs to the drive (applyTxDrive); the
     // setting is kept and the next RX start applies it.
     if (m_transmitting || m_worker->setAmpEnable(m_ampEnabled)) {
@@ -924,6 +970,7 @@ void HackRfBackend::setPanIfGain(const QString& panId, int gainDb)
     Q_UNUSED(panId);
     if (!m_connected) return;
     m_lnaGainDb = clampLnaGainDb(gainDb);
+    holdMeterForGainChange();
     if (m_worker->setLnaGainDb(m_lnaGainDb)) {
         emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
     }
@@ -1073,6 +1120,22 @@ void HackRfBackend::applyFreqCalPpb(int ppb, bool persist)
         tuneHardware(m_transmitting ? m_sliceFreqHz : m_panCenterHz);
 }
 
+void HackRfBackend::applyLevelCalDb(double db)
+{
+    const double clamped = std::round(HackRfDbReference::clampOffset(db) * 10.0) / 10.0;
+    if (m_calibrationId.isEmpty()) {
+        qCWarning(lcHackRf) << "HackRF: not persisting level calibration —"
+                            << "no stable device serial; applying for this session only";
+    } else {
+        HackRfDbReference::saveOffsetDb(RadioSettingsScope(QStringLiteral("hackrf"), m_calibrationId),
+                                        clamped);
+    }
+    // The smoothed meter moves with the correction at once, not over its decay.
+    m_sMeterDbm += clamped - m_levelCalDb;
+    m_levelCalDb = clamped;
+    qCInfo(lcHackRf) << "HackRF: level calibration" << m_levelCalDb << "dB";
+}
+
 void HackRfBackend::setKeying(bool key)
 {
     if (!m_connected) return;
@@ -1166,6 +1229,7 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
         }
         // Clamped HERE so the reply and the slider report what the hardware took.
         m_lnaGainDb = clampLnaGainDb(db);
+        holdMeterForGainChange();
         if (m_worker->setLnaGainDb(m_lnaGainDb)) {
             emit panIfGainChanged(QString::fromLatin1(kPanId), m_lnaGainDb);
             emit extensionResult(requestId, m_lnaGainDb);
@@ -1189,6 +1253,30 @@ void HackRfBackend::invokeExtension(const QString& ns, const QString& verb,
     if (verb == QLatin1String("freqcal.get")) {
         if (requestId != 0)
             emit extensionResult(requestId, QVariantMap{{QStringLiteral("ppb"), m_freqCalPpb}});
+        return;
+    }
+    // Level calibration (HackRfDbReference): set an offset in dB, or calibrate
+    // to a known signal -- the offset that makes the S-meter read that level now.
+    if (verb == QLatin1String("levelcal.set") || verb == QLatin1String("levelcal.calibrate")) {
+        double db = arg.toDouble();
+        if (verb == QLatin1String("levelcal.calibrate")) {
+            if (!m_haveSMeter) {
+                emit extensionError(requestId, tr("No signal level to calibrate against yet"));
+                return;
+            }
+            db = m_levelCalDb + (arg.toDouble() - m_sMeterDbm);
+        }
+        applyLevelCalDb(db);
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariant(m_levelCalDb));
+        return;
+    }
+    if (verb == QLatin1String("levelcal.get")) {
+        if (requestId != 0)
+            emit extensionResult(requestId, QVariantMap{
+                {QStringLiteral("offsetDb"), m_levelCalDb},
+                {QStringLiteral("levelDbm"), m_haveSMeter ? QVariant(m_sMeterDbm) : QVariant()},
+            });
         return;
     }
     emit extensionError(requestId, tr("Unknown verb %1.%2").arg(ns, verb));
@@ -1293,9 +1381,10 @@ void HackRfBackend::emitInitialState()
     level.unit = QStringLiteral("dBm");
     level.low = -140.0;
     level.high = 0.0;
-    level.description = QStringLiteral("Receive signal level (uncalibrated)");
+    level.description = QStringLiteral("Receive signal level");
     m_haveSMeter = false;
     m_sMeterClock.invalidate();
+    m_meterPrimeClock.invalidate();
     emit meterDefined(level);
 
     emit panRfGainInfoChanged(panId, 0, 62, 2);

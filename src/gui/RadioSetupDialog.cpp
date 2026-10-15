@@ -111,6 +111,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <QDoubleSpinBox>
 #include <memory>
 #include <utility>
 #include "core/ThemeManager.h"
@@ -792,6 +793,12 @@ static bool refreshSerialPortCombo(QComboBox* combo, QLineEdit* customEdit)
 
 #endif
 
+// The Calibration page serves either correction a client may own.
+static bool hostCalibrationAvailable(const RadioCapabilities& caps)
+{
+    return caps.hostFrequencyCalibration || caps.hostLevelCalibration;
+}
+
 RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
                                    TgxlConnection* tgxl, PgxlConnection* pgxl,
                                    AntennaGeniusModel* ag,
@@ -932,10 +939,10 @@ RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
         QStringLiteral("frequency calibration ppb ppm oscillator crystal clock error wwv gpsdo zero beat"),
         [this] { return buildCalibrationTab(); });
     m_calibrationPageIndex = m_pageIndexes.value(QStringLiteral("Calibration"));
-    setNavigationItemHidden(calItem, !m_model->backendCapabilities().hostFrequencyCalibration);
+    setNavigationItemHidden(calItem, !hostCalibrationAvailable(m_model->backendCapabilities()));
     connect(m_model, &RadioModel::connectionStateChanged, this, [this, calItem] {
         settleNavigationLayout(m_navigation, setNavigationItemHidden(
-            calItem, !m_model->backendCapabilities().hostFrequencyCalibration));
+            calItem, !hostCalibrationAvailable(m_model->backendCapabilities())));
         // A different radio may now be connected — re-read its own calibration
         // so a later Trim press cannot commit the previous radio's number.
         if (m_calibrationReseed)
@@ -1101,7 +1108,7 @@ RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
                     || (isGpsPage(item)
                         && !isGpsSetupAvailable())
                     || (apdRow && !m_model->transmitModel().apdConfigurable())
-                    || (calRow && !m_model->backendCapabilities().hostFrequencyCalibration)
+                    || (calRow && !hostCalibrationAvailable(m_model->backendCapabilities()))
                     || (hermesLiteRow && !m_model->backendCapabilities().hasHermesLiteOptions)
                     || (ioBoardRow && !m_model->backendCapabilities().hasIoBoardAccessory)
                     || (filterBoardRow && !m_model->backendCapabilities().hasJ16FilterBoard)
@@ -4163,7 +4170,14 @@ QWidget* RadioSetupDialog::buildCalibrationTab()
     QPointer<QLabel> noRadioGuard(noRadioLbl);
     const QList<QPointer<QWidget>> calControls{
         refCombo, customEdit, ppbSpin, resetBtn, downBtn, upBtn, stepCombo, calBtn};
-    m_calibrationReseed = [this, spinGuard, noRadioGuard, calControls, refreshReadout] {
+    QPointer<QGroupBox> freqGroupGuard(group);
+    std::function<void()> levelReseed = buildLevelCalibrationGroup(vbox);
+    m_calibrationReseed = [this, spinGuard, noRadioGuard, calControls, refreshReadout,
+                           freqGroupGuard, levelReseed] {
+        if (levelReseed)
+            levelReseed();
+        if (freqGroupGuard)
+            freqGroupGuard->setVisible(m_model->backendCapabilities().hostFrequencyCalibration);
         if (!spinGuard)
             return;
         {
@@ -4186,6 +4200,199 @@ QWidget* RadioSetupDialog::buildCalibrationTab()
 
     vbox->addStretch(1);
     return page;
+}
+
+// The Calibration page's Signal Level section: the operator's correction to a
+// client-side dBFS -> dBm conversion (RadioCapabilities::hostLevelCalibration),
+// driven through the levelcal.* extension verbs so this file stays free of any
+// one family's reference. Returns the reseed for m_calibrationReseed.
+std::function<void()> RadioSetupDialog::buildLevelCalibrationGroup(QVBoxLayout* vbox)
+{
+    auto& theme = AetherSDR::ThemeManager::instance();
+    auto themed = [&theme](QWidget* w, const QString& tpl) { theme.applyStyleSheet(w, tpl); };
+    static const QString kLabel =
+        QStringLiteral("QLabel { color: {{color.text.primary}}; font-size: 12px; }");
+    static const QString kButton =
+        QStringLiteral("QPushButton { background: {{color.background.1}}; "
+                       "border: 1px solid {{color.background.2}}; border-radius: 4px; "
+                       "color: {{color.text.primary}}; font-size: 12px; font-weight: bold; "
+                       "padding: 4px 10px; }"
+                       "QPushButton:hover { background: {{color.background.2}}; }");
+    static const QString kSpin =
+        QStringLiteral("QDoubleSpinBox { background: {{color.background.1}}; "
+                       "border: 1px solid {{color.background.2}}; border-radius: 3px; "
+                       "color: {{color.text.primary}}; font-size: 12px; padding: 2px 4px; }");
+
+    auto* group = new QGroupBox("Signal Level Calibration");
+    group->setObjectName(QStringLiteral("levelCalGroup"));
+    themed(group, QStringLiteral(
+        "QGroupBox { border: 1px solid {{color.background.2}}; border-radius: 4px; "
+        "margin-top: 8px; padding-top: 12px; font-weight: bold; "
+        "color: {{color.text.secondary}}; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"));
+    auto* gvb = new QVBoxLayout(group);
+    gvb->setSpacing(8);
+
+    auto* intro = new QLabel(
+        "This radio's S-meter and spectrum are converted to dBm from an estimated reference, "
+        "so they can be several dB off, and more at some frequencies. Feed in a signal of "
+        "known level, tune it into the passband, enter its level and press Calibrate, or "
+        "enter a correction you already know. The correction is kept for this radio.");
+    themed(intro, kLabel);
+    intro->setWordWrap(true);
+    gvb->addWidget(intro);
+
+    auto* caution = new QLabel(
+        "Use a signal generator through an attenuator. More than -5 dBm can damage a HackRF.");
+    themed(caution, QStringLiteral("QLabel { color: {{color.accent.warning}}; font-size: 12px; }"));
+    caution->setWordWrap(true);
+    gvb->addWidget(caution);
+
+    auto* grid = new QGridLayout;
+    grid->setSpacing(6);
+    grid->setColumnStretch(3, 1);
+
+    auto* knownLbl = new QLabel("Known level:");
+    themed(knownLbl, kLabel);
+    grid->addWidget(knownLbl, 0, 0);
+    auto* knownSpin = new QDoubleSpinBox;
+    knownSpin->setObjectName(QStringLiteral("levelCalKnownDbm"));
+    knownSpin->setRange(-150.0, -10.0);
+    knownSpin->setDecimals(1);
+    knownSpin->setSingleStep(1.0);
+    knownSpin->setSuffix(QStringLiteral(" dBm"));
+    knownSpin->setValue(-73.0);   // S9
+    knownSpin->setFixedWidth(120);
+    knownSpin->setAccessibleName(QStringLiteral("Known signal level in dBm"));
+    themed(knownSpin, kSpin);
+    grid->addWidget(knownSpin, 0, 1);
+    auto* calBtn = new QPushButton("Calibrate");
+    calBtn->setObjectName(QStringLiteral("levelCalCapture"));
+    themed(calBtn, kButton);
+    calBtn->setToolTip(QStringLiteral("Set the correction so the S-meter reads the known level now"));
+    grid->addWidget(calBtn, 0, 2);
+
+    auto* offsetLbl = new QLabel("Correction:");
+    themed(offsetLbl, kLabel);
+    grid->addWidget(offsetLbl, 1, 0);
+    auto* offsetSpin = new QDoubleSpinBox;
+    offsetSpin->setObjectName(QStringLiteral("levelCalOffsetDb"));
+    offsetSpin->setRange(-40.0, 40.0);
+    offsetSpin->setDecimals(1);
+    offsetSpin->setSingleStep(0.5);
+    offsetSpin->setSuffix(QStringLiteral(" dB"));
+    offsetSpin->setFixedWidth(120);
+    offsetSpin->setKeyboardTracking(false);
+    offsetSpin->setAccessibleName(QStringLiteral("Signal level correction in dB"));
+    themed(offsetSpin, kSpin);
+    grid->addWidget(offsetSpin, 1, 1);
+    auto* resetBtn = new QPushButton("Reset");
+    themed(resetBtn, kButton);
+    resetBtn->setObjectName(QStringLiteral("levelCalReset"));
+    resetBtn->setToolTip(QStringLiteral("Return this radio to the built-in reference (0 dB)"));
+    grid->addWidget(resetBtn, 1, 2);
+    gvb->addLayout(grid);
+
+    auto* status = new QLabel;
+    status->setObjectName(QStringLiteral("levelCalStatus"));
+    status->setWordWrap(true);
+    gvb->addWidget(status);
+    vbox->addWidget(group);
+
+    auto setStatus = [status, &theme](const QString& text, const QString& token) {
+        status->setText(text);
+        theme.applyStyleSheet(status,
+            QStringLiteral("QLabel { color: {{%1}}; font-size: 11px; }").arg(token));
+    };
+
+    // One request, answered in the call: the backend replies synchronously, so
+    // connecting around the call never leaves a connection on a later backend.
+    auto call = [this](const QString& verb, const QVariant& arg,
+                       const std::function<void(bool, const QVariant&)>& done) {
+        IRadioBackend* backend = m_model->backend();
+        if (!backend) {
+            done(false, QStringLiteral("No radio connected."));
+            return;
+        }
+        static quint64 nextId = 0x4c56'0000'0000ull;
+        const quint64 id = ++nextId;
+        bool answered = false;
+        const auto ok = connect(backend, &IRadioBackend::extensionResult, this,
+                                [&](quint64 rid, const QVariant& v) {
+            if (rid == id) { answered = true; done(true, v); }
+        });
+        const auto err = connect(backend, &IRadioBackend::extensionError, this,
+                                 [&](quint64 rid, const QString& why) {
+            if (rid == id) { answered = true; done(false, why); }
+        });
+        m_model->invokeBackendExtension(m_model->backendCapabilities().family, verb, id, arg);
+        disconnect(ok);
+        disconnect(err);
+        if (!answered)
+            done(false, QStringLiteral("The radio did not answer."));
+    };
+
+    auto showOffset = [offsetSpin](double db) {
+        QSignalBlocker blocker(offsetSpin);
+        offsetSpin->setValue(db);
+    };
+
+    connect(offsetSpin, &QDoubleSpinBox::valueChanged, this,
+            [call, showOffset, setStatus](double db) {
+        call(QStringLiteral("levelcal.set"), db, [&](bool ok, const QVariant& v) {
+            if (!ok) {
+                setStatus(v.toString(), QStringLiteral("color.accent.danger"));
+                return;
+            }
+            showOffset(v.toDouble());
+            setStatus(QStringLiteral("Correction %1 dB saved.").arg(v.toDouble(), 0, 'f', 1),
+                      QStringLiteral("color.accent.success"));
+        });
+    });
+    connect(resetBtn, &QPushButton::clicked, this, [offsetSpin] { offsetSpin->setValue(0.0); });
+    connect(calBtn, &QPushButton::clicked, this,
+            [call, showOffset, setStatus, knownSpin] {
+        const double known = knownSpin->value();
+        call(QStringLiteral("levelcal.calibrate"), known, [&](bool ok, const QVariant& v) {
+            if (!ok) {
+                setStatus(v.toString(), QStringLiteral("color.accent.danger"));
+                return;
+            }
+            const double db = v.toDouble();
+            showOffset(db);
+            // At the clamp the meter will not read the known level: say so
+            // rather than report a calibration that did not happen.
+            if (std::abs(db) >= 40.0) {
+                setStatus(QStringLiteral("That needs more than 40 dB of correction — check the "
+                                         "signal is in the passband and the level is right."),
+                          QStringLiteral("color.accent.danger"));
+                return;
+            }
+            setStatus(QStringLiteral("Calibrated: the S-meter now reads %1 dBm (correction %2 dB).")
+                          .arg(known, 0, 'f', 1).arg(db, 0, 'f', 1),
+                      QStringLiteral("color.accent.success"));
+        });
+    });
+
+    QPointer<QGroupBox> groupGuard(group);
+    QPointer<QDoubleSpinBox> offsetGuard(offsetSpin);
+    QPointer<QLabel> statusGuard(status);
+    return [this, groupGuard, offsetGuard, statusGuard, call, showOffset] {
+        if (!groupGuard)
+            return;
+        const RadioCapabilities caps = m_model->backendCapabilities();
+        const bool available = caps.hostLevelCalibration && m_model->isConnected();
+        groupGuard->setVisible(caps.hostLevelCalibration);
+        groupGuard->setEnabled(available);
+        if (statusGuard)
+            statusGuard->clear();
+        if (!available || !offsetGuard)
+            return;
+        call(QStringLiteral("levelcal.get"), {}, [&](bool ok, const QVariant& v) {
+            if (ok)
+                showOffset(v.toMap().value(QStringLiteral("offsetDb")).toDouble());
+        });
+    };
 }
 
 // ── Droop Correction tab ────────────────────────────────────────────────────
