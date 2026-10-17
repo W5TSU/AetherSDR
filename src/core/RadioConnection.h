@@ -100,6 +100,7 @@ private slots:
     void onHeartbeat();
 
 private:
+    void resetSocket();
     void processLine(const QString& line);
     void setState(ConnectionState s);
 
