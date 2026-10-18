@@ -6613,6 +6613,18 @@ if(AETHER_ENABLE_FLEX_RETRY_SOCKET_TEST)
     set_tests_properties(radio_connection_retry_test PROPERTIES TIMEOUT 120)
 endif()
 
+# Default CTest is socket-free. Manual --bridge-proof binds the production
+# agent automation bridge local socket, with injected capabilities and no radio.
+# DAX IQ rate requests and applet restore (#6437).
+add_executable(dax_iq_rate_limits_test
+    tests/dax_iq_rate_limits_test.cpp
+    src/gui/DaxIqApplet.cpp
+    ${THEME_TEST_RESOURCES})
+target_include_directories(dax_iq_rate_limits_test PRIVATE src tests)
+target_link_libraries(dax_iq_rate_limits_test PRIVATE aethercore Qt6::Widgets Qt6::Test)
+add_test(NAME dax_iq_rate_limits_test COMMAND dax_iq_rate_limits_test)
+set_tests_properties(dax_iq_rate_limits_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
@@ -6640,6 +6652,7 @@ set(AETHER_SETTINGS_CONSUMERS
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test
+    dax_iq_rate_limits_test
     backend_slice_lifecycle_test
     waterfall_time_marker_settings_test
     extended_tnf_settings_test

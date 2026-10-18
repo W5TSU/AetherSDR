@@ -830,6 +830,9 @@ struct RadioCapabilities {
     // reaching the bridge is a separate null-check on panStream() in
     // MainWindow::startDax() — a crash guard, deliberately not merged with this.
     bool hasDaxStreams = false;
+    // Discrete DAX IQ request rates in Hz. Empty means unsupported or unknown.
+    // Applied by the existing DaxIqModel command path, including stream restore.
+    QList<int> daxIqSampleRates;
 
     // Audio DSP runs INSIDE the radio, driven by command-plane verbs, rather than
     // on this host. True for a Flex, whose firmware owns NR/NB/ANF/NRL/ANFL/ANFT,

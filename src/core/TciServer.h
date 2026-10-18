@@ -248,6 +248,8 @@ private:
     ClientState* clientStateFor(QWebSocket* socket);
     void noteClientTextTx(QWebSocket* socket, const QString& message);
     void sendClientText(QWebSocket* socket, const QString& message);
+    // Test seam: when set, outbound client text goes here instead of the socket.
+    std::function<void(QWebSocket*, const QString&)> m_clientTextSinkForTest;
     void noteClientSocketError(QWebSocket* socket, int error);
     QJsonObject disconnectSnapshot(const ClientState& client,
                                    const QWebSocket* socket) const;
@@ -322,6 +324,8 @@ private:
     void releaseAllIqStreams();
     void resetIqStreamBookkeeping();
     int  achievedIqSampleRate() const;
+    int  effectiveIqSampleRate() const;
+    void announceEffectiveIqSampleRate();
 
     // Minimum frames to accumulate before flushing to r8brain.
     // ~21ms at 24kHz — large enough for clean resampling, small enough
@@ -355,6 +359,7 @@ private:
     QSet<int>          m_iqCreateInFlight;   // create issued, status not yet seen
     QSet<int>          m_pendingIqRemovals;  // awaiting a create status to reap
     QHash<QString,int> m_iqPanChannel;       // panId → TCI-owned DAX IQ channel
+    int                m_announcedIqSampleRate{48000};
     int                m_iqSampleRate{48000};// shared requested rate, all TCI receivers
     QHash<QString, long long> m_lastDdsCenterHz; // panId → last broadcast dds center, gates zoom-only re-emits (#3910)
     TciRoutingState m_routingState;

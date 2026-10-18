@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QWidget>
+#include <QPointer>
+#include <QTimer>
+#include <memory>
 
 class QPushButton;
 class QLabel;
@@ -20,6 +23,7 @@ public:
     static constexpr int kChannels = 4;
 
     explicit DaxIqApplet(QWidget* parent = nullptr);
+    ~DaxIqApplet() override;
 
     void setRadioModel(RadioModel* model);
 
@@ -34,13 +38,20 @@ signals:
 private:
     void buildUI();
 
-    RadioModel* m_model{nullptr};
+    void refreshRateChoices();
+    void refreshAvailability();
+    QString m_rateReasons;   // refreshRateChoices()' unavailable-rate description
+    void syncStreamState(int channel);
+    void restoreChannelsNow();
+
+    QPointer<RadioModel> m_model;
+    QTimer m_restoreTimer;
+    int m_preferredRate[kChannels]{48000, 48000, 48000, 48000};
 
     QPushButton*  m_iqEnable[kChannels]{};
     QComboBox*    m_iqRateCombo[kChannels]{};
     QProgressBar* m_iqMeter[kChannels]{};
     float         m_iqMeterDb[kChannels]{-70.0f, -70.0f, -70.0f, -70.0f};  // smoothed dBFS per ch
-    bool          m_restorePending{false};  // collapse overlapping restoreEnabledChannels() timers
 };
 
 } // namespace AetherSDR

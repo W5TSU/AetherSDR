@@ -12,7 +12,12 @@
 #include <QComboBox>
 #include <QProgressBar>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QTimer>
+#include <QStandardItemModel>
+#include <QStyledItemDelegate>
+#include <QBrush>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 #include "core/ThemeManager.h"
@@ -45,8 +50,15 @@ DaxIqApplet::DaxIqApplet(QWidget* parent) : QWidget(parent)
 {
     theme::setContainer(this, QStringLiteral("applet/daxiq"));
     buildUI();
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &DaxIqApplet::refreshRateChoices);
+    m_restoreTimer.setSingleShot(true);
+    m_restoreTimer.setInterval(1500);
+    connect(&m_restoreTimer, &QTimer::timeout, this, &DaxIqApplet::restoreChannelsNow);
     hide();  // hidden by default
 }
+
+DaxIqApplet::~DaxIqApplet() = default;
 
 void DaxIqApplet::buildUI()
 {
@@ -69,12 +81,16 @@ void DaxIqApplet::buildUI()
 
         m_iqRateCombo[i] = new GuardedComboBox;
         applyComboStyle(m_iqRateCombo[i]);
+        m_iqRateCombo[i]->setItemDelegate(new QStyledItemDelegate(m_iqRateCombo[i]));
+        m_iqRateCombo[i]->setObjectName(QStringLiteral("daxIqRate%1").arg(i + 1));
+        m_iqRateCombo[i]->setAccessibleName(tr("IQ %1 sample rate").arg(i + 1));
         m_iqRateCombo[i]->addItem("24k",  24000);
         m_iqRateCombo[i]->addItem("48k",  48000);
         m_iqRateCombo[i]->addItem("96k",  96000);
         m_iqRateCombo[i]->addItem("192k", 192000);
         {
             const int savedRate = DaxSettings::iqChannelRatesHz().value(i, 48000);
+            m_preferredRate[i] = savedRate;
             QSignalBlocker sb(m_iqRateCombo[i]);
             for (int j = 0; j < m_iqRateCombo[i]->count(); ++j) {
                 if (m_iqRateCombo[i]->itemData(j).toInt() == savedRate) {
@@ -86,6 +102,11 @@ void DaxIqApplet::buildUI()
         m_iqRateCombo[i]->setFixedWidth(60);
         connect(m_iqRateCombo[i], &QComboBox::currentIndexChanged, this, [this, i]() {
             const int rate = m_iqRateCombo[i]->currentData().toInt();
+            if (!m_model || !m_model->daxIqModel().supportsSampleRate(rate)) {
+                refreshRateChoices();
+                return;
+            }
+            m_preferredRate[i] = rate;
             QVector<int> rates = DaxSettings::iqChannelRatesHz();
             if (i < rates.size()) {
                 rates[i] = rate;
@@ -106,13 +127,18 @@ void DaxIqApplet::buildUI()
 
         m_iqEnable[i] = new QPushButton("Off");
         m_iqEnable[i]->setFixedWidth(36);
-        m_iqEnable[i]->setStyleSheet(kIqBtnOff);
+        m_iqEnable[i]->setObjectName(QStringLiteral("daxIqEnable%1").arg(i + 1));
+        m_iqEnable[i]->setAccessibleName(tr("IQ %1 stream").arg(i + 1));
+        ThemeManager::instance().applyStyleSheet(m_iqEnable[i], kIqBtnOff);
         connect(m_iqEnable[i], &QPushButton::clicked, this, [this, i]() {
+            if (!m_model || m_model->daxIqModel().supportedSampleRates().isEmpty()) {
+                return;
+            }
             const bool wasOn = m_iqEnable[i]->text() == "On";
             if (wasOn) {
                 emit iqDisableRequested(i + 1);
                 m_iqEnable[i]->setText("Off");
-                m_iqEnable[i]->setStyleSheet(kIqBtnOff);
+                ThemeManager::instance().applyStyleSheet(m_iqEnable[i], kIqBtnOff);
                 m_iqMeter[i]->setValue(0);
             } else {
                 // Sync the model's desired rate to the combo before enabling, so a
@@ -121,7 +147,7 @@ void DaxIqApplet::buildUI()
                 emit iqRateChanged(i + 1, m_iqRateCombo[i]->currentData().toInt());
                 emit iqEnableRequested(i + 1);
                 m_iqEnable[i]->setText("On");
-                m_iqEnable[i]->setStyleSheet(kIqBtnOn);
+                ThemeManager::instance().applyStyleSheet(m_iqEnable[i], kIqBtnOn);
             }
             QVector<bool> en = DaxSettings::iqChannelEnabled();
             if (i < en.size()) {
@@ -137,10 +163,39 @@ void DaxIqApplet::buildUI()
 
 void DaxIqApplet::setRadioModel(RadioModel* model)
 {
+    m_restoreTimer.stop();
+    if (m_model) {
+        disconnect(m_model, nullptr, this, nullptr);
+        disconnect(&m_model->daxIqModel(), nullptr, this, nullptr);
+    }
     m_model = model;
+    for (int i = 0; i < kChannels; ++i) {
+        m_iqMeterDb[i] = -70.0f;
+        m_iqMeter[i]->setValue(0);
+        syncStreamState(i + 1);
+    }
+    refreshRateChoices();
     if (!model) {
+        for (int i = 0; i < kChannels; ++i) {
+            m_iqRateCombo[i]->setEnabled(false);
+            m_iqEnable[i]->setEnabled(false);
+            m_iqEnable[i]->setAccessibleDescription(tr("Connect a supported radio model to use DAX IQ."));
+            m_iqEnable[i]->setText("Off");
+            m_iqMeter[i]->setValue(0);
+        }
         return;
     }
+
+    refreshAvailability();
+    connect(model, &RadioModel::capabilitiesChanged, this, [this, model] {
+        if (m_model != model) { return; }
+        refreshRateChoices();
+        refreshAvailability();
+        if (m_model && m_model->isConnected()
+            && !m_model->daxIqModel().supportedSampleRates().isEmpty()) {
+            restoreEnabledChannels();
+        }
+    });
 
     // DAX IQ streams are per-session. On reconnect: reset the UI immediately,
     // then re-enable persisted channels after a short delay. connectionStateChanged(true)
@@ -148,14 +203,15 @@ void DaxIqApplet::setRadioModel(RadioModel* model)
     // iqEnableRequested immediately risks a rejected stream create if the radio
     // isn't ready yet.
     connect(model, &RadioModel::connectionStateChanged,
-            this, [this](bool connected) {
+            this, [this, model](bool connected) {
+        if (m_model != model) { return; }
         for (int i = 0; i < kChannels; ++i) {
             if (!m_iqEnable[i]) {
                 continue;
             }
             if (!connected) {
                 m_iqEnable[i]->setText("Off");
-                m_iqEnable[i]->setStyleSheet(kIqBtnOff);
+                ThemeManager::instance().applyStyleSheet(m_iqEnable[i], kIqBtnOff);
                 if (m_iqMeter[i]) {
                     m_iqMeter[i]->setValue(0);
                 }
@@ -163,14 +219,17 @@ void DaxIqApplet::setRadioModel(RadioModel* model)
             }
             // Reset to Off; stream requests follow after session setup settles.
             m_iqEnable[i]->setText("Off");
-            m_iqEnable[i]->setStyleSheet(kIqBtnOff);
+            ThemeManager::instance().applyStyleSheet(m_iqEnable[i], kIqBtnOff);
             if (m_iqMeter[i]) {
                 m_iqMeter[i]->setValue(0);
             }
         }
+        refreshAvailability();
         if (!connected) {
+            m_restoreTimer.stop();
             return;
         }
+        refreshRateChoices();
         restoreEnabledChannels();
     });
 
@@ -183,87 +242,164 @@ void DaxIqApplet::setRadioModel(RadioModel* model)
         restoreEnabledChannels();
     }
 
-    // Wire DAX IQ stream state changes → sync On/Off buttons
-    connect(&model->daxIqModel(), &DaxIqModel::streamChanged, this, [this](int ch) {
-        if (ch < 1 || ch > kChannels) {
-            return;
-        }
-        int idx = ch - 1;
-        bool exists = m_model->daxIqModel().stream(ch).exists;
-        m_iqEnable[idx]->setText(exists ? "On" : "Off");
-        m_iqEnable[idx]->setStyleSheet(exists ? kIqBtnOn : kIqBtnOff);
-        // Zero the meter whenever the channel is not actively bound to a pan: it
-        // may be Off (exists==false) OR enabled-but-unbound (pan==0x0, e.g. the
-        // pan's daxiq_channel was moved to another IQ channel). No IQ data flows
-        // in either case, so the bar must drop to 0 instead of freezing.
-        const QString pan = exists ? m_model->daxIqModel().stream(ch).panId : QString();
-        const bool bound = exists && !pan.isEmpty()
-                           && pan != QStringLiteral("0x0") && pan != QStringLiteral("0");
-        if (!bound) {
-            m_iqMeterDb[idx] = -70.0f;
-            m_iqMeter[idx]->setValue(0);
-        }
+    connect(&model->daxIqModel(), &DaxIqModel::streamChanged, this, [this, model](int ch) {
+        if (m_model != model) { return; }
+        syncStreamState(ch);
+    });
+}
 
-        // Sync rate combo from radio state ONLY while the stream exists and is
-        // not mid-rate-settling. On disable the model resets the stream's
-        // sampleRate to its 48k default; copying that into the combo would
-        // clobber the rate the user selected. During a non-default-rate enable
-        // the stream reports 48k transiently (rateSettling) before the real rate
-        // arrives; syncing then would flip the combo to 48k and back. In both
-        // cases the combo holds user intent and is re-applied on the next enable.
-        // (The On/Off button above still syncs every emit, settling or not.)
-        if (exists && !m_model->daxIqModel().stream(ch).rateSettling) {
-            int rate = m_model->daxIqModel().stream(ch).sampleRate;
-            QSignalBlocker sb(m_iqRateCombo[idx]);
-            for (int i = 0; i < m_iqRateCombo[idx]->count(); ++i) {
-                if (m_iqRateCombo[idx]->itemData(i).toInt() == rate) {
-                    m_iqRateCombo[idx]->setCurrentIndex(i);
-                    break;
-                }
+void DaxIqApplet::syncStreamState(int ch)
+{
+    if (ch < 1 || ch > kChannels) {
+        return;
+    }
+    int idx = ch - 1;
+    const bool exists = m_model && m_model->daxIqModel().stream(ch).exists;
+    m_iqEnable[idx]->setText(exists ? "On" : "Off");
+    ThemeManager::instance().applyStyleSheet(m_iqEnable[idx], exists ? kIqBtnOn : kIqBtnOff);
+    // Zero the meter whenever the channel is not actively bound to a pan: it
+    // may be Off (exists==false) OR enabled-but-unbound (pan==0x0, e.g. the
+    // pan's daxiq_channel was moved to another IQ channel). No IQ data flows
+    // in either case, so the bar must drop to 0 instead of freezing.
+    const QString pan = exists ? m_model->daxIqModel().stream(ch).panId : QString();
+    const bool bound = exists && !pan.isEmpty()
+                       && pan != QStringLiteral("0x0") && pan != QStringLiteral("0");
+    if (!bound) {
+        m_iqMeterDb[idx] = -70.0f;
+        m_iqMeter[idx]->setValue(0);
+    }
+
+    // Keep accepted intent visible until its rate echo arrives. Disabled streams
+    // retain the remembered preference instead of copying the radio's 48k default.
+    if (exists) {
+        const DaxIqModel::IqStream& stream = m_model->daxIqModel().stream(ch);
+        const int rate = stream.rateSettling ? m_model->daxIqModel().requestedSampleRate(ch)
+                                             : stream.sampleRate;
+        QSignalBlocker sb(m_iqRateCombo[idx]);
+        for (int i = 0; i < m_iqRateCombo[idx]->count(); ++i) {
+            if (m_iqRateCombo[idx]->itemData(i).toInt() == rate) {
+                m_iqRateCombo[idx]->setCurrentIndex(i);
+                break;
             }
         }
-    });
+    }
+    if (m_model) {
+        refreshAvailability();
+    }
 }
 
 void DaxIqApplet::restoreEnabledChannels()
 {
-    // Re-create the persisted-enabled IQ streams a short moment after connect,
-    // once session/stream setup has settled. Idempotent (skips channels whose
-    // stream already exists) so calling it from both the connect handler and the
-    // already-connected path in setRadioModel cannot double-create. The `exists`
-    // guard lags the radio round-trip, though, so two timers scheduled within the
-    // same settle window would both pass it and double-create; collapse overlapping
-    // calls with a pending flag, cleared when the timer fires.
-    if (m_restorePending) {
+    if (!m_restoreTimer.isActive()) {
+        m_restoreTimer.start();
+    }
+}
+
+void DaxIqApplet::restoreChannelsNow()
+{
+    if (!m_model || !m_model->isConnected()
+        || m_model->daxIqModel().supportedSampleRates().isEmpty()) {
         return;
     }
-    m_restorePending = true;
-    QTimer::singleShot(1500, this, [this]() {
-        m_restorePending = false;
-        if (!m_model || !m_model->isConnected()) {
-            return;
+    refreshRateChoices();
+    const QVector<bool> iqEnabled = DaxSettings::iqChannelEnabled();
+    for (int i = 0; i < kChannels; ++i) {
+        if (!m_iqEnable[i]) {
+            continue;
         }
-        const QVector<bool> iqEnabled = DaxSettings::iqChannelEnabled();
-        for (int i = 0; i < kChannels; ++i) {
-            if (!m_iqEnable[i]) {
-                continue;
-            }
-            if (!iqEnabled.value(i, false)) {
-                continue;
-            }
-            if (m_model->daxIqModel().stream(i + 1).exists) {
-                continue;  // already restored
-            }
-            // Restore the saved rate too: sync the model's desired rate to the
-            // combo (restored from DaxIqRate%1 in buildUI) so the stream comes up
-            // at the persisted rate instead of the radio's 48k default.
-            emit iqRateChanged(i + 1, m_iqRateCombo[i]->currentData().toInt());
-            emit iqEnableRequested(i + 1);
-            // The On button is driven by the streamChanged sync once the stream
-            // actually exists; don't pre-set it here so a restore that runs before
-            // the createStream wiring is in place can't show a dead "On".
+        if (!iqEnabled.value(i, false)) {
+            continue;
         }
-    });
+        if (m_model->daxIqModel().stream(i + 1).exists) {
+            continue;  // already restored
+        }
+        // Restore the saved rate too: sync the model's desired rate to the
+        // combo (restored from DaxIqRate%1 in buildUI) so the stream comes up
+        // at the persisted rate instead of the radio's 48k default.
+        emit iqRateChanged(i + 1, m_iqRateCombo[i]->currentData().toInt());
+        emit iqEnableRequested(i + 1);
+        // The On button is driven by the streamChanged sync once the stream
+        // actually exists; don't pre-set it here so a restore that runs before
+        // the createStream wiring is in place can't show a dead "On".
+    }
+}
+
+void DaxIqApplet::refreshRateChoices()
+{
+    const QList<int> rates = m_model ? m_model->daxIqModel().supportedSampleRates()
+                                    : QList<int>{};
+    QStringList reasons;
+    for (int i = 0; i < m_iqRateCombo[0]->count(); ++i) {
+        const int rate = m_iqRateCombo[0]->itemData(i).toInt();
+        if (!rates.contains(rate)) {
+            reasons.append(tr("%1 kHz is unavailable on this radio model.").arg(rate / 1000));
+        }
+    }
+    for (int ch = 0; ch < kChannels; ++ch) {
+        auto* combo = m_iqRateCombo[ch];
+        auto* items = qobject_cast<QStandardItemModel*>(combo->model());
+        for (int i = 0; i < combo->count(); ++i) {
+            const int rate = combo->itemData(i).toInt();
+            const bool supported = rates.contains(rate);
+            const QString reason = supported ? QString()
+                : tr("%1 kHz is unavailable on this radio model.").arg(rate / 1000);
+            if (items && items->item(i)) {
+                items->item(i)->setEnabled(supported);
+                items->item(i)->setData(supported ? QVariant()
+                    : QVariant::fromValue(QBrush(combo->palette().color(QPalette::Disabled, QPalette::Text))),
+                    Qt::ForegroundRole);
+            }
+            combo->setItemData(i, reason, Qt::ToolTipRole);
+            combo->setItemData(i, reason, Qt::AccessibleDescriptionRole);
+        }
+        // Supply the per-rate description first; the registry then composes its
+        // availability/engagement text without losing this owned description.
+        combo->setAccessibleDescription(reasons.join(QLatin1Char(' ')));
+        m_rateReasons = reasons.join(QLatin1Char(' '));
+        int effective = m_model
+            ? m_model->daxIqModel().sampleRateForPreference(m_preferredRate[ch]) : 0;
+        if (m_model) {
+            const DaxIqModel::IqStream& stream = m_model->daxIqModel().stream(ch + 1);
+            if (stream.exists && stream.rateSettling) {
+                effective = m_model->daxIqModel().requestedSampleRate(ch + 1);
+            } else if (stream.exists && rates.contains(stream.sampleRate)) {
+                effective = stream.sampleRate;
+            }
+        }
+        if (effective != 0) {
+            const QSignalBlocker blocker(combo);
+            combo->setCurrentIndex(combo->findData(effective));
+        }
+    }
+    if (m_model) {
+        refreshAvailability();
+    }
+}
+
+// A channel's controls are usable when the connected radio declares DAX IQ
+// rates, and stay usable while its stream exists so it can still be stopped.
+void DaxIqApplet::refreshAvailability()
+{
+    const bool available = m_model && m_model->isConnected()
+        && !m_model->daxIqModel().supportedSampleRates().isEmpty();
+    const QString reason = available ? QString()
+        : tr("DAX IQ sample rates are unavailable until a supported radio model is connected.");
+    for (int i = 0; i < kChannels; ++i) {
+        const bool engaged = m_model && m_model->daxIqModel().stream(i + 1).exists;
+        const bool usable = available || engaged;
+        // The rate combo's own description names the rates this model lacks
+        // (refreshRateChoices); unusable, it says why the whole control is off.
+        if (m_iqRateCombo[i]) {
+            m_iqRateCombo[i]->setEnabled(usable);
+            m_iqRateCombo[i]->setToolTip(usable ? QString() : reason);
+            m_iqRateCombo[i]->setAccessibleDescription(usable ? m_rateReasons : reason);
+        }
+        if (m_iqEnable[i]) {
+            m_iqEnable[i]->setEnabled(usable);
+            m_iqEnable[i]->setToolTip(usable ? QString() : reason);
+            m_iqEnable[i]->setAccessibleDescription(usable ? QString() : reason);
+        }
+    }
 }
 
 void DaxIqApplet::setDaxIqLevel(int channel, float rms)
