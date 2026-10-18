@@ -879,6 +879,7 @@ def reanalyze(out_dir):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
+        prog="hackrf_tx_ota_analyze.py",
         description="Judge a saved HackRF over-the-air TX test run again, without\n"
                     "transmitting. To run the test itself, use:\n\n"
                     "  python3 tools/hackrf_tx_ota_test.py --callsign <YOUR CALL>",
@@ -886,7 +887,11 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reanalyze", metavar="DIR",
                     help="a results folder holding run.json and the .cu8 captures")
-    args = ap.parse_args(sys.argv[1:] if argv is None else argv)
+    args, unknown = ap.parse_known_args(sys.argv[1:] if argv is None else argv)
+    if unknown:
+        ap.error(f"unrecognized arguments: {' '.join(unknown)}\n"
+                 "Test options such as --callsign and --out-dir belong to the test itself:\n"
+                 "  python3 tools/hackrf_tx_ota_test.py --callsign <YOUR CALL> --out-dir <DIR>")
     if not args.reanalyze:
         ap.print_help(sys.stderr)
         return 2

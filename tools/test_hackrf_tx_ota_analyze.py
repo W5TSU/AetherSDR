@@ -381,6 +381,15 @@ def test_cli_without_arguments_points_to_the_test():
         code = A.main([])
     check(code == 2, f"exit {code}")
     check("hackrf_tx_ota_test.py --callsign" in out.getvalue(), out.getvalue())
+    # Test options given to the analyser: name the script they belong to.
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        try:
+            code = A.main(["--callsign", "W5TSU", "--reanalyze", "somewhere"])
+        except SystemExit as e:
+            code = e.code
+    check(code == 2, f"exit {code}")
+    check("hackrf_tx_ota_test.py" in out.getvalue() and "--callsign" in out.getvalue(), out.getvalue())
 
 
 def main():
