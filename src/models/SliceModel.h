@@ -107,6 +107,7 @@ public:
     int     anfLevel()    const { return m_anfLevel; }
     int     nrlLevel()    const { return m_nrlLevel; }
     int     nrsLevel()    const { return m_nrsLevel; }
+    int     nrsLevelMaximum() const { return m_nrsLevelMaximum; }
     int     nrfLevel()    const { return m_nrfLevel; }
     int     anflLevel()   const { return m_anflLevel; }
     int     mnLevel()     const { return m_mnLevel; }
@@ -488,6 +489,7 @@ signals:
     void anfLevelChanged(int v);
     void nrlLevelChanged(int v);
     void nrsLevelChanged(int v);
+    void nrsLevelMaximumChanged(int maximum);
     void nrfLevelChanged(int v);
     void anflLevelChanged(int v);
     void mnLevelChanged(int v);
@@ -555,6 +557,11 @@ public:
     static bool filterCarrierStraddlingFamily(const QString& mode);
 
 private:
+    // The NRS request ceiling the connected backend declares
+    // (RadioCapabilities::nrsLevelControl); only RadioModel sets it.
+    friend class RadioModel;
+    void setNrsLevelMaximum(int maximum);
+    int m_nrsLevelMaximum = 100;
     void applyAgcMode(const QString& mode, bool recall);
     // Sign-guarded, idempotent (lo,hi)→(-hi,-lo) mirror of the stored filter
     // when its polarity is wrong for m_mode; true if it changed anything.

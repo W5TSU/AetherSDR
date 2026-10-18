@@ -6632,11 +6632,20 @@ target_link_libraries(dax_iq_rate_limits_test PRIVATE aethercore Qt6::Widgets Qt
 add_test(NAME dax_iq_rate_limits_test COMMAND dax_iq_rate_limits_test)
 set_tests_properties(dax_iq_rate_limits_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Socket-free: the Flex firmware NRS ceiling and the slice clamp on the wire.
+add_executable(nrs_level_range_test tests/nrs_level_range_test.cpp)
+target_include_directories(nrs_level_range_test PRIVATE src tests)
+target_link_libraries(nrs_level_range_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME nrs_level_range_test COMMAND nrs_level_range_test)
+set_tests_properties(nrs_level_range_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    nrs_level_range_test
     cwx_quote_test
     hl2_tune_memory_test
     hl2_tune_tail_test
@@ -6657,6 +6666,7 @@ set(AETHER_SETTINGS_CONSUMERS
     atu_seam_gate_test
     transmit_seam_drop_notice_test
     radio_nickname_test
+    nrs_level_range_test
     backend_capability_revision_test
     radio_capacity_declaration_test
     extension_namespace_gate_test

@@ -528,9 +528,19 @@ void SliceModel::setNrlLevel(int v)
     emit nrlLevelChanged(v);
 }
 
+void SliceModel::setNrsLevelMaximum(int maximum)
+{
+    if (m_nrsLevelMaximum == maximum) {
+        return;
+    }
+    m_nrsLevelMaximum = maximum;
+    // A request limit never changes radio-authoritative readback or sends intent.
+    emit nrsLevelMaximumChanged(maximum);
+}
+
 void SliceModel::setNrsLevel(int v)
 {
-    v = std::clamp(v, 0, 100);
+    v = std::clamp(v, 0, m_nrsLevelMaximum);
     // Record any explicit user choice (including a deliberate 50) so the
     // applyChanges() re-push won't fight a value the user picked themselves.
     m_nrsLevelUser = v;

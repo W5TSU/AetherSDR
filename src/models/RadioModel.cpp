@@ -887,6 +887,14 @@ void RadioModel::setupBackend(const QString& family)
             });
             flex->setModelProvider([this]{ return m_model; });
             flex->setFirmwareVersionProvider([this]{ return softwareVersion(); });
+            connect(this, &RadioModel::infoChanged,
+                    flex, [this, flex] {
+                // Disconnect publishes fallback UI capabilities itself; backend
+                // signals must end at disconnected(), for both LAN and WAN.
+                if (isConnected()) {
+                    flex->refreshFirmwareCapabilities();
+                }
+            });
             m_connection = flex->connection();   // non-owning; the backend owns it
             m_panStream  = flex->panStream();    // non-owning; the backend owns it
             m_flexBackend = flex;                // transitional alias (2.3)
@@ -1761,6 +1769,8 @@ void RadioModel::wireBackendReceiverState()
                 qCDebug(lcProtocol) << "RadioModel: reclaimed non-Flex slice"
                                     << sliceId << "from previous session";
                 m_slices.append(s);
+                s->setNrsLevelMaximum(backendCapabilities().nrsLevelControl
+                    .value_or(RadioCapabilities::NrsLevelControl{}).levelMaximum);
                 s->applyChanges(mapped);
                 m_meterModel.setActiveTxSlice(activeTxSliceNum());
                 refreshTxPowerLimit();
@@ -3055,6 +3065,7 @@ RadioModel::RadioModel(QObject* parent)
             // inheritance bug the disconnect-side clear exists to prevent.
             m_declaredMaxSlices = m_lastInfo.maxSlices > 0 ? m_lastInfo.maxSlices : 0;
             m_maxPanadapters = m_lastInfo.maxPanadapters > 0 ? m_lastInfo.maxPanadapters : 0;
+            m_version = m_lastInfo.version;
             if (m_declaredMaxSlices > 0)
                 m_maxSlices = m_declaredMaxSlices;
             clearAutomationSliceFixtures();
@@ -4161,6 +4172,10 @@ void RadioModel::connectViaWan(WanConnection* wan, const QString& publicIp, quin
 
     m_wanConn = wan;
     resetGpsState();
+    // This WAN target has no discovery firmware seed. Keep the previous LAN
+    // identity out of firmware-shaped capabilities until its info reply arrives.
+    m_version.clear();
+    emit infoChanged();
     m_wanPublicIp = publicIp;
     m_wanUdpPort = udpPort;
     m_intentionalDisconnect = false;
@@ -4881,6 +4896,11 @@ void RadioModel::updateTuneAvailability()
 void RadioModel::publishCapabilities(bool connected)
 {
     const RadioCapabilities caps = backendCapabilities();
+    const int nrsMaximum = connected && caps.nrsLevelControl
+        ? caps.nrsLevelControl->levelMaximum : 100;
+    for (SliceModel* slice : m_slices) {
+        slice->setNrsLevelMaximum(nrsMaximum);
+    }
     m_meterModel.setCompressionMaximumDb(connected ? caps.compressionMaximumDb : 25.0f);
     m_cwxModel.setSpeedModifiersEnabled(!connected
                                         || caps.cwTextSupportsSpeedModifiers);
@@ -7807,7 +7827,7 @@ void RadioModel::registerAsGuiClient(const QString& clientId)
                                     m_maxSlices = maxSlicesForModel(m_model);
                             }
                             else if (key == "chassis_serial") m_chassisSerial = val;
-                            else if (key == "software_ver")   m_version = val;
+                            else if (key == "software_ver")   adoptSoftwareVersion(val);
                             else if (key == "ip")             m_ip = val;
                             else if (key == "netmask")        m_netmask = val;
                             else if (key == "gateway")        m_gateway = val;
@@ -8334,13 +8354,20 @@ void RadioModel::onConnectionError(const QString& msg)
     }
 }
 
+void RadioModel::adoptSoftwareVersion(const QString& version)
+{
+    m_version = version;
+    // Only a LAN session reconnects through m_lastInfo. WAN must not replace
+    // the discovery identity retained for a different LAN target.
+    if (!m_wanConn) {
+        m_lastInfo.version = version;
+    }
+}
+
 void RadioModel::onVersionReceived(const QString& v)
 {
-    // The V line from the radio is the protocol version (e.g. "1.4.0.0").
-    // We prefer the software version from discovery (e.g. "4.1.5").
-    // Only use protocol version as fallback if discovery didn't provide one.
-    if (m_version.isEmpty())
-        m_version = v;
+    // The V line declares the protocol, not the firmware. Unknown software
+    // stays unknown until discovery or the info reply identifies it.
     m_protocolVersion = v;
     emit infoChanged();
 }
@@ -9976,6 +10003,8 @@ void RadioModel::wireSliceAudioIntentsToBackend(SliceModel* s)
     if (!s)
         return;
 
+    s->setNrsLevelMaximum(backendCapabilities().nrsLevelControl
+        .value_or(RadioCapabilities::NrsLevelControl{}).levelMaximum);
     if (m_radioDialLocked && backendCapabilities().hasRadioDialLock) {
         SliceDelta delta;
         delta.locked = *m_radioDialLocked;
@@ -12106,6 +12135,8 @@ void RadioModel::handleSliceStatus(int id,
                 m_meterModel.setActiveTxSlice(activeTxSliceNum());
             });
         }
+        s->setNrsLevelMaximum(backendCapabilities().nrsLevelControl
+            .value_or(RadioCapabilities::NrsLevelControl{}).levelMaximum);
         s->setRttyMarkDefault(m_rttyMarkDefault);
         m_slices.append(s);
         // aetherd RFC 2.3: decode Flex slice status behind the seam → the
