@@ -147,6 +147,13 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     is half of that. CW decodes, with dits 6 % long at 15 WPM and
     290 Hz wide at −40 dB. Every other line within ±200 kHz is −49 dBc or
     lower. Not yet checked on HF, which the RTL-SDR can't receive.
+  - **2026-10-18, operator runs (W5TSU) on radios idle for half an hour:** CW
+    and CWR decoded correctly and were confirmed by ear, but measured 50 Hz
+    from TUNE's carrier. The crystals drifted 74 Hz during the run as they
+    warmed. The test now moves its reference to each passing mode's own
+    reading of the dial, and reports the drift. Re-judged with no new
+    transmission, the second run (the one whose recordings were kept) passes
+    all 14 modes.
 - **HackRF — multi-slice receive** — the one goal of the HackRF design not
   yet shipped: several independent slices across the HackRF's wide capture,
   each with its own DDC. The backend is single-slice today. Design:

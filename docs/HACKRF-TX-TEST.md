@@ -9,9 +9,29 @@ text sent.
 
 One command runs it all, and it needs no help once it starts.
 
+## Quick start
+
+From the top of the AetherSDR checkout, with both radios plugged in and
+AetherSDR built:
+
 ```sh
-python3 tools/hackrf_tx_ota_test.py --callsign <YOUR CALL>
+python3 tools/hackrf_tx_ota_test.py --callsign <YOUR CALL> --out-dir my-run
 ```
+
+It transmits for about 3 minutes, so stay at the station. When it finishes,
+open `my-run/report.md`. Leave out `--out-dir` and the results go in
+`./hackrf-tx-ota-<date>-<time>`.
+
+Three scripts have similar names. Only the first one transmits:
+
+| Command | What it does |
+|---|---|
+| `python3 tools/hackrf_tx_ota_test.py --callsign <CALL>` | **runs the test**: keys the HackRF, records, judges, reports |
+| `python3 tools/hackrf_tx_ota_analyze.py --reanalyze <run folder>` | judges a saved run again, without transmitting |
+| `python3 tools/test_hackrf_tx_ota_analyze.py`, `python3 tools/test_hackrf_tx_ota_test.py` | the test's own offline tests, no radio needed |
+
+`--callsign` and `--out-dir` belong to `hackrf_tx_ota_test.py`. The analyser
+only takes `--reanalyze`.
 
 ## What it tests, and what it doesn't
 
@@ -189,7 +209,8 @@ The recordings take about 17 MB per mode, roughly 250 MB per run.
 
 `report.md` has a table of `Mode | Status | Failed checks (measured vs limit)`,
 then notes per mode, then the run itself: frequency, the measured crystal
-error in ppm, the drive, the RTL-SDR gain and the AetherSDR commit.
+error in ppm, how far it drifted during the run, the drive, the RTL-SDR gain
+and the AetherSDR commit.
 
 | Status | Meaning |
 |---|---|
@@ -204,9 +225,19 @@ failed, and 2 on an abort.
 ### The checks
 
 Everything is measured relative to the mode's own signal. TUNE's carrier
-gives the two radios' combined crystal error. Every other mode then looks
-within 300 Hz of where that error puts it, because the crystals drift as they
-warm (about 150 Hz over 20 minutes on the reference bench).
+gives the two radios' combined crystal error, which is the absolute
+`frequency` check. After that the reference follows the crystals as they
+drift. Each mode that passes measures where the dial is from its own signal
+(the SSB tone minus 1 kHz, the AM carrier, the FM Bessel lines' centre, ...),
+and the next mode starts from there, looking within 300 Hz. A mode that fails
+(a wrong sideband, say) doesn't move the reference.
+
+This matters most for CW, the only mode judged on an absolute position: its
+carrier must sit on the dial. Cold radios drift fast as they warm. The
+reference bench measured 74 Hz in under 2 minutes after half an hour idle.
+Against TUNE's reading from a minute earlier, a correct CW carrier looked
+50 Hz off. Against the previous mode's reading it's within 5 Hz. The report's
+"Drift over the run" line shows how far the dial moved.
 
 | Mode | Check | Passes when |
 |---|---|---|
@@ -230,7 +261,7 @@ warm (about 150 Hz over 20 minutes on the reference bench).
 | FMN | `deviation` | at most 2.5 kHz + 10 % |
 | FMN | `fmn_ratio` | 0.4–0.6 of FM's deviation (FM must run in the same pass) |
 | CW, CWR | `decode` | the envelope decodes back to the text sent |
-| CW, CWR | `carrier_offset` | the carrier within 50 Hz of the dial frequency |
+| CW, CWR | `carrier_offset` | the carrier within 50 Hz of the dial, as the previous passing mode measured it |
 | CW, CWR | `dit_length` | within 15 % of the set WPM |
 | CW, CWR | `width` | at most 400 Hz wide at −40 dB (key clicks) |
 
@@ -271,7 +302,7 @@ and exits 0/1/2 like the test.
 2026-10-18: a HackRF Pro (firmware 2026.01.3) and a NESDR SMArt v5, antennas
 about a metre apart, at 915.5 MHz. The power ramp stopped at its first step:
 10 % drive gave a 72.6 dB carrier. Every mode ran at 10 %, with the RTL-SDR
-at 20.7 dB gain. Two consecutive runs gave the same result:
+at 20.7 dB gain. Every run, with warm radios or cold, gives the same result:
 
 | Mode | Status | Failed checks (measured vs limit) |
 |---|---|---|
@@ -304,11 +335,48 @@ What it measured, so you can compare your own run:
 | FM, FMN, DFM deviation (1 kHz tone at −6 dB) | 2.52, 1.25, 1.26 kHz | 5.5, 2.75, 5.5 kHz |
 | FMN / FM | 0.497 | 0.4–0.6 |
 | CW dit at 15 WPM, width at −40 dB | 84.8 ms (+6 %), 290 Hz | ±15 %, 400 Hz |
+| CW carrier from the dial | −3 to +5 Hz | 50 Hz |
+| Drift over the run | 18 Hz warm; 74 Hz after half an hour idle | report-only |
 | Strongest other line within ±200 kHz | −49 dBc or lower | report-only |
 
 The data modes' carrier suppression is lower than USB's because their TCI
 tone is 4–6 dB weaker than the test tone. The carrier itself sits within
 about 2 dB of the same level.
+
+## How this test was verified
+
+**Offline**, on synthetic recordings, in ctest as `hackrf_tx_ota_analyze` and
+`hackrf_tx_ota_safety`:
+
+- `tools/test_hackrf_tx_ota_analyze.py` (25 tests) builds each mode's signal
+  correctly and deliberately wrong. Each check has to pass the right one and
+  fail the wrong one: a wrong sideband, carrier leak, over-modulated AM,
+  over-deviated FM, CW key clicks, an interfering station and crystal drift.
+  It also covers the reports, the WAVs and `--reanalyze`.
+- `tools/test_hackrf_tx_ota_test.py` (19 tests) runs the whole sequence
+  against a fake radio, a fake RTL-SDR and a fake clock. It checks the safety
+  guarantees: the 80 % cap, refusing to key above it, aborting when the radio
+  doesn't confirm unkey, Ctrl+C in mid-burst, a missing dongle, and that
+  nothing is keyed after an abort. It also covers the power ramp, the 9-minute
+  ID, a busy channel, restoring the radio, the TCI audio client and
+  following drift.
+
+**On the air**, 2026-10-18, HackRF Pro and NESDR SMArt v5 at 915.5 MHz:
+
+1. Building the test found an AetherSDR bug: a HackRF Pro transmitted about
+   70 dB too weak, in bursts. Fixed in 1a35baff (see the ROADMAP).
+2. The first run stopped before testing any mode. `rtl_sdr` never stops
+   when the recording fills its buffers exactly. The script now avoids those
+   lengths.
+3. Two full runs with warm radios: all 14 modes passed both times.
+   `--reanalyze` reproduced the report exactly.
+4. Two runs by the operator, W5TSU, after the radios had sat idle for half
+   an hour. Every mode passed except CW and CWR, which decoded correctly but
+   measured 50–54 Hz from TUNE's carrier. W5TSU confirmed by ear that CW
+   works. The cause was drift: the dial moved 74 Hz during the run, steadily
+   from mode to mode. The reference now follows the drift. The second run
+   (both used the same folder) was re-judged with `--reanalyze`, with no new
+   transmission. It passes all 14 modes, with CW 4–5 Hz from the dial.
 
 ## Listening live
 
@@ -332,6 +400,7 @@ correct the dongle's crystal: the test's report gives the combined error.
 | `weak signal` in TUNE's notes | Even at the cap the carrier was under 55 dB over the noise. Move the antennas closer, or raise `--rtl-gain`. The checks still run. |
 | Every mode fails with "no signal received" | Nothing was heard even at the cap. Check both antennas, the frequency (inside both radios' range), and that `hackrf_info` sees the HackRF. Listen live with `rtl_fm` while you press TUNE in AetherSDR. |
 | "RTL-SDR clipped" in a note | The dongle was overloaded. The script already lowered the gain and repeated the mode. If it keeps happening, move the antennas apart or lower `--rtl-gain`. |
+| CW or CWR fails `carrier_offset` | If the mode before it failed, CW was judged against an older reading of the dial. Fix that mode first. Otherwise check "Drift over the run": let cold radios warm up for a few minutes. |
 | TUNE `frequency` fails | The two crystals together are more than `--freq-tol-ppm` off. Check the HackRF's frequency calibration in Radio Setup and the dongle's (`rtl_test -p`). |
 | `the radio still reports transmitting 1 s after unkey` | The run stopped on purpose. Check AetherSDR shows not transmitting, then look at `aethersdr.log`. |
 
