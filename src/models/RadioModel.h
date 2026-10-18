@@ -287,7 +287,17 @@ public:
 
     // GPS data
     QString gpsStatus()    const { return m_gpsStatus; }
-    bool    gpsPositionValid() const { return m_gpsPositionValid; }
+    GpsFixState gpsFixState() const { return m_gpsFixState; }
+    // Uses legacy backend validity with a no-fix veto; no separate time-valid bit is reported.
+    bool gpsTimeValid() const
+    {
+        return m_gpsPositionValid && m_gpsFixState != GpsFixState::NoFix;
+    }
+    bool    gpsPositionValid() const
+    {
+        return m_gpsPositionValid && m_gpsFixState != GpsFixState::NoFix
+            && m_gpsFixState != GpsFixState::TimeOnly;
+    }
     QString gpsSource()    const { return m_gpsSource; }
     int     gpsTracked()   const { return m_gpsTracked; }
     int     gpsVisible()   const { return m_gpsVisible; }
@@ -1502,7 +1512,6 @@ public:
 
 private slots:
     void onStatusReceived(const QString& object, const QMap<QString, QString>& kvs);
-    void onMessageReceived(const ParsedMessage& msg);
     void onConnected();
     void onDisconnected();
     void onConnectionError(const QString& msg);
@@ -1523,6 +1532,9 @@ private:
     // (IRadioBackend::gpsChanged / memoryChanged / profileChanged). aetherd RFC
     // 2.3 — RadioModel residual.
     void applyGpsChanges(const GpsDelta& delta);
+    void resetGpsState(bool receiveMessages = true);
+    void wireGpsSessionReceivers(bool receiveMessages = true);
+    void handleMessageReceived(const ParsedMessage& msg, quint64 gpsSessionGeneration);
     void applyMemoryChanges(const MemoryDelta& delta);
     void reportMemoryImportFailure(const QString& reason);
     void applyProfileChanges(const ProfileDelta& delta);
@@ -2113,6 +2125,11 @@ private:
     // GPS state
     QString m_gpsStatus;           // "Locked", "Present", "Not Present"
     bool    m_gpsPositionValid{false};
+    GpsFixState m_gpsFixState{GpsFixState::Unknown};
+    quint64 m_gpsSessionGeneration{0};
+    QMetaObject::Connection m_gpsBackendConnection;
+    QMetaObject::Connection m_gpsLanMessageConnection;
+    QMetaObject::Connection m_gpsWanMessageConnection;
     QString m_gpsSource;
     int     m_gpsTracked{0};
     int     m_gpsVisible{0};
