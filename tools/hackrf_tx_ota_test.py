@@ -65,6 +65,7 @@ R820T_GAINS = [0.0, 0.9, 1.4, 2.7, 3.7, 7.7, 8.7, 12.5, 14.4, 15.7, 16.6, 19.7, 
                22.9, 25.4, 28.0, 29.7, 32.8, 33.8, 36.4, 37.2, 38.6, 40.2, 42.1, 43.4,
                43.9, 44.5, 48.0, 49.6]
 RTL_ERRORS = ("usb_claim_interface", "No supported devices", "Failed to open")
+RTL_BUFFER_BYTES = 16 * 16384   # rtl_sdr's default async buffer
 
 
 class PowerCapError(Exception):
@@ -365,7 +366,7 @@ class RtlCapture:
             proc = subprocess.Popen(
                 ["rtl_sdr", "-d", self.device, "-f", str(int(round(center_hz))),
                  "-s", str(int(round(rate))), "-g", f"{gain:g}",
-                 "-n", str(int(round(seconds * rate))), path],
+                 "-n", str(rtl_sample_count(seconds, rate)), path],
                 stdout=subprocess.DEVNULL, stderr=err)
         proc.rtl_log = log_path
         end = time.monotonic() + 5.0
@@ -396,6 +397,14 @@ class RtlCapture:
                 if any(m in line for m in RTL_ERRORS):
                     return line.strip()
         return None
+
+
+def rtl_sample_count(seconds, rate):
+    """`rtl_sdr -n` for `seconds`. rtl_sdr stops only when fewer bytes are
+    left than one buffer, so a count that fills whole buffers exactly (3.2 s
+    at 2.048 MS/s is 50 of them) records forever: add a sample."""
+    n = int(round(seconds * rate))
+    return n + 1 if (2 * n) % RTL_BUFFER_BYTES == 0 else n
 
 
 def lower_gain(gain):

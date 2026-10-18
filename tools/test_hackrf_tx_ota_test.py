@@ -468,6 +468,15 @@ def test_restore_after_run():
         check(radio.calls[-2][1][0]["mode"] == "USB", radio.calls[-2])
 
 
+def test_rtl_sample_count_avoids_whole_buffers():
+    # rtl_sdr only stops when fewer bytes are left than one 262144-byte
+    # buffer: an exact multiple never stops (3.2 s at 2.048 MS/s is 50).
+    for seconds in (0.5, 3.2, 4.2, 6.4, 12.8):
+        n = H.rtl_sample_count(seconds, 2.048e6)
+        check((2 * n) % H.RTL_BUFFER_BYTES != 0, f"{seconds} s -> {n} samples, whole buffers")
+        check(abs(n - seconds * 2.048e6) <= 1, f"{seconds} s -> {n} samples")
+
+
 # ── Radio: the bridge wrapper ──────────────────────────────────────────────
 
 class FakeBridge:
