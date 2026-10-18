@@ -43,9 +43,12 @@ def mix(*fns):
     return fn
 
 
-def am(depth, tone_hz=1000.0, amp=1.0):
+def am(depth, tone_hz=1000.0, amp=1.0, clip=False):
+    """AM. clip=True models an over-driven transmitter: the envelope cannot go
+    below zero, so depth > 1 flattens the troughs and adds harmonics."""
     def fn(t):
-        return amp * (1.0 + depth * np.cos(2 * np.pi * tone_hz * t))
+        env = 1.0 + depth * np.cos(2 * np.pi * tone_hz * t)
+        return amp * (np.maximum(env, 0.0) if clip else env)
     return fn
 
 
@@ -58,6 +61,17 @@ def dsb(tone_hz=1000.0, amp=1.0):
 def fm(dev_hz, tone_hz=1000.0, amp=1.0):
     def fn(t):
         phase = (dev_hz / tone_hz) * np.sin(2 * np.pi * tone_hz * t)
+        return amp * np.exp(1j * phase)
+    return fn
+
+
+def fsk_halves(mark_hz, space_hz, amp=1.0):
+    """RTTY test pattern: mark for the first half of the key, space for the
+    second, phase-continuous. The transmission length is set by synth()."""
+    def fn(t):
+        half = t.max() / 2.0 if t.size else 0.0
+        f = np.where(t < half, mark_hz, space_hz)
+        phase = 2 * np.pi * np.cumsum(f) * (t[1] - t[0] if t.size > 1 else 0.0)
         return amp * np.exp(1j * phase)
     return fn
 

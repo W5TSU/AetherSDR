@@ -120,6 +120,176 @@ def test_spectrum_rbw_and_floor():
     close(floor, -60.0, 3.0, "noise floor dB in 10 Hz")
 
 
+# ── Task 3: per-mode checks ────────────────────────────────────────────────
+
+def ref0(**kw):
+    return A.Reference(carrier_offset_hz=0.0, **kw)
+
+
+def checks(result):
+    return {c.name: c for c in result.checks}
+
+
+def test_tune_offset_and_ppm():
+    iq = F.synth(F.carrier(), total_s=2.0, key_start_s=0.5, key_s=1.0,
+                 carrier_offset_hz=9000.0)
+    result, ref = A.measure_tune(iq, F.SPEC, freq_tol_ppm=25.0)
+    close(ref.carrier_offset_hz, 9000.0, 5.0, "TUNE carrier offset")
+    c = checks(result)
+    check(c["frequency"].passed, f"9 kHz (9.8 ppm) failed 25 ppm: {c['frequency']}")
+    check(c["snr"].measured > 40.0, f"snr {c['snr'].measured}")
+    check(result.status == "pass", f"status {result.status} {result.checks}")
+    iq = F.synth(F.carrier(), total_s=2.0, key_start_s=0.5, key_s=1.0,
+                 carrier_offset_hz=30000.0)
+    result, _ = A.measure_tune(iq, F.SPEC, freq_tol_ppm=25.0)
+    check(not checks(result)["frequency"].passed, "30 kHz (32.8 ppm) passed 25 ppm")
+    check(result.status == "fail", f"status {result.status}")
+
+
+def test_usb_passes_lsb_fails_as_usb():
+    iq = F.synth(F.tone(1000.0))
+    usb = A.analyze_mode("USB", iq, F.SPEC, ref0())
+    check(usb.status == "pass", f"USB status {usb.status}: {usb.checks} {usb.notes}")
+    lsb = A.analyze_mode("LSB", iq, F.SPEC, ref0())
+    c = checks(lsb)
+    check(not c["opposite_sideband"].passed, f"USB signal passed as LSB: {c['opposite_sideband']}")
+    check(lsb.status == "fail", f"LSB status {lsb.status}")
+
+
+def test_ssb_carrier_leak_fails():
+    iq = F.synth(F.mix(F.tone(1000.0), F.carrier(10 ** (-10 / 20))))
+    usb = A.analyze_mode("USB", iq, F.SPEC, ref0())
+    c = checks(usb)
+    check(not c["carrier_suppression"].passed, f"-10 dBc carrier passed: {c['carrier_suppression']}")
+    close(c["carrier_suppression"].measured, 10.0, 1.5, "carrier suppression dB")
+
+
+def test_ssb_finds_its_own_reference_after_drift():
+    # The radios drift between the TUNE reference and this mode: 120 Hz here.
+    iq = F.synth(F.tone(1000.0), carrier_offset_hz=120.0)
+    usb = A.analyze_mode("USB", iq, F.SPEC, ref0())
+    check(usb.status == "pass", f"drifted USB: {usb.checks} {usb.notes}")
+
+
+def test_am_depth():
+    iq = F.synth(F.am(0.7))
+    am = A.analyze_mode("AM", iq, F.SPEC, ref0())
+    c = checks(am)
+    close(c["depth"].measured, 0.70, 0.05, "AM depth")
+    check(am.status == "pass", f"AM status {am.status}: {am.checks}")
+    over = A.analyze_mode("AM", F.synth(F.am(1.3, clip=True)), F.SPEC, ref0())
+    check(not checks(over)["harmonics"].passed, f"over-modulated AM passed harmonics: {checks(over)['harmonics']}")
+
+
+def test_dsb_symmetry_and_carrier():
+    dsb = A.analyze_mode("DSB", F.synth(F.dsb()), F.SPEC, ref0())
+    check(dsb.status == "pass", f"DSB status {dsb.status}: {dsb.checks}")
+    leak = A.analyze_mode("DSB", F.synth(F.mix(F.dsb(), F.carrier(10 ** (-6 / 20)))), F.SPEC, ref0())
+    check(not checks(leak)["carrier_suppression"].passed, "DSB with a -6 dB carrier passed")
+
+
+def test_fm_deviation():
+    iq4 = F.synth(F.fm(4000.0))
+    fm = A.analyze_mode("FM", iq4, F.SPEC, ref0())
+    c = checks(fm)
+    close(c["deviation"].measured, 4000.0, 200.0, "FM deviation Hz")
+    close(c["tone_frequency"].measured, 1000.0, 5.0, "FM tone Hz")
+    check(fm.status == "pass", f"FM 4 kHz status {fm.status}: {fm.checks}")
+    fmn = A.analyze_mode("FMN", iq4, F.SPEC, ref0())
+    check(not checks(fmn)["deviation"].passed, "4 kHz passed FMN's 2.5 kHz limit")
+    iq2 = F.synth(F.fm(2000.0))
+    fmn2 = A.analyze_mode("FMN", iq2, F.SPEC, ref0(fm_peak_dev_hz=4000.0))
+    c = checks(fmn2)
+    check(c["deviation"].passed, f"2 kHz failed FMN: {c['deviation']}")
+    close(c["fmn_ratio"].measured, 0.5, 0.05, "FMN/FM ratio")
+    check(c["fmn_ratio"].passed, "ratio 0.5 failed")
+
+
+def test_data_mode_without_audio_fails():
+    # What a data mode transmits when no TCI audio reaches it: a bare carrier.
+    digu = A.analyze_mode("DIGU", F.synth(F.carrier(10 ** (-30 / 20))), F.SPEC, ref0(), tone_hz=1500.0)
+    check(digu.status == "fail", f"bare carrier passed DIGU: {digu.checks}")
+    dfm = A.analyze_mode("DFM", F.synth(F.carrier()), F.SPEC, ref0())
+    check(not checks(dfm)["modulated"].passed, "unmodulated DFM passed")
+
+
+CW_TEXT = "VVV DE W5TSU"
+
+
+def _cw_capture(edge_s, jitter_s=0.005):
+    elements = A.morse_elements(CW_TEXT, 15.0)
+    sig = F.keyed(elements, edge_s=edge_s, jitter_s=jitter_s)
+    return F.synth(sig, total_s=sig.duration_s + 1.6, key_start_s=0.8, key_s=sig.duration_s + 0.2)
+
+
+def test_morse_elements_paris_timing():
+    el = A.morse_elements("E E", 12.0)   # dit, word gap, dit
+    check([d for d, _ in el] == [True, False, True], f"elements {el}")
+    close(el[0][1], 0.1, 1e-9, "dit at 12 WPM")
+    close(el[1][1], 0.7, 1e-9, "word gap = 7 units")
+
+
+def test_cw_decode_and_timing():
+    cw = A.analyze_mode("CW", _cw_capture(0.010), F.SPEC, ref0(), cw_text=CW_TEXT, cw_wpm=15.0)
+    c = checks(cw)
+    check(c["decode"].passed, f"decode: {c['decode']} {cw.notes}")
+    close(c["dit_length"].measured, 80.0, 12.0, "dit ms")
+    check(c["carrier_offset"].passed, f"carrier: {c['carrier_offset']}")
+    check(cw.status == "pass", f"CW status {cw.status}: {cw.checks}")
+
+
+def test_cw_key_clicks_fail_width():
+    cw = A.analyze_mode("CW", _cw_capture(0.0), F.SPEC, ref0(), cw_text=CW_TEXT, cw_wpm=15.0)
+    check(not checks(cw)["width"].passed, f"hard keying passed width: {checks(cw)['width']}")
+
+
+def test_interferer_in_keyed_window_reports_not_fails():
+    def interferer(t):
+        return 10 ** (-10 / 20) * np.exp(1j * (2 * np.pi * 120e3 * t + 3 * np.sin(2 * np.pi * 1000 * t)))
+    usb = A.analyze_mode("USB", F.synth(F.tone(1000.0), extra=interferer), F.SPEC, ref0())
+    c = checks(usb)
+    check(usb.status == "pass", f"interferer failed USB: {usb.checks}")
+    check(c["spurious"].passed, "spurious is report-only")
+    check(any("spurious" in n for n in usb.notes), f"no spurious note: {usb.notes}")
+
+
+def test_rtty_two_tones():
+    iq = F.synth(F.fsk_halves(2125.0, 2295.0), key_s=2.0, total_s=3.0)
+    rtty = A.analyze_mode("RTTY", iq, F.SPEC, ref0())
+    c = checks(rtty)
+    close(c["shift"].measured, 170.0, 5.0, "RTTY shift")
+    check(rtty.status == "pass", f"RTTY status {rtty.status}: {rtty.checks}")
+    wide = A.analyze_mode("RTTY", F.synth(F.fsk_halves(2125.0, 2325.0), key_s=2.0, total_s=3.0),
+                          F.SPEC, ref0())
+    check(not checks(wide)["shift"].passed, "200 Hz shift passed")
+
+
+def _dominant_hz(audio, fs):
+    spec = np.abs(np.fft.rfft(audio * np.hanning(audio.size)))
+    return float(np.fft.rfftfreq(audio.size, 1.0 / fs)[np.argmax(spec[1:]) + 1])
+
+
+def test_demod_audio_recovers_the_tone():
+    cases = [
+        ("USB", F.tone(1000.0), 1000.0), ("LSB", F.tone(-1000.0), 1000.0),
+        ("DIGU", F.tone(1500.0), 1500.0), ("AM", F.am(0.8), 1000.0),
+        ("DSB", F.dsb(), 1000.0), ("FM", F.fm(5000.0), 1000.0),
+        ("FMN", F.fm(2500.0), 1000.0), ("CW", F.carrier(), 700.0),
+    ]
+    for mode, sig, want in cases:
+        iq = F.synth(sig, key_s=1.0, total_s=1.5, key_start_s=0.25)
+        audio = A.demod_audio(mode, A.to_baseband(iq, F.SPEC), F.FS)
+        check(audio.dtype == np.float32, f"{mode}: dtype {audio.dtype}")
+        close(audio.size / 48000.0, 1.5, 0.01, f"{mode} audio length (s)")
+        check(np.max(np.abs(audio)) <= 1.0, f"{mode}: audio clips")
+        close(_dominant_hz(audio[int(0.3 * 48000):int(1.2 * 48000)], 48000.0),
+              want, 5.0, f"{mode} demodulated tone")
+    # USB demodulation rejects a lower-sideband signal.
+    usb = A.demod_audio("USB", A.to_baseband(F.synth(F.tone(-1000.0)), F.SPEC), F.FS)
+    lsb = A.demod_audio("LSB", A.to_baseband(F.synth(F.tone(-1000.0)), F.SPEC), F.FS)
+    check(np.std(usb) < 0.1 * np.std(lsb), "USB demod passed an LSB tone")
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith("test_") and callable(fn)]
