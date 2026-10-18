@@ -3529,6 +3529,17 @@ if(PYTHON3_EXECUTABLE)
     add_test(NAME tx_meter_safety
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_tx_meter_test.py)
+    # HackRF over-the-air TX test (docs/HACKRF-TX-TEST.md): the analyser and
+    # the orchestrator's safety logic, offline on synthetic captures. Both need
+    # numpy and scipy and exit 77 (skipped) without them.
+    add_test(NAME hackrf_tx_ota_analyze
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_hackrf_tx_ota_analyze.py)
+    set_tests_properties(hackrf_tx_ota_analyze PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME hackrf_tx_ota_safety
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_hackrf_tx_ota_test.py)
+    set_tests_properties(hackrf_tx_ota_safety PROPERTIES SKIP_RETURN_CODE 77)
     # RxApplet/VfoWidget are full-desktop translation units with no practical
     # unit-test link seam. Pin their radio-backed presentation wiring; label
     # behavior itself is covered by fm_tone_presentation_test above.

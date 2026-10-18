@@ -54,3 +54,6 @@ third_party/portaudio-*.tar.gz
 
 # macOS Finder metadata
 .DS_Store
+
+# HackRF over-the-air TX test results (tools/hackrf_tx_ota_test.py)
+/hackrf-tx-ota-*/

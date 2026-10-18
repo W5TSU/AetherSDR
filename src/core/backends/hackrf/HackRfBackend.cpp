@@ -1315,8 +1315,12 @@ void HackRfBackend::onArbiterWantTxStart()
     m_transmitting = true;
     // TX: the carrier is at DC, so the LO goes to the slice frequency (it sits
     // at the pan centre for RX, possibly MHz away). A PLL retune of a few ms,
-    // inside the RX->TX switch the arbiter is already making.
-    tuneHardware(m_sliceFreqHz);
+    // inside the RX->TX switch the arbiter is already making. Through txLoHz:
+    // with the pan centred on the slice the device already holds this
+    // frequency from RX, and a HackRF Pro would then transmit on its receive
+    // tuning (see txLoHz).
+    m_worker->setFreqHz(txLoHz(correctedTuneHz(m_sliceFreqHz, m_freqCalPpb),
+                               m_worker->lastFreqHz()));
     m_worker->setAmpEnable(m_txDrive.amp);
     qCInfo(lcHackRf) << "HackRF: keying at" << qint64(m_sliceFreqHz) << "Hz in" << m_sliceMode
                      << (m_tuning ? "(TUNE carrier)" : "");

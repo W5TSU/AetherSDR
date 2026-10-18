@@ -151,6 +151,7 @@ void HackRfWorker::close()
     }
     m_device = nullptr;
     m_boardId = 0xFF;
+    m_freqHz = 0;
     hackrf_exit();
 }
 
@@ -163,6 +164,7 @@ bool HackRfWorker::setFreqHz(std::uint64_t hz)
                                << "requested" << hz << "Hz";
         return false;
     }
+    m_freqHz = hz;
     return true;
 }
 

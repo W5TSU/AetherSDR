@@ -69,4 +69,9 @@ std::uint64_t correctedTuneHz(double trueHz, int ppb)
     return static_cast<std::uint64_t>(std::llround(commanded));
 }
 
+std::uint64_t txLoHz(std::uint64_t wantedHz, std::uint64_t lastCommandedHz)
+{
+    return wantedHz == lastCommandedHz ? wantedHz + 1 : wantedHz;
+}
+
 } // namespace AetherSDR::hackrf

@@ -76,6 +76,18 @@ HackRfTxDrive txDriveForPowerPercent(int percent);
 // the same correction serves both. Never negative.
 std::uint64_t correctedTuneHz(double trueHz, int ppb);
 
+// The frequency to command for a transmission, given the last one commanded.
+// A HackRF Pro (firmware 2026.01.3) applies a frequency change at the next
+// stream start, in that stream's direction, and skips it when the frequency
+// hasn't changed. The pan is normally centred on the slice, so RX leaves the
+// device holding the TX frequency, applied for receive; a transmission there
+// keeps the receive tuning and comes out ~70 dB down, in bursts (measured
+// against hackrf_transfer, and reproduced with libhackrf alone). Commanding
+// TX 1 Hz away when the frequency hasn't changed makes the start apply it for
+// transmit; the next RX start then sees a change too and applies its own.
+// 1 Hz is ~0.001 ppm at 915 MHz, far inside any crystal's tolerance.
+std::uint64_t txLoHz(std::uint64_t wantedHz, std::uint64_t lastCommandedHz);
+
 // TUNE carrier pacing: true while the TX queue holds less than targetMs of
 // output samples, i.e. when the feeder should add another block of silence.
 bool shouldFeedTuneCarrier(std::size_t queuedSamples, double outputRateHz, int targetMs);

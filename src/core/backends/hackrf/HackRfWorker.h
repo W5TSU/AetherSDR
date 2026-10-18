@@ -83,8 +83,12 @@ public:
     // HackRF's firmware supports live retuning, unlike the RTL2832U tuner
     // RtlSdrWorker has to cancel/restart around. hackrf_start_tx's own doc
     // still recommends setting these before the first start, since a
-    // never-set value keeps an unknown prior state.
+    // never-set value keeps an unknown prior state. One exception: a HackRF
+    // Pro skips a retune to the frequency it already holds, so TX on the RX
+    // frequency must be commanded through txLoHz() (HackRfIq.h).
     bool setFreqHz(std::uint64_t hz);
+    // The last frequency setFreqHz() commanded successfully; 0 before any.
+    std::uint64_t lastFreqHz() const { return m_freqHz; }
     bool setSampleRateHz(double hz);
     bool setLnaGainDb(int requestedDb);    // clamped via clampLnaGainDb()
     bool setVgaGainDb(int requestedDb);    // clamped via clampVgaGainDb()
@@ -149,6 +153,7 @@ private:
     // into "never streamed", "streamed silence" and "streamed a signal".
     int m_txVgaDb{-1};
     bool m_ampOn{false};
+    std::uint64_t m_freqHz{0};
     std::atomic<std::uint64_t> m_txSamplesSent{0};
     std::atomic<std::uint64_t> m_txSamplesPadded{0};
 

@@ -20,6 +20,15 @@ calibration in Radio Setup.
 TUNE sends a plain carrier in any mode. FreeDV, DRM and D-STAR aren't
 available: nothing in the HackRF path decodes them.
 
+## Testing transmit
+
+[HACKRF-TX-TEST.md](HACKRF-TX-TEST.md) describes a one-command,
+over-the-air check of every transmit mode, using an RTL-SDR dongle as the
+receiver: `tools/hackrf_tx_ota_test.py`. It keys each mode for a few seconds
+at low drive (the amp stays off), and reports per mode whether the sideband,
+carrier suppression, AM depth, FM deviation and CW timing are right. Every
+mode also gets a recording, a spectrum plot and a WAV.
+
 ## Check your firmware first
 
 Most "it receives badly" reports on a HackRF come down to firmware. With
