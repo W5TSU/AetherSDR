@@ -139,6 +139,14 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     out about 70 dB down and in bursts. Fixed in 1a35baff: transmit is
     commanded 1 Hz off when the device already holds the frequency. After
     the fix, TUNE at 30 % drive reaches the RTL-SDR 73 dB above the noise.
+  - **2026-10-18, first full runs (HackRF Pro, 915.5 MHz, 10 % drive, amp
+    off, NESDR SMArt v5 about a metre away):** all 14 modes pass, the same
+    in two consecutive runs. The opposite sideband is 44 dB down and the
+    carrier 33 dB down (25–27 dB with TCI data audio). AM depth is 50 % with
+    harmonics 43 dB down. FM deviation is 2.5 kHz at a −6 dB tone, and FMN
+    is half of that. CW decodes, with dits 6 % long at 15 WPM and
+    290 Hz wide at −40 dB. Every other line within ±200 kHz is −49 dBc or
+    lower. Not yet checked on HF, which the RTL-SDR can't receive.
 - **HackRF — multi-slice receive** — the one goal of the HackRF design not
   yet shipped: several independent slices across the HackRF's wide capture,
   each with its own DDC. The backend is single-slice today. Design:

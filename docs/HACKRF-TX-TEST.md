@@ -92,7 +92,7 @@ The script:
    2.5 s, unkeys, confirms the radio stopped, and analyses the recording;
 5. sends your callsign in CW, quits AetherSDR and writes the report.
 
-A full run takes a few minutes. The AetherSDR window is visible so you can
+A full run takes about 3 minutes. The AetherSDR window is visible so you can
 watch it work. **Don't type into the AetherSDR window while the test runs.**
 The test profile turns keyboard shortcuts on, and F9 keys the transmitter.
 
@@ -142,8 +142,8 @@ AetherSDR's TCI server on in its profile (port 50001) and is the TCI client.
 `--attach` needs an AetherSDR started with `AETHER_AUTOMATION=1` and
 `AETHER_AUTOMATION_ALLOW_TX=1`. For CW and the data modes, its profile also
 needs keyboard shortcuts on, the CW key bound to F9 and TCI enabled. Without
-TCI the data modes are skipped. Without the key binding the CW test aborts the
-run. Letting the script launch AetherSDR is simpler.
+TCI the data modes are skipped. Without the key binding the CW tests fail.
+Letting the script launch AetherSDR is simpler.
 
 ## Safety
 
@@ -185,7 +185,7 @@ hackrf-tx-ota-20261018-153000/
     spectrum.png       ±25 kHz around the dial frequency
 ```
 
-The recordings take about 17 MB per mode, roughly 300 MB per run.
+The recordings take about 17 MB per mode, roughly 250 MB per run.
 
 `report.md` has a table of `Mode | Status | Failed checks (measured vs limit)`,
 then notes per mode, then the run itself: frequency, the measured crystal
@@ -265,6 +265,50 @@ python3 tools/hackrf_tx_ota_analyze.py --reanalyze hackrf-tx-ota-20261018-153000
 
 It rewrites every `result.json`, `audio.wav`, `spectrum.png` and the reports,
 and exits 0/1/2 like the test.
+
+## Results on the reference bench
+
+2026-10-18: a HackRF Pro (firmware 2026.01.3) and a NESDR SMArt v5, antennas
+about a metre apart, at 915.5 MHz. The power ramp stopped at its first step:
+10 % drive gave a 72.6 dB carrier. Every mode ran at 10 %, with the RTL-SDR
+at 20.7 dB gain. Two consecutive runs gave the same result:
+
+| Mode | Status | Failed checks (measured vs limit) |
+|---|---|---|
+| TUNE | pass | — |
+| USB | pass | — |
+| LSB | pass | — |
+| DIGU | pass | — |
+| DIGL | pass | — |
+| RTTY | pass | — |
+| CW | pass | — |
+| CWR | pass | — |
+| AM | pass | — |
+| SAM | pass | — |
+| DSB | pass | — |
+| FM | pass | — |
+| FMN | pass | — |
+| DFM | pass | — |
+
+What it measured, so you can compare your own run:
+
+| | Measured | Limit |
+|---|---|---|
+| Combined crystal error | −1.41 ppm (−1.3 kHz) | ±25 ppm |
+| SSB and data opposite sideband | 43.6–45.1 dB down | 25 dB |
+| Carrier suppression, USB and LSB (test tone) | 33.1–33.7 dB | 20 dB |
+| Carrier suppression, DIGU, DIGL, RTTY (TCI audio) | 24.9–27.4 dB | 20 dB |
+| RTTY shift, balance | 166 Hz, 1.3 dB | 170 ± 10 Hz, 6 dB |
+| AM and SAM depth, harmonics | 49–50 %, 43 dB down | 30–100 %, 25 dB |
+| DSB carrier suppression | 27.5 dB | 20 dB |
+| FM, FMN, DFM deviation (1 kHz tone at −6 dB) | 2.52, 1.25, 1.26 kHz | 5.5, 2.75, 5.5 kHz |
+| FMN / FM | 0.497 | 0.4–0.6 |
+| CW dit at 15 WPM, width at −40 dB | 84.8 ms (+6 %), 290 Hz | ±15 %, 400 Hz |
+| Strongest other line within ±200 kHz | −49 dBc or lower | report-only |
+
+The data modes' carrier suppression is lower than USB's because their TCI
+tone is 4–6 dB weaker than the test tone. The carrier itself sits within
+about 2 dB of the same level.
 
 ## Listening live
 
