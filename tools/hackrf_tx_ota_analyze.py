@@ -817,6 +817,20 @@ def _check_measured(result, name):
     return None
 
 
+def build_meta(config, entries, results):
+    """The report's run meta from run.json's config and mode entries: the
+    TUNE-measured ppm, and the drive and RTL-SDR gain each mode ran at."""
+    meta = {k: v for k, v in config.items() if k not in ("tone_hz", "cw_text", "cw_wpm")}
+    tune = next((r for r in results if r.mode == "TUNE"), None)
+    if tune is not None and _check_measured(tune, "frequency") is not None:
+        meta["ppm"] = _check_measured(tune, "frequency")
+    for key in ("power", "rtl_gain_db"):
+        per_mode = {e["mode"]: e[key] for e in entries if key in e}
+        if per_mode:
+            meta[key] = per_mode
+    return meta
+
+
 def reanalyze(out_dir):
     """Judge a saved run again from its run.json and .cu8 files, rewriting
     every mode's artifacts and the reports. Modes without a capture (skipped,
@@ -859,15 +873,7 @@ def reanalyze(out_dir):
                              mode, to_baseband(iq, spec, offset_hz=offset),
                              spec.sample_rate_hz, result)
         results[i] = result
-    meta = {k: v for k, v in config.items() if k not in ("tone_hz", "cw_text", "cw_wpm")}
-    tune = next((r for r in results if r.mode == "TUNE"), None)
-    if tune is not None and _check_measured(tune, "frequency") is not None:
-        meta["ppm"] = _check_measured(tune, "frequency")
-    for key in ("power", "rtl_gain_db"):
-        per_mode = {e["mode"]: e[key] for e in entries if key in e}
-        if per_mode:
-            meta[key] = per_mode
-    write_reports(out_dir, meta, results)
+    write_reports(out_dir, build_meta(config, entries, results), results)
     return results
 
 
