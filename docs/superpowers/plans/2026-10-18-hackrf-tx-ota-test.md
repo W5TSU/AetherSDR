@@ -193,7 +193,65 @@ Fill in the "Task 1 findings" section below:
 
 ### Task 1 findings
 
-_(filled in by Task 1)_
+Run 2026-10-18 13:11–13:30 on a HackRF Pro (firmware 2026.01.3) and a NESDR
+SMArt v5, over the air across the desk, at 915.5 MHz.
+
+- **Socket:** `AETHER_AUTOMATION_SOCKET=<name>` listens on `/tmp/<name>`
+  (the temp dir plus the name). Each instance also writes
+  `/tmp/aethersdr-automation/<pid>.json`.
+- **Connect:** `connect list` returns `radios[]`, where the HackRF entry has
+  `family: "hackrf"`, `model: "HackRF Pro"` and `serial`. The NESDR shows as
+  `family: "rtl"` but is not opened. Then `connect local serial <serial>`, and
+  `connect wait 30000` replies `connected: true` in under 0.1 s.
+- **NESDR concurrency:** `rtl_sdr` opens the NESDR fine while the app holds
+  the HackRF. Its recording starts 0.4–0.6 s after launch, so the harness must
+  wait for data before keying, not just sleep.
+- **TUNE:** there's no bridge TUNE verb. `shortcut tune_toggle` (TX-gated)
+  starts and stops TUNE on the HackRF. The log's `no command plane … dropping
+  transmit tune 1` lines are harmless: the Flex text form is dropped, and
+  `tuneCommandIssued` keys the backend.
+- **Drive:** `transmit tunepower|rfpower N` reaches the HackRF at keying:
+  VGA 6/12/23/35/46 dB at 10/20/40/60/80 %, amp off throughout.
+- **CW:** `cwx send` refuses (the HackRF has no radio-side keyer), and the TCI
+  server is off by default. The working path is a private settings profile
+  (`AETHER_SETTINGS_DIR`), seeded before launch with
+  `AetherSDR --config set Shortcut_cwkey <key>`. Then `keyevent press|release
+  cwkey` keys the straight key (TX-gated) inside a `key ptt on`. **Not verified
+  live:** blocked by the defect below.
+- **Test tone:** `testtone on 1000 -6` reaches the HackRF with no microphone.
+  The USB tone lands at carrier + 1 kHz.
+- **Tone level:** at −6 dB, AM modulation depth is about 98 % (amCarrierLevel
+  48). At −12 dB it is about 58 %. So AM and SAM use −12 dB, and the other
+  modes −6 dB.
+- **FM deviation:** a Bessel-line fit gave about 4.5 kHz for FM and about
+  2.25 kHz for FMN at −6 dB, a ratio of about 0.5. Measured on the defective
+  signal below.
+- **915.5 MHz:** no TX inhibit.
+- **Field names:**
+  - `get slice`: `frequency` (MHz), `mode`.
+  - `get transmit`: `rfPower`, `tunePower`, `transmitting`, `tuning`,
+    `mox`, `cwPitch`, `cwBreakIn`, `amCarrierLevel`.
+  - `get radio`: `transmitting`, `connected`, `connectState`.
+- **Quit:** `invoke Quit trigger`.
+- **DEFECT, which blocks every mode: AetherSDR's HackRF transmit output is about
+  42 dB+ too weak, and it comes in bursts.**
+  - At the same frequency, rate (8 MS/s), TX VGA (46 dB) and amp setting (off),
+    `hackrf_transfer -c 100` reaches the NESDR at 0 dBFS (and clips it):
+    73 dB above the noise in a 10 Hz bin, 20 Hz wide at −20 dB, with a steady
+    envelope.
+  - AetherSDR's TUNE (a full-scale DC carrier, about 2 % silence padding by
+    the worker's own counters) reaches it at −41.7 dBFS: 34 dB above the
+    noise, 2.3 kHz wide at −20 dB.
+  - Its envelope is mostly about 44 dB below its peaks. It comes in about
+    2.5 ms bursts and 0.1 ms spikes, about 3.5 ms apart.
+  - USB, AM, DSB, FM and FMN show the same pedestal.
+  - `packTxIq` and the TUNE feed look correct. The cause lies in streaming or
+    hardware control during TX. It is not yet diagnosed, and is reported to
+    Mark rather than fixed here. It very likely explains the 2026-10-13
+    "no signal".
+- **Minor:** the HackRF backend persists `txSetpoints.tunePower` only when TUNE
+  is keyed. A changed Tune Power setting that is never keyed reverts on
+  reconnect.
 
 ---
 
