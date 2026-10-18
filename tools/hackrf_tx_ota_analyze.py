@@ -44,6 +44,9 @@ class ModeResult:
     status: str                      # "pass" | "fail" | "skip" | "abort"
     checks: list[CheckResult] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Where this mode's own signal put the dial frequency, Hz from nominal TX
+    # (the two crystals' combined error at that moment). None if not measured.
+    dial_offset_hz: float | None = None
 
 
 # ── Capture handling ───────────────────────────────────────────────────────
@@ -314,7 +317,8 @@ def measure_tune(iq, spec, freq_tol_ppm, nominal_s=None):
     checks.append(spur)
     if note:
         notes.append(note)
-    return ModeResult("TUNE", _status(checks), checks, notes), Reference(f0)
+    return (ModeResult("TUNE", _status(checks), checks, notes, round(float(f0), 1)),
+            Reference(f0))
 
 
 def _check_line_snr(freqs, db, f, level, exclude):
@@ -341,7 +345,10 @@ def _ssb(mode, freqs, db, tone_hz, upper):
     return checks, fw, lw
 
 
-def _rtty(freqs, db, mark_hz=2125.0):
+RTTY_MARK_HZ = 2125.0
+
+
+def _rtty(freqs, db, mark_hz=RTTY_MARK_HZ):
     rs = THRESHOLDS["ref_search_hz"]
     shift = THRESHOLDS["rtty_shift_hz"]
     fm_, lm = peak_near(freqs, db, mark_hz, rs)
@@ -437,8 +444,14 @@ def fit_fm(freqs, db, tone_hz, k_max=12):
             best = (p, c, spacing)
     _, center, spacing = best
     p = _line_powers(freqs, db, center, spacing, k_max)
-    p = p / p.sum()
+    # The window sums above are flat to +/-8 Hz; the lines' own parabolic peaks,
+    # weighted by power, put the centre within a hertz (it tracks drift).
     ks = np.arange(-k_max, k_max + 1)
+    strong = ks[p >= p.max() * 1e-2]
+    peaks = [peak_near(freqs, db, center + k * spacing, 15.0) for k in strong]
+    center = float(np.average([f - k * spacing for k, (f, _) in zip(strong, peaks)],
+                              weights=[10.0 ** (lvl / 10.0) for _, lvl in peaks]))
+    p = p / p.sum()
     betas = np.arange(0.0, 10.0, 0.005)
     model = jv(ks[None, :], betas[:, None]) ** 2
     err = ((model - p[None, :]) ** 2).sum(axis=1)
@@ -554,7 +567,7 @@ def _cw(mode, bb, fs, window, freqs, db, cw_text, cw_wpm):
     checks = [
         _check_line_snr(freqs, db, fc, lc, [(fc - 6e3, fc + 6e3)]),
         CheckResult("carrier_offset", abs(fc) <= THRESHOLDS["cw_offset_hz"], round(fc, 1),
-                    f"within {THRESHOLDS['cw_offset_hz']:g} Hz of the TUNE carrier (the dial)", "Hz"),
+                    f"within {THRESHOLDS['cw_offset_hz']:g} Hz of the dial", "Hz"),
         CheckResult("dit_length", abs(dit_s - want_dit) / want_dit <= THRESHOLDS["cw_dit_tol"],
                     round(dit_s * 1000, 1),
                     f"{want_dit * 1000:.0f} ms +/- {THRESHOLDS['cw_dit_tol'] * 100:g} %", "ms"),
@@ -571,8 +584,9 @@ def _cw(mode, bb, fs, window, freqs, db, cw_text, cw_wpm):
 def analyze_mode(mode, iq, spec, ref, tone_hz=1000.0, cw_text=None, cw_wpm=15.0,
                  nominal_s=None):
     """One mode's checks, measured on its keyed segment relative to its own
-    strongest line (the TUNE Reference is only where to look: the crystals drift
-    ~0.1 ppm in minutes)."""
+    strongest line. `ref` is only where to look (+/-300 Hz): the crystals drift
+    as they warm, so the caller moves it along with track() after each mode.
+    CW alone is judged against it: its carrier is the dial."""
     mode = mode.upper()
     fs = spec.sample_rate_hz
     bb = to_baseband(iq, spec, offset_hz=ref.carrier_offset_hz)
@@ -582,17 +596,23 @@ def analyze_mode(mode, iq, spec, ref, tone_hz=1000.0, cw_text=None, cw_wpm=15.0,
         return _no_signal(mode)
     freqs, db = spectrum_db(bb[window[0]:window[1]], fs)
     notes = []
+    # dial: where the main line sits relative to the dial frequency, so
+    # main_f - dial is this mode's own measurement of the dial.
+    dial = 0.0
     if mode in UPPER_SSB or mode in LOWER_SSB:
         checks, main_f, main_db = _ssb(mode, freqs, db, tone_hz, upper=mode in UPPER_SSB)
+        dial = tone_hz if mode in UPPER_SSB else -tone_hz
         excl = 5e3
     elif mode == "RTTY":
-        checks, main_f, main_db = _rtty(freqs, db)
+        checks, main_f, main_db = _rtty(freqs, db, RTTY_MARK_HZ)
+        dial = RTTY_MARK_HZ
         excl = 5e3
     elif mode in ("AM", "SAM"):
         checks, main_f, main_db = _am(freqs, db, tone_hz)
         excl = 5e3
     elif mode == "DSB":
         checks, main_f, main_db = _dsb(freqs, db, tone_hz)
+        dial = tone_hz
         excl = 5e3
     elif mode in FM_MODES:
         checks, main_f, main_db, notes, _ = _fm(mode, freqs, db, tone_hz, ref)
@@ -616,7 +636,16 @@ def analyze_mode(mode, iq, spec, ref, tone_hz=1000.0, cw_text=None, cw_wpm=15.0,
             notes.insert(0, "no signal received above the noise")
     elif note:
         notes.append(note)
-    return ModeResult(mode, _status(checks), checks, notes)
+    dial_offset = round(float(ref.carrier_offset_hz + main_f - dial), 1) if checks[0].passed else None
+    return ModeResult(mode, _status(checks), checks, notes, dial_offset)
+
+
+def track(ref, result):
+    """Move the reference to where a passing mode measured the dial, so the
+    next mode looks where the drifting crystals are now, not where TUNE found
+    them minutes ago. A failing mode (a wrong sideband, say) leaves it alone."""
+    if result.status == "pass" and result.dial_offset_hz is not None:
+        ref.carrier_offset_hz = result.dial_offset_hz
 
 
 def fm_peak_deviation(result):
@@ -706,7 +735,7 @@ def exit_code(results):
 def result_from_dict(d):
     return ModeResult(d["mode"], d["status"],
                       [CheckResult(**c) for c in d.get("checks", [])],
-                      list(d.get("notes", [])))
+                      list(d.get("notes", [])), d.get("dial_offset_hz"))
 
 
 def _json_default(o):
@@ -766,6 +795,7 @@ def _fmt_measured(c):
 META_LABELS = [
     ("freq_mhz", "Frequency (MHz)"),
     ("ppm", "Combined crystal error (ppm)"),
+    ("drift_hz", "Drift over the run (Hz)"),
     ("power", "Drive (%)"),
     ("rtl_gain_db", "RTL-SDR gain (dB)"),
     ("callsign", "Callsign"),
@@ -819,11 +849,16 @@ def _check_measured(result, name):
 
 def build_meta(config, entries, results):
     """The report's run meta from run.json's config and mode entries: the
-    TUNE-measured ppm, and the drive and RTL-SDR gain each mode ran at."""
+    TUNE-measured ppm, how far the crystals drifted from the first passing
+    mode to the last, and the drive and RTL-SDR gain each mode ran at.
+    `results` must be in the order the run keyed them."""
     meta = {k: v for k, v in config.items() if k not in ("tone_hz", "cw_text", "cw_wpm")}
     tune = next((r for r in results if r.mode == "TUNE"), None)
     if tune is not None and _check_measured(tune, "frequency") is not None:
         meta["ppm"] = _check_measured(tune, "frequency")
+    dials = [r.dial_offset_hz for r in results if r.status == "pass" and r.dial_offset_hz is not None]
+    if len(dials) >= 2:
+        meta["drift_hz"] = round(dials[-1] - dials[0], 1)
     for key in ("power", "rtl_gain_db"):
         per_mode = {e["mode"]: e[key] for e in entries if key in e}
         if per_mode:
@@ -840,9 +875,10 @@ def reanalyze(out_dir):
     config = run.get("config", {})
     tol = float(config.get("freq_tol_ppm", 25.0))
     entries = run["modes"]
-    # TUNE first (it is every mode's reference), FM before FMN (the ratio).
-    order = sorted(range(len(entries)),
-                   key=lambda i: {"TUNE": 0, "FM": 1}.get(entries[i]["mode"].upper(), 2))
+    # TUNE first (every mode's starting reference), then the order the run
+    # keyed them in: the reference follows the drift mode by mode, and FM
+    # comes before FMN (the ratio).
+    order = sorted(range(len(entries)), key=lambda i: entries[i]["mode"].upper() != "TUNE")
     results = [None] * len(entries)
     ref = Reference(0.0)
     for i in order:
@@ -863,9 +899,10 @@ def reanalyze(out_dir):
                                   cw_text=e.get("cw_text", config.get("cw_text")),
                                   cw_wpm=float(e.get("cw_wpm", config.get("cw_wpm", 15.0))),
                                   nominal_s=nominal)
-            offset = ref.carrier_offset_hz
             if mode == "FM":
                 ref.fm_peak_dev_hz = fm_peak_deviation(result)
+            track(ref, result)
+            offset = ref.carrier_offset_hz
         if clip > 0.001:
             result.notes.append(f"RTL-SDR clipped {clip * 100:.2f} % of samples")
         result.notes = list(e.get("notes", [])) + result.notes

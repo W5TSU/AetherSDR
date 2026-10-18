@@ -779,6 +779,7 @@ class _Run:
                                     cw_wpm=cfg.cw_wpm, nominal_s=cap.nominal)
             if mode == "FM":
                 self.ref.fm_peak_dev_hz = A.fm_peak_deviation(result)
+            A.track(self.ref, result)        # follow the crystals' drift, as --reanalyze does
         # The same note order as --reanalyze builds, so both reports match.
         if cap.clip > CLIP_LIMIT:
             result.notes.append(f"RTL-SDR clipped {cap.clip * 100:.2f} % of samples")

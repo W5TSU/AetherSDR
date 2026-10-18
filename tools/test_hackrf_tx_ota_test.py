@@ -179,8 +179,9 @@ class FakeRtl:
     """
 
     def __init__(self, radio, clock, snr=lambda power: 60.0, signal=True,
-                 busy_modes=(), fail_preflight=False, interrupt_mode=None):
+                 busy_modes=(), fail_preflight=False, interrupt_mode=None, drift_hz_per_s=0.0):
         self.radio, self.clock = radio, clock
+        self.drift_hz_per_s, self.t_first = drift_hz_per_s, None
         self.snr, self.signal = snr, signal
         self.busy_modes, self.fail_preflight = set(busy_modes), fail_preflight
         self.interrupt_mode = interrupt_mode
@@ -197,18 +198,21 @@ class FakeRtl:
         if self.interrupt_mode and mode == self.interrupt_mode and seconds >= 1.0:
             raise KeyboardInterrupt
         start = self.clock.t
+        if self.t_first is None:
+            self.t_first = start
+        drift = self.drift_hz_per_s * (start - self.t_first)
         start_calls = len(self.radio.calls)
         spec = A.CaptureSpec(rate, center_hz, self.radio.freq_hz)
 
         def write():
-            iq = self._synth(spec, seconds, start, self.radio.calls[start_calls:], mode)
+            iq = self._synth(spec, seconds, start, self.radio.calls[start_calls:], mode, drift)
             F.write_cu8(path, iq)
         return FakeProc(write)
 
     def wait(self, proc, timeout=None):
         proc.wait(timeout)
 
-    def _synth(self, spec, seconds, start, calls, mode):
+    def _synth(self, spec, seconds, start, calls, mode, drift=0.0):
         busy = mode in self.busy_modes and seconds < 1.0
         intervals, cw = [], []
         on_at = None
@@ -243,7 +247,7 @@ class FakeRtl:
 
         extra = (lambda t: 10 ** (-20 / 20) * np.exp(2j * np.pi * 8e3 * t)) if busy else None
         return F.synth(signal, spec=spec, total_s=seconds, key_start_s=0.0, key_s=seconds,
-                       snr_db=self.snr(self.radio.rf), extra=extra)
+                       snr_db=self.snr(self.radio.rf), extra=extra, carrier_offset_hz=drift)
 
 
 def make_run(tmp, extra_args=(), modes="TUNE,USB", **radio_kw):
@@ -384,6 +388,28 @@ def test_busy_channel_skips_after_five_rechecks():
         statuses = {r["mode"]: r["status"] for r in read_report(d)["results"]}
         check(statuses == {"TUNE": "pass", "USB": "pass", "LSB": "skip"}, statuses)
         check(code == 0, f"exit {code}")
+
+
+def test_cw_judged_against_the_drifting_dial():
+    # Cold radios drift ~35 Hz a minute; here 1 Hz/s, 20 s per mode, so CW
+    # lands ~60 Hz from TUNE. Each passing mode moves the reference along.
+    with tempfile.TemporaryDirectory() as d:
+        cfg, radio, clock = make_run(d, modes="TUNE,USB,LSB,CW", mode_advance_s=20.0)
+        code = H.run(cfg, radio, FakeRtl(radio, clock, drift_hz_per_s=1.0), clock=clock)
+        rep = read_report(d)
+        statuses = {r["mode"]: r["status"] for r in rep["results"]}
+        check(all(statuses[m] == "pass" for m in ("TUNE", "USB", "LSB")), statuses)
+        # (The fake keys CW with hard edges, so its key-click width fails.)
+        cw = next(r for r in rep["results"] if r["mode"] == "CW")
+        offset = next(c for c in cw["checks"] if c["name"] == "carrier_offset")
+        check(offset["passed"] and abs(offset["measured"]) < 30.0,
+              f"CW offset {offset['measured']} Hz from the tracked dial")
+        check(rep["meta"]["drift_hz"] > 40.0, f"drift {rep['meta'].get('drift_hz')}")  # TUNE to LSB
+        with open(os.path.join(d, "report.md")) as f:
+            before = f.read()
+        A.reanalyze(d)
+        with open(os.path.join(d, "report.md")) as f:
+            check(f.read() == before, "--reanalyze judged the drifting run differently")
 
 
 def _id_runs(radio):

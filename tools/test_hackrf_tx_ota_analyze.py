@@ -224,10 +224,11 @@ def test_data_mode_without_audio_fails():
 CW_TEXT = "VVV DE W5TSU"
 
 
-def _cw_capture(edge_s, jitter_s=0.005):
+def _cw_capture(edge_s, jitter_s=0.005, carrier_offset_hz=0.0):
     elements = A.morse_elements(CW_TEXT, 15.0)
     sig = F.keyed(elements, edge_s=edge_s, jitter_s=jitter_s)
-    return F.synth(sig, total_s=sig.duration_s + 1.6, key_start_s=0.8, key_s=sig.duration_s + 0.2)
+    return F.synth(sig, total_s=sig.duration_s + 1.6, key_start_s=0.8, key_s=sig.duration_s + 0.2,
+                   carrier_offset_hz=carrier_offset_hz)
 
 
 def test_morse_elements_paris_timing():
@@ -331,25 +332,30 @@ def test_reports_round_trip():
 def test_reanalyze_from_run_json():
     with tempfile.TemporaryDirectory() as d:
         modes = []
-        for mode, sig in (("TUNE", F.carrier()), ("USB", F.tone(1000.0))):
+        # Drifting as they warm: TUNE at -1300 Hz, USB at -1255, CW at -1245.
+        for mode, iq in (("TUNE", F.synth(F.carrier(), carrier_offset_hz=-1300.0)),
+                         ("USB", F.synth(F.tone(1000.0), carrier_offset_hz=-1255.0)),
+                         ("CW", _cw_capture(0.010, carrier_offset_hz=-1245.0))):
             os.makedirs(os.path.join(d, mode))
             rel = os.path.join(mode, "capture.cu8")
-            F.write_cu8(os.path.join(d, rel), F.synth(sig, carrier_offset_hz=-1300.0))
+            F.write_cu8(os.path.join(d, rel), iq)
             modes.append({"mode": mode, "capture": rel, "spec": _spec_dict(F.SPEC),
-                          "nominal_s": [0.5, 1.5], "power": 30, "rtl_gain_db": 20.7})
+                          "power": 30, "rtl_gain_db": 20.7})
+        modes[-1].update(cw_text=CW_TEXT, cw_wpm=15.0)
         modes.append({"mode": "FM", "status": "skip", "notes": ["not run"]})
         run = {"config": {"freq_mhz": 915.5, "freq_tol_ppm": 25, "git_commit": "abc1234"},
                "modes": modes}
         with open(os.path.join(d, "run.json"), "w") as f:
             json.dump(run, f)
         results = A.reanalyze(d)
-        check([r.status for r in results] == ["pass", "pass", "skip"],
+        check([r.status for r in results] == ["pass", "pass", "pass", "skip"],
               f"statuses {[(r.mode, r.status, r.checks) for r in results]}")
         check(os.path.exists(os.path.join(d, "report.md")), "no report.md")
         check(os.path.exists(os.path.join(d, "USB", "audio.wav")), "no USB audio.wav")
         with open(os.path.join(d, "report.md")) as f:
             md = f.read()
         check("-1.4" in md, f"ppm missing from report: {md}")
+        check("Drift over the run (Hz): 55" in md, f"drift missing from report: {md}")
 
 
 def test_artifacts_without_matplotlib():
@@ -390,6 +396,40 @@ def test_cli_without_arguments_points_to_the_test():
             code = e.code
     check(code == 2, f"exit {code}")
     check("hackrf_tx_ota_test.py" in out.getvalue() and "--callsign" in out.getvalue(), out.getvalue())
+
+
+def test_reference_follows_drift():
+    # The two crystals drift while they warm: 35 Hz a minute was measured.
+    # TUNE at 0 Hz, USB a little later at +45 Hz, CW later still at +55 Hz.
+    tune, ref = A.measure_tune(F.synth(F.carrier()), F.SPEC, 25.0)
+    close(tune.dial_offset_hz, 0.0, 2.0, "TUNE dial")
+    usb = A.analyze_mode("USB", F.synth(F.tone(1000.0), carrier_offset_hz=45.0), F.SPEC, ref)
+    check(usb.status == "pass", f"USB {usb.status}: {usb.checks}")
+    close(usb.dial_offset_hz, 45.0, 2.0, "USB dial")
+    cw_iq = _cw_capture(0.010, carrier_offset_hz=55.0)
+    stale = A.analyze_mode("CW", cw_iq, F.SPEC, A.Reference(ref.carrier_offset_hz), cw_text=CW_TEXT)
+    check(not checks(stale)["carrier_offset"].passed, "55 Hz from a stale TUNE passed")
+    A.track(ref, usb)
+    close(ref.carrier_offset_hz, 45.0, 2.0, "tracked reference")
+    cw = A.analyze_mode("CW", cw_iq, F.SPEC, ref, cw_text=CW_TEXT)
+    close(checks(cw)["carrier_offset"].measured, 10.0, 3.0, "CW offset from the tracked dial")
+    check(cw.status == "pass", f"CW {cw.status}: {cw.checks}")
+    # A failing mode never moves the reference: a USB signal judged as LSB.
+    wrong = A.analyze_mode("LSB", F.synth(F.tone(1000.0), carrier_offset_hz=600.0), F.SPEC, ref)
+    check(wrong.status == "fail", f"LSB {wrong.status}")
+    before = ref.carrier_offset_hz
+    A.track(ref, wrong)
+    check(ref.carrier_offset_hz == before, "a failed mode moved the reference")
+    # Every mode reports a dial, from its own signal.
+    for mode, sig, off in (("LSB", F.tone(-1000.0), 0.0), ("AM", F.am(0.5), 0.0),
+                           ("DSB", F.dsb(), 0.0), ("FM", F.fm(2500.0), 0.0),
+                           ("DIGU", F.tone(1500.0), 0.0)):
+        r = A.analyze_mode(mode, F.synth(sig, carrier_offset_hz=20.0), F.SPEC, ref0(),
+                           tone_hz=1500.0 if mode == "DIGU" else 1000.0)
+        close(r.dial_offset_hz, 20.0, 3.0, f"{mode} dial")
+    rtty = A.analyze_mode("RTTY", F.synth(F.fsk_halves(2125.0, 2295.0), key_s=2.0, total_s=3.0,
+                                          carrier_offset_hz=20.0), F.SPEC, ref0())
+    close(rtty.dial_offset_hz, 20.0, 3.0, "RTTY dial")
 
 
 def main():
