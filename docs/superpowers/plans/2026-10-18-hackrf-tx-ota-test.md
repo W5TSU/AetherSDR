@@ -253,6 +253,45 @@ SMArt v5, over the air across the desk, at 915.5 MHz.
   is keyed. A changed Tune Power setting that is never keyed reverts on
   reconnect.
 
+#### Defect root cause and fix (commit 1a35baff)
+
+The HackRF Pro firmware (2026.01.3) applies a frequency change at the next
+stream start, in that stream's direction, and skips the apply when the
+frequency hasn't changed. RX left the device holding the TX frequency,
+applied for receive. That was reproduced with libhackrf alone. `txLoHz()`
+commands TX 1 Hz away in that case. After the fix, TUNE and USB at 30 %
+reach the NESDR (gain 20.7 dB) at about −3 dBFS: 73 dB above the noise in a
+10 Hz bin, and 20–30 Hz wide at −20 dB.
+
+#### Findings after the fix (2026-10-18 14:00–14:30)
+
+All at 30 % drive, measured relative to the TUNE carrier.
+
+- **USB and LSB:** the opposite sideband is −48 dBc and the carrier −33 dBc.
+- **AM:** at a −12 dB tone the depth is about 25 %. At −6 dB it is about
+  50 %, so AM and SAM use −6 dB like the other modes. The 2 kHz harmonics are
+  35 dB below the sidebands.
+- **DSB:** the carrier is −27 dBc.
+- **FM:** a Bessel fit gives β ≈ 2.5 (2.5 kHz). FMN gives β ≈ 1.25, a ratio
+  of 0.5.
+- **CW:** set up the private profile with `KeyboardShortcutsEnabled True` and
+  `Shortcut_cwkey F9`, then send `keyevent press|release cwkey` inside
+  `key ptt on`. Five 100 ms elements came out as 99.7–100.4 ms pulses and
+  100.0–100.4 ms gaps. The carrier lands on the dial frequency.
+- **Data modes ignore the test tone:** DIGU, DIGL, RTTY and DFM send a bare
+  carrier, because a non-Flex backend's data-mode audio comes only from TCI.
+  A TCI client fixes this: send `trx:0,true,tci;` and answer TX_CHRONO with
+  TX_AUDIO frames (float32 stereo, 48 kHz). With that, DIGU puts a 1500 Hz
+  tone at +1486 Hz, with the opposite sideband −49 dBc and the carrier
+  −27 dBc. Seed `TciServer {"enabled":true,"port":50001}` in the private
+  profile.
+- **Drift:** the combined HackRF and NESDR offset drifted −1330 → −1180 Hz
+  over about 20 minutes as the radios warmed. Each mode must find its own
+  reference line, and use TUNE only as a ±300 Hz guide.
+- **Fresh profile defaults:** the slice starts at 100 MHz WFM, with RF Power
+  100 % (amp on). The harness must set the mode, frequency and both powers
+  before any key, and refuse to key if RF Power reads above the cap.
+
 ---
 
 ### Task 2: Capture handling and the core measurements
