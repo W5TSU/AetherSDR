@@ -4263,6 +4263,20 @@ target_include_directories(cwx_drain_watch_test PRIVATE src)
 target_link_libraries(cwx_drain_watch_test PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME cwx_drain_watch_test COMMAND cwx_drain_watch_test)
 
+# Socket-free CWX command bytes and macro status parsing (FlexLib 4.3.16).
+add_executable(cwx_quote_test
+    tests/cwx_quote_test.cpp
+    src/models/CwxModel.cpp
+    src/models/CwxModel.h
+    src/core/CommandParser.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(cwx_quote_test PRIVATE src)
+target_link_libraries(cwx_quote_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME cwx_quote_test COMMAND cwx_quote_test)
+
 add_executable(cwx_panel_test
     tests/cwx_panel_test.cpp
     src/gui/CwxPanel.cpp
@@ -6604,6 +6618,7 @@ endif()
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    cwx_quote_test
     hl2_tune_memory_test
     hl2_tune_tail_test
     hl2_discovery_logging_test
@@ -6683,6 +6698,7 @@ set(AETHER_SETTINGS_CONSUMERS
     tnc_terminal_test
     cwx_speed_modifier_test
     cwx_drain_watch_test
+    cwx_quote_test
     cwx_panel_test
     meter_model_test
     health_applet_test

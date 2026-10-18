@@ -10,6 +10,15 @@ namespace {
 // entry point (user setSpeed and +/- modifier expansion) — one definition so
 // the two clamp sites can't drift. (#3949 review)
 inline int clampWpm(int wpm) { return qBound(5, wpm, 100); }
+
+// FlexLib 4.3.16 CWX.cs uses these substitutions without a firmware gate:
+// spaces are DEL and embedded quotes are RS inside the quoted argument.
+QString encodeCwxText(QString text)
+{
+    text.replace(' ', QChar(0x7f));
+    text.replace('"', QChar(0x1e));
+    return text;
+}
 }
 
 CwxModel::CwxModel(QObject* parent)
@@ -117,8 +126,7 @@ void CwxModel::emitExpandedSend(const QVector<SpeedSegment>& segs)
             ++m_pendingWpmEchoes;   // swallow this transient's echo (#272)
             cmdWpm = seg.wpm;
         }
-        QString encoded = seg.text;
-        encoded.replace(' ', QChar(0x7f));
+        const QString encoded = encodeCwxText(seg.text);
         if (!encoded.isEmpty()) {
             const QString cmd =
                 QString("cwx send \"%1\" %2").arg(encoded).arg(m_nextBlock++);
@@ -163,8 +171,7 @@ void CwxModel::sendChar(const QString& ch)
         qCWarning(lcCw) << "CWX send refused: TUNE is active (#5422)";
         return;
     }
-    QString encoded = ch;
-    encoded.replace(' ', QChar(0x7f));
+    const QString encoded = encodeCwxText(ch);
     // Live-mode chars go via the reply path (not fire-and-forget commandReady)
     // so each char's radio_index advances the drain watch. Without this a
     // live-typing-only session arms no watch and the ~60 s stuck-TX survives,
@@ -218,8 +225,7 @@ void CwxModel::saveMacro(int idx, const QString& text)
     QString plain;
     for (const auto& seg : expandSpeedModifiers(text, m_speed, m_speedStep))
         plain += seg.text;
-    QString encoded = plain;
-    encoded.replace(' ', QChar(0x7f));
+    const QString encoded = encodeCwxText(plain);
     emit commandReady(QString("cwx macro save %1 \"%2\"").arg(idx + 1).arg(encoded));
 }
 
@@ -420,11 +426,12 @@ void CwxModel::applyStatus(const QMap<QString, QString>& kvs)
             bool ok;
             int idx = key.mid(5).toInt(&ok);
             if (ok && idx >= 1 && idx <= 12) {
-                // Decode: strip quotes, \u007f → space, * → =
+                // Decode the quoted macro field using FlexLib CWX.cs substitutions.
                 QString decoded = val;
                 if (decoded.startsWith('"') && decoded.endsWith('"'))
                     decoded = decoded.mid(1, decoded.length() - 2);
                 decoded.replace(QChar(0x7f), ' ');
+                decoded.replace(QChar(0x1e), '"');
                 decoded.replace('*', '=');
                 m_macros[idx - 1] = decoded;
                 emit macroChanged(idx - 1, decoded);
