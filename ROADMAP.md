@@ -110,11 +110,15 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     leaves WDSP 12 dB hot.
 - **HackRF — on-air check of the new transmit modes** — v26.10.5 added SSB,
   digital, AM and DSB transmit, verified in software: sideband, carrier
-  and image measurements in `hackrf_tx_modes_test`. Not yet checked on the
-  air. The planned test uses the HackRF at minimum power into a dummy load
-  on 10 m, with a Hermes-Lite 2 listening, mode by mode. It also has to
-  catch a wrong-sideband transmit, the mistake the HL2 once shipped.
-  Receive was verified on hardware against a UHF TV pilot carrier.
+  and image measurements in `hackrf_tx_modes_test`. The on-air check is now
+  a test anyone can run: `tools/hackrf_tx_ota_test.py`
+  ([guide](docs/HACKRF-TX-TEST.md)) keys all 14 transmit modes at 915.5 MHz
+  with the amp off and judges each on an RTL-SDR receiver: sideband, carrier
+  suppression, AM depth, FM deviation, CW decode and timing. It names a
+  wrong-sideband transmit outright, the mistake the HL2 once shipped. Its
+  analysis has offline tests in ctest (`hackrf_tx_ota_analyze`,
+  `hackrf_tx_ota_safety`). Receive was verified on hardware against a UHF TV
+  pilot carrier.
   - **2026-10-13, first attempt (HackRF Pro, 28.400 MHz, dummy load):** no
     signal seen on the receiver in any mode, TUNE or MOX, up to RF power 96
     and TUNE power 56. The HL2 was not on the network (its Ethernet port
@@ -127,6 +131,14 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     same frequency and gain as a reference outside the app, then the HL2
     test as planned. MOX in USB/LSB/DSB with no microphone audio transmits
     nothing by design. Use TUNE or a tone for these checks.
+  - **2026-10-18, building the test (HackRF Pro, 915.5 MHz, over the air):**
+    found the likely reason the 10-13 attempt heard nothing. HackRF Pro
+    firmware applies a frequency change at the next stream start, in that
+    stream's direction, and skips the apply when the frequency is unchanged. Receive had left the
+    device holding the TX frequency, applied for receive, so transmit came
+    out about 70 dB down and in bursts. Fixed in 1a35baff: transmit is
+    commanded 1 Hz off when the device already holds the frequency. After
+    the fix, TUNE at 30 % drive reaches the RTL-SDR 73 dB above the noise.
 - **HackRF — multi-slice receive** — the one goal of the HackRF design not
   yet shipped: several independent slices across the HackRF's wide capture,
   each with its own DDC. The backend is single-slice today. Design:

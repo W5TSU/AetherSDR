@@ -23,7 +23,12 @@ import time
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import numpy as np  # noqa: E402
+try:
+    import numpy as np
+    import scipy  # noqa: F401
+except ImportError:
+    print("SKIP: numpy/scipy not installed")
+    sys.exit(77)
 
 import hackrf_tx_ota_analyze as A  # noqa: E402
 import hackrf_tx_ota_fixtures as F  # noqa: E402
