@@ -6,6 +6,7 @@ signal for a mode and deliberately wrong ones, so each check is shown to pass
 what it should and fail what it should before it ever judges a HackRF.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -154,6 +155,8 @@ def test_usb_passes_lsb_fails_as_usb():
     c = checks(lsb)
     check(not c["opposite_sideband"].passed, f"USB signal passed as LSB: {c['opposite_sideband']}")
     check(lsb.status == "fail", f"LSB status {lsb.status}")
+    check(any("other sideband" in n for n in lsb.notes), f"wrong sideband not named: {lsb.notes}")
+    check(not any("no signal" in n or "spurious" in n for n in lsb.notes), f"notes {lsb.notes}")
 
 
 def test_ssb_carrier_leak_fails():
@@ -288,6 +291,81 @@ def test_demod_audio_recovers_the_tone():
     usb = A.demod_audio("USB", A.to_baseband(F.synth(F.tone(-1000.0)), F.SPEC), F.FS)
     lsb = A.demod_audio("LSB", A.to_baseband(F.synth(F.tone(-1000.0)), F.SPEC), F.FS)
     check(np.std(usb) < 0.1 * np.std(lsb), "USB demod passed an LSB tone")
+
+
+# ── Task 4: reports, artifacts, re-analysis ────────────────────────────────
+
+def _spec_dict(spec):
+    return {"sample_rate_hz": spec.sample_rate_hz, "rtl_center_hz": spec.rtl_center_hz,
+            "tx_freq_hz": spec.tx_freq_hz}
+
+
+def test_reports_round_trip():
+    ok = A.ModeResult("USB", "pass", [A.CheckResult("signal", True, 60.0, ">= 20 dB", "dB")])
+    bad = A.ModeResult("LSB", "fail", [
+        A.CheckResult("signal", True, 58.0, ">= 20 dB", "dB"),
+        A.CheckResult("opposite_sideband", False, 12.3, ">= 25 dB below the tone", "dB"),
+    ], ["tone on the wrong side"])
+    meta = {"freq_mhz": 915.5, "ppm": -1.4, "git_commit": "abc1234"}
+    with tempfile.TemporaryDirectory() as d:
+        A.write_reports(d, meta, [ok, bad])
+        with open(os.path.join(d, "report.json")) as f:
+            rep = json.load(f)
+        check([r["status"] for r in rep["results"]] == ["pass", "fail"], f"statuses {rep}")
+        check(rep["exit_code"] == 1, f"exit code {rep['exit_code']}")
+        check(A.exit_code([A.result_from_dict(r) for r in rep["results"]]) == 1, "round trip")
+        with open(os.path.join(d, "report.md")) as f:
+            md = f.read()
+        check("| USB | pass |" in md, md)
+        check("opposite_sideband" in md and "12.3" in md, md)
+        check("915.5" in md and "abc1234" in md, md)
+    check(A.exit_code([ok, A.ModeResult("FM", "skip")]) == 0, "skip is not a failure")
+    check(A.exit_code([bad, A.ModeResult("FM", "abort")]) == 2, "abort wins")
+
+
+def test_reanalyze_from_run_json():
+    with tempfile.TemporaryDirectory() as d:
+        modes = []
+        for mode, sig in (("TUNE", F.carrier()), ("USB", F.tone(1000.0))):
+            os.makedirs(os.path.join(d, mode))
+            rel = os.path.join(mode, "capture.cu8")
+            F.write_cu8(os.path.join(d, rel), F.synth(sig, carrier_offset_hz=-1300.0))
+            modes.append({"mode": mode, "capture": rel, "spec": _spec_dict(F.SPEC),
+                          "nominal_s": [0.5, 1.5], "power": 30, "rtl_gain_db": 20.7})
+        modes.append({"mode": "FM", "status": "skip", "notes": ["not run"]})
+        run = {"config": {"freq_mhz": 915.5, "freq_tol_ppm": 25, "git_commit": "abc1234"},
+               "modes": modes}
+        with open(os.path.join(d, "run.json"), "w") as f:
+            json.dump(run, f)
+        results = A.reanalyze(d)
+        check([r.status for r in results] == ["pass", "pass", "skip"],
+              f"statuses {[(r.mode, r.status, r.checks) for r in results]}")
+        check(os.path.exists(os.path.join(d, "report.md")), "no report.md")
+        check(os.path.exists(os.path.join(d, "USB", "audio.wav")), "no USB audio.wav")
+        with open(os.path.join(d, "report.md")) as f:
+            md = f.read()
+        check("-1.4" in md, f"ppm missing from report: {md}")
+
+
+def test_artifacts_without_matplotlib():
+    saved = {k: v for k, v in sys.modules.items() if k == "matplotlib" or k.startswith("matplotlib.")}
+    for k in saved:
+        del sys.modules[k]
+    sys.modules["matplotlib"] = None
+    try:
+        iq = F.synth(F.tone(1000.0))
+        result = A.ModeResult("USB", "pass")
+        with tempfile.TemporaryDirectory() as d:
+            A.write_mode_artifacts(d, "USB", A.to_baseband(iq, F.SPEC), F.FS, result)
+            check(os.path.exists(os.path.join(d, "result.json")), "no result.json")
+            check(os.path.exists(os.path.join(d, "audio.wav")), "no audio.wav")
+            check(not os.path.exists(os.path.join(d, "spectrum.png")), "spectrum.png written")
+            with open(os.path.join(d, "result.json")) as f:
+                notes = json.load(f)["notes"]
+            check(any("matplotlib" in n for n in notes), f"no note: {notes}")
+    finally:
+        del sys.modules["matplotlib"]
+        sys.modules.update(saved)
 
 
 def main():

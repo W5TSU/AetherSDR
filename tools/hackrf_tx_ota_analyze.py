@@ -11,7 +11,11 @@ Every level is relative dB. An RTL-SDR is not a calibrated receiver, so
 nothing here claims watts or dBm.
 """
 
-from dataclasses import dataclass, field
+import argparse
+import json
+import os
+import sys
+from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 
 import numpy as np
@@ -600,10 +604,18 @@ def analyze_mode(mode, iq, spec, ref, tone_hz=1000.0, cw_text=None, cw_wpm=15.0,
         raise ValueError(f"no checks for mode {mode}")
     spur, note = _spurious(freqs, db, main_f, main_db, excl)
     checks.append(spur)
-    if note:
-        notes.append(note)
     if not checks[0].passed:
-        notes.insert(0, "no signal received above the noise")
+        # Spur levels relative to the noise floor mean nothing; say what is wrong.
+        opposite = {c.name: c for c in checks}.get("opposite_sideband")
+        if (opposite is not None and opposite.measured is not None
+                and opposite.measured <= -THRESHOLDS["ssb_opposite_db"]):
+            got = "LSB" if mode in UPPER_SSB or mode == "RTTY" else "USB"
+            notes.insert(0, f"the tone is on the other sideband: the radio sent {got}, "
+                            f"{-opposite.measured:.1f} dB above the wanted side")
+        else:
+            notes.insert(0, "no signal received above the noise")
+    elif note:
+        notes.append(note)
     return ModeResult(mode, _status(checks), checks, notes)
 
 
@@ -674,3 +686,206 @@ def demod_audio(mode, bb, fs):
     else:
         raise ValueError(f"no demodulator for mode {mode}")
     return np.clip(audio, -1.0, 1.0).astype(np.float32)
+
+
+# ── Reports, artifacts, re-analysis ────────────────────────────────────────
+
+SPECTRUM_SPAN_HZ = 25e3
+
+
+def exit_code(results):
+    """0 every mode passed (skips allowed), 1 a check failed, 2 an abort."""
+    statuses = {r.status for r in results}
+    if "abort" in statuses:
+        return 2
+    if "fail" in statuses:
+        return 1
+    return 0
+
+
+def result_from_dict(d):
+    return ModeResult(d["mode"], d["status"],
+                      [CheckResult(**c) for c in d.get("checks", [])],
+                      list(d.get("notes", [])))
+
+
+def _json_default(o):
+    if isinstance(o, np.generic):        # np.bool_ / np.float64 from the checks
+        return o.item()
+    raise TypeError(f"{type(o).__name__} is not JSON serialisable")
+
+
+def _write_json(path, obj):
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=2, default=_json_default)
+        f.write("\n")
+
+
+def _plot_spectrum(path, mode, freqs, db, result):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    sel = np.abs(freqs) <= SPECTRUM_SPAN_HZ
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(freqs[sel] / 1e3, db[sel], linewidth=0.6)
+    ax.set_xlabel("kHz from the dial frequency")
+    ax.set_ylabel("dB (relative, 10 Hz RBW)")
+    ax.set_title(f"{mode}: {result.status}")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=100)
+    plt.close(fig)
+
+
+def write_mode_artifacts(mode_dir, mode, bb, fs, result):
+    """result.json, audio.wav (int16, 48 kHz) and, when matplotlib imports,
+    spectrum.png (+/-25 kHz, the keyed segment) into mode_dir. bb has the
+    mode's reference frequency at 0 Hz."""
+    from scipy.io import wavfile
+    os.makedirs(mode_dir, exist_ok=True)
+    window = keyed_window(bb, fs) or (0, bb.size)
+    seg = bb[window[0]:window[1]]
+    demod_mode = "CW" if mode.upper() == "TUNE" else mode
+    audio = demod_audio(demod_mode, bb, fs)
+    wavfile.write(os.path.join(mode_dir, "audio.wav"), int(AUDIO_FS),
+                  np.round(audio * 32767.0).astype(np.int16))
+    try:
+        freqs, db = spectrum_db(seg, fs)
+        _plot_spectrum(os.path.join(mode_dir, "spectrum.png"), mode, freqs, db, result)
+    except ImportError:
+        result.notes.append("spectrum.png not written: matplotlib is not installed")
+    _write_json(os.path.join(mode_dir, "result.json"), asdict(result))
+
+
+def _fmt_measured(c):
+    if c.measured is None:
+        return "nothing measured"
+    return f"{c.measured:g} {c.unit}".rstrip()
+
+
+META_LABELS = [
+    ("freq_mhz", "Frequency (MHz)"),
+    ("ppm", "Combined crystal error (ppm)"),
+    ("power", "Drive (%)"),
+    ("rtl_gain_db", "RTL-SDR gain (dB)"),
+    ("callsign", "Callsign"),
+    ("git_commit", "AetherSDR commit"),
+]
+
+
+def _fmt_meta_value(v):
+    if isinstance(v, dict):
+        return ", ".join(f"{k} {v[k]:g}" if isinstance(v[k], (int, float)) else f"{k} {v[k]}"
+                         for k in v)
+    return str(v)
+
+
+def write_reports(out_dir, run_meta, results):
+    """report.json and report.md: one table row per mode, then the run meta."""
+    code = exit_code(results)
+    _write_json(os.path.join(out_dir, "report.json"),
+                {"meta": run_meta, "results": [asdict(r) for r in results], "exit_code": code})
+    lines = ["# HackRF over-the-air TX test", "",
+             "| Mode | Status | Failed checks (measured vs limit) |",
+             "|---|---|---|"]
+    for r in results:
+        failed = [f"{c.name}: {_fmt_measured(c)} (limit {c.limit})"
+                  for c in r.checks if not c.passed]
+        lines.append(f"| {r.mode} | {r.status} | {'; '.join(failed) or '—'} |")
+    noted = [r for r in results if r.notes]
+    if noted:
+        lines += ["", "## Notes", ""]
+        for r in noted:
+            lines += [f"- **{r.mode}:** {n}" for n in r.notes]
+    lines += ["", "## Run", ""]
+    known = {k for k, _ in META_LABELS}
+    for key, label in META_LABELS:
+        if key in run_meta:
+            lines.append(f"- {label}: {_fmt_meta_value(run_meta[key])}")
+    for key in run_meta:
+        if key not in known:
+            lines.append(f"- {key}: {_fmt_meta_value(run_meta[key])}")
+    lines += ["", f"Exit code: {code}", ""]
+    with open(os.path.join(out_dir, "report.md"), "w") as f:
+        f.write("\n".join(lines))
+
+
+def _check_measured(result, name):
+    for c in result.checks:
+        if c.name == name:
+            return c.measured
+    return None
+
+
+def reanalyze(out_dir):
+    """Judge a saved run again from its run.json and .cu8 files, rewriting
+    every mode's artifacts and the reports. Modes without a capture (skipped,
+    aborted) keep the status run.json recorded."""
+    with open(os.path.join(out_dir, "run.json")) as f:
+        run = json.load(f)
+    config = run.get("config", {})
+    tol = float(config.get("freq_tol_ppm", 25.0))
+    entries = run["modes"]
+    # TUNE first (it is every mode's reference), FM before FMN (the ratio).
+    order = sorted(range(len(entries)),
+                   key=lambda i: {"TUNE": 0, "FM": 1}.get(entries[i]["mode"].upper(), 2))
+    results = [None] * len(entries)
+    ref = Reference(0.0)
+    for i in order:
+        e = entries[i]
+        mode = e["mode"].upper()
+        if not e.get("capture"):
+            results[i] = ModeResult(mode, e.get("status", "skip"), [], list(e.get("notes", [])))
+            continue
+        spec = CaptureSpec(**e["spec"])
+        iq, clip = load_cu8(os.path.join(out_dir, e["capture"]))
+        nominal = tuple(e["nominal_s"]) if e.get("nominal_s") else None
+        if mode == "TUNE":
+            result, ref = measure_tune(iq, spec, tol, nominal_s=nominal)
+            offset = ref.carrier_offset_hz
+        else:
+            result = analyze_mode(mode, iq, spec, ref,
+                                  tone_hz=float(e.get("tone_hz", config.get("tone_hz", 1000.0))),
+                                  cw_text=e.get("cw_text", config.get("cw_text")),
+                                  cw_wpm=float(e.get("cw_wpm", config.get("cw_wpm", 15.0))),
+                                  nominal_s=nominal)
+            offset = ref.carrier_offset_hz
+            if mode == "FM":
+                ref.fm_peak_dev_hz = fm_peak_deviation(result)
+        if clip > 0.001:
+            result.notes.append(f"RTL-SDR clipped {clip * 100:.2f} % of samples")
+        result.notes = list(e.get("notes", [])) + result.notes
+        write_mode_artifacts(os.path.join(out_dir, os.path.dirname(e["capture"]) or mode),
+                             mode, to_baseband(iq, spec, offset_hz=offset),
+                             spec.sample_rate_hz, result)
+        results[i] = result
+    meta = {k: v for k, v in config.items() if k not in ("tone_hz", "cw_text", "cw_wpm")}
+    tune = next((r for r in results if r.mode == "TUNE"), None)
+    if tune is not None and _check_measured(tune, "frequency") is not None:
+        meta["ppm"] = _check_measured(tune, "frequency")
+    for key in ("power", "rtl_gain_db"):
+        per_mode = {e["mode"]: e[key] for e in entries if key in e}
+        if per_mode:
+            meta[key] = per_mode
+    write_reports(out_dir, meta, results)
+    return results
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--reanalyze", metavar="DIR", required=True,
+                    help="a results folder holding run.json and the .cu8 captures")
+    args = ap.parse_args(argv)
+    try:
+        results = reanalyze(args.reanalyze)
+    except (OSError, KeyError, ValueError) as e:
+        print(f"reanalyze: {e}", file=sys.stderr)
+        return 2
+    for r in results:
+        print(f"{r.mode:6s} {r.status}")
+    print(f"report: {os.path.join(args.reanalyze, 'report.md')}")
+    return exit_code(results)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
