@@ -88,6 +88,21 @@ target_link_libraries(vita_dscp_stream_test PRIVATE aethercore Qt6::Core Qt6::Ne
 add_test(NAME vita_dscp_stream_test COMMAND vita_dscp_stream_test)
 set_tests_properties(vita_dscp_stream_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
 
+# Socket-free production WAN cadence, encoding, qualification and lifecycle.
+# Only terminal bind/write operations are injected; QTimer delivery stays real.
+add_executable(wan_udp_keepalive_test tests/wan_udp_keepalive_test.cpp)
+target_include_directories(wan_udp_keepalive_test PRIVATE src tests)
+target_link_libraries(wan_udp_keepalive_test PRIVATE aethercore Qt6::Core)
+add_test(NAME wan_udp_keepalive_test COMMAND wan_udp_keepalive_test)
+set_tests_properties(wan_udp_keepalive_test PROPERTIES TIMEOUT 25)
+
+# SOCKETS: manual check of the production ephemeral IPv4 VITA socket and two
+# own loopback UDP sinks. No firmware peer or RF. Build/run explicitly.
+# not registered: opt-in real socket wiring; default coverage above is socket-free.
+add_executable(wan_udp_keepalive_socket_test EXCLUDE_FROM_ALL tests/wan_udp_keepalive_socket_test.cpp)
+target_include_directories(wan_udp_keepalive_socket_test PRIVATE src tests)
+target_link_libraries(wan_udp_keepalive_socket_test PRIVATE aethercore Qt6::Core Qt6::Network)
+
 
 # CwDecoder public lifecycle/configuration race regression. Generated 24 kHz
 # stereo float CW drives the real worker/GGMorse path; no sockets or radio.
