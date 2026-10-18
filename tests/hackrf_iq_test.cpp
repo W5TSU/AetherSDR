@@ -274,6 +274,23 @@ void testTuneCarrierPacing()
     expectTrue("a nonsense rate never feeds", !shouldFeedTuneCarrier(0, 0.0, 100));
 }
 
+// TX tuning on a HackRF Pro (firmware 2026.01.3): a frequency change is
+// applied at the next stream start, in that stream's direction, and skipped
+// when the frequency hasn't changed. TX on the frequency the device already
+// holds from RX therefore keeps the RX tuning and transmits ~70 dB down, in
+// bursts. TX must be commanded on a frequency that differs from the last one.
+void testTxLoHz()
+{
+    expectEqual("TX on the frequency the device already holds moves 1 Hz",
+                static_cast<int>(txLoHz(915'500'000, 915'500'000)), 915'500'001);
+    expectEqual("TX on a frequency other than the last command is unchanged",
+                static_cast<int>(txLoHz(915'500'000, 915'400'000)), 915'500'000);
+    expectEqual("TX after the last command was the nudge itself is unchanged",
+                static_cast<int>(txLoHz(915'500'000, 915'500'001)), 915'500'000);
+    expectEqual("no previous command (0) is unchanged",
+                static_cast<int>(txLoHz(28'400'000, 0)), 28'400'000);
+}
+
 } // namespace
 
 int main()
@@ -300,6 +317,7 @@ int main()
     testTxDriveForPowerPercent();
     testCorrectedTuneHz();
     testTuneCarrierPacing();
+    testTxLoHz();
 
     return g_failed == 0 ? 0 : 1;
 }
