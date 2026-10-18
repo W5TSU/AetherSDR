@@ -8,6 +8,57 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.6] — 2026-10-18
+
+### HackRF Pro: transmit at full power, checked on the air (#76)
+
+- **A HackRF Pro now transmits at full power.** It used to send about 70 dB
+  too weak, in bursts, in every mode, which very likely explains why the
+  first on-air check heard nothing. The Pro's firmware kept the frequency set up for receive
+  when transmit started on the same frequency. AetherSDR now works around
+  it.
+- **Every transmit mode has been checked on the air.** On a HackRF Pro at
+  915.5 MHz, received on an RTL-SDR, all 14 modes passed: TUNE, USB, LSB,
+  DIGU, DIGL, RTTY, CW, CWR, AM, SAM, DSB, FM, FMN and DFM. The opposite
+  sideband is 44 dB down and the carrier 33 dB down. AM modulates to 50 %
+  with a −6 dB tone, FMN deviates half as far as FM, and CW decodes cleanly.
+
+### HackRF: transmit drive and the RF amp (#72)
+
+- **The RF Power slider now reaches the HackRF's full output.** It used to
+  stop about 11 dB short, because the RF amp was always off on transmit.
+  The amp now switches in near the top of the slider, so start low: 100 %
+  is about 11 dB more than before.
+- **RF Power and Tune Power are remembered** between sessions. They used to
+  reset to 100 and 10.
+- **A HackRF Pro is named "HackRF Pro".** It used to be listed as a HackRF
+  One.
+- **The mode selector shows the slice's mode on connect.** A HackRF slice in
+  WFM used to show USB, and choosing USB then did nothing.
+
+### HackRF: S-meter and spectrum in dBm (#73, #74)
+
+- **The S-meter works and reads dBm at the antenna,** and so does the
+  spectrum. Both used to show raw levels that moved with every gain change,
+  so band noise read S9+10. A carrier now reads the same on the meter and
+  the trace.
+- **New: Signal Level Calibration** on the Calibration page. Enter a known
+  signal's level and press Calibrate. The correction is kept per device. The
+  built-in reference is an estimate, so calibrate if you need exact dBm.
+- **The panadapter opens at 500 kHz, from −40 to −140 dBm,** instead of
+  8 MHz. The span and the dBm scale are now remembered.
+
+### For testers: an over-the-air transmit test (#76)
+
+- **`tools/hackrf_tx_ota_test.py`** keys every HackRF transmit mode at low
+  power, with the amp off, and judges each one with an RTL-SDR dongle:
+  sideband, carrier, AM depth, FM deviation, CW decode and timing. It needs
+  a source checkout, Python with numpy and scipy, and a licence for the
+  frequency. It isn't part of the downloadable builds. See
+  `docs/HACKRF-TX-TEST.md`.
+- The automation bridge no longer sends requests to an AetherSDR that has
+  exited, when another one is running (#72).
+
 ## [v26.10.5] — 2026-10-08
 
 ### HackRF: every mode, both ways (#69)
