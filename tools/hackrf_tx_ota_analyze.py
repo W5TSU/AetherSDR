@@ -878,10 +878,18 @@ def reanalyze(out_dir):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--reanalyze", metavar="DIR", required=True,
+    ap = argparse.ArgumentParser(
+        description="Judge a saved HackRF over-the-air TX test run again, without\n"
+                    "transmitting. To run the test itself, use:\n\n"
+                    "  python3 tools/hackrf_tx_ota_test.py --callsign <YOUR CALL>",
+        epilog="Guide: docs/HACKRF-TX-TEST.md",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--reanalyze", metavar="DIR",
                     help="a results folder holding run.json and the .cu8 captures")
-    args = ap.parse_args(argv)
+    args = ap.parse_args(sys.argv[1:] if argv is None else argv)
+    if not args.reanalyze:
+        ap.print_help(sys.stderr)
+        return 2
     try:
         results = reanalyze(args.reanalyze)
     except (OSError, KeyError, ValueError) as e:

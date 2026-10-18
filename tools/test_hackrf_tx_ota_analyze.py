@@ -373,6 +373,16 @@ def test_artifacts_without_matplotlib():
         sys.modules.update(saved)
 
 
+def test_cli_without_arguments_points_to_the_test():
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        code = A.main([])
+    check(code == 2, f"exit {code}")
+    check("hackrf_tx_ota_test.py --callsign" in out.getvalue(), out.getvalue())
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith("test_") and callable(fn)]
