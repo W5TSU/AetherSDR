@@ -48,6 +48,12 @@ struct IcomCivBackendTestAccess {
     static bool ambiguous(const IcomCivBackend& b) { return b.m_civAmbiguous; }
     static void markKeyed(IcomCivBackend& b) { b.m_keyed = true; }
     static bool keyed(const IcomCivBackend& b) { return b.m_keyed; }
+    // Every clock reading 1 ms later than the last, so any two reads inside
+    // one call differ; the real clock does that only when a millisecond
+    // boundary falls between them, which made the #47 flake.
+    static void stepClockOnEveryRead(IcomCivBackend& b)
+    { b.m_nowForTest = [ms = b.m_clock.elapsed()]() mutable { return ++ms; }; }
+    static void useRealClock(IcomCivBackend& b) { b.m_nowForTest = nullptr; }
     // #5311 made m_keyed RADIO state, moved only by a decoded 1C 00 readback.
     // What the client controls — and what the ambiguity branch has to get
     // right — is the unkey INTENT and the address it was sent to.
@@ -210,6 +216,20 @@ int main(int argc, char** argv)
     IcomCivBackendTestAccess::inject(backend, "fefee0a419007ffd");
     check(!backend.capabilities().canTransmit && !audio.hostModulation(),
           "unknown ID cannot inherit the familiar nickname or source-address profile");
+
+    // The fail-safe unkey leaves in the call that commands it even when the
+    // clock ticks while it is queued (#47). sendUserCommand() read the time
+    // once, the scheduler stamped the request at a later reading, and the pump
+    // skipped it as not yet due until the next timer tick.
+    IcomCivBackendTestAccess::connect(backend, "IC-705");
+    IcomCivBackendTestAccess::inject(backend, "fefee0501900a4fd");
+    IcomCivBackendTestAccess::markKeyed(backend);
+    IcomCivBackendTestAccess::stepClockOnEveryRead(backend);
+    IcomCivBackendTestAccess::inject(backend, "fefee0511900a4fd");
+    check(IcomCivBackendTestAccess::outbound(backend).contains(
+              QStringLiteral("fe fe 50 e0 1c 00 00 fd")),
+          "the unkey is sent at once even when the clock ticks while it is queued");
+    IcomCivBackendTestAccess::useRealClock(backend);
 
     IcomCivBackendTestAccess::connect(backend, "IC-705");
     IcomCivBackendTestAccess::inject(backend, "fefee0501900a4fd");
