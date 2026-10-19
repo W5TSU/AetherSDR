@@ -139,6 +139,24 @@ if(NOT AETHERSDR_SANITIZER STREQUAL "none")
     message(STATUS "AetherSDR: sanitizer = ${AETHERSDR_SANITIZER} (whole tree)")
     unset(_aether_san_list)
 endif()
+# Build libaethercore as one shared library instead of a static archive. The
+# test executables that link the core each absorb a full static copy (~200 MB
+# in a Debug ASan build), which exhausts a hosted runner's disk (#47); shared,
+# they are a few MB each. For the sanitizer lane only, never for releases: the
+# shipped app links the core statically. From upstream #6136.
+option(AETHER_SHARED_CORE "Build libaethercore as a shared library (sanitizer CI only)" OFF)
+if(AETHER_SHARED_CORE)
+    if(WIN32)
+        message(FATAL_ERROR "AETHER_SHARED_CORE is not supported on Windows")
+    endif()
+    # Vendored static libraries end up inside the shared core, so they need
+    # position-independent code.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(_aether_core_library_type SHARED)
+    message(STATUS "AetherSDR: libaethercore built SHARED (AETHER_SHARED_CORE)")
+else()
+    set(_aether_core_library_type STATIC)
+endif()
 option(ENABLE_RTL "Enable the experimental receive-only RTL-SDR backend" ON)
 # Release guard, like REQUIRE_HACKRF below: the RTL-SDR backend compiles out
 # without an error when librtlsdr or fftw3f is missing, which is how every
@@ -1458,7 +1476,7 @@ add_subdirectory(third_party/wdsp EXCLUDE_FROM_ALL)
 # their feature blocks). Qt resources (resources.qrc, DFNR model qrc) stay on
 # the executable: rcc registration runs from the exe's static initializers and
 # is process-global, so core code reading ":/..." keeps working.
-add_library(aethercore STATIC
+add_library(aethercore ${_aether_core_library_type}
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
     ${RNNOISE_SOURCES}

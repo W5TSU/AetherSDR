@@ -6349,12 +6349,42 @@ endforeach()
 # (vkamp_connection_test, asr_gpu_probe_test) keeps it. A CMake TIMEOUT
 # property always beats a `ctest --timeout` flag, so this is authoritative
 # in every lane — gate steps, sanitizers, and local dev alike.
+#
+# Sanitizer builds scale every TIMEOUT (upstream #6208). The limits are sized
+# for an uninstrumented build, and instrumentation makes the same test several
+# times slower: weather_radar_loading_test takes ~15 s plain, 26 s under ASan
+# and outran its 30 s under TSan every week (#46). So in an instrumented build
+# each TIMEOUT, the test's own or the default, is multiplied by
+# AETHER_SANITIZER_TIMEOUT_SCALE. An ordinary build keeps every limit as
+# written; if a test outgrows its limit there, raise ITS TIMEOUT, not the scale.
+# "Instrumented": AETHERSDR_SANITIZER is set, or -fsanitize= is in the C/C++
+# flags (how sanitizers.yml builds), global or for the build type.
+set(AETHER_SANITIZER_TIMEOUT_SCALE 4 CACHE STRING
+    "Multiplier applied to every test TIMEOUT in a sanitizer-instrumented build")
+if(NOT AETHER_SANITIZER_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "AETHER_SANITIZER_TIMEOUT_SCALE must be a positive "
+                        "integer, got '${AETHER_SANITIZER_TIMEOUT_SCALE}'.")
+endif()
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _aether_build_type)
+set(_aether_compile_flags "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS} \
+${CMAKE_C_FLAGS_${_aether_build_type}} ${CMAKE_CXX_FLAGS_${_aether_build_type}}")
+set(_aether_timeout_scale 1)
+if(NOT AETHERSDR_SANITIZER STREQUAL "none" OR _aether_compile_flags MATCHES "-fsanitize=")
+    set(_aether_timeout_scale ${AETHER_SANITIZER_TIMEOUT_SCALE})
+    message(STATUS "Sanitizer-instrumented build: test TIMEOUTs scaled x${_aether_timeout_scale}")
+endif()
 get_directory_property(_aether_registered_tests TESTS)
 foreach(_aether_test IN LISTS _aether_registered_tests)
     get_test_property(${_aether_test} TIMEOUT _aether_existing_timeout)
     if(NOT _aether_existing_timeout)
-        set_tests_properties(${_aether_test} PROPERTIES TIMEOUT 300)
+        set(_aether_existing_timeout 300)
     endif()
+    if(NOT _aether_existing_timeout MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "test ${_aether_test}: TIMEOUT '${_aether_existing_timeout}' "
+                            "is not a whole number of seconds, so it cannot be scaled.")
+    endif()
+    math(EXPR _aether_scaled_timeout "${_aether_existing_timeout} * ${_aether_timeout_scale}")
+    set_tests_properties(${_aether_test} PROPERTIES TIMEOUT ${_aether_scaled_timeout})
 endforeach()
 
 # Socket-free capability/extension tests: injected transport, no QLocalServer
