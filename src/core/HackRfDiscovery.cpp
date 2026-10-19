@@ -118,9 +118,13 @@ void HackRfDiscovery::onScanTimer()
                     if (model.isEmpty()) {
                         hackrf_device* dev = nullptr;
                         if (hackrf_device_list_open(list, i, &dev) == HACKRF_SUCCESS && dev) {
-                            std::uint8_t id = BOARD_ID_UNDETECTED;
+                            // 0xFF by number: the older libhackrf the x86_64
+                            // AppImage builds against (Ubuntu 22.04) calls it
+                            // BOARD_ID_INVALID, the newer BOARD_ID_UNDETECTED.
+                            constexpr std::uint8_t kBoardIdUndetected = 0xFF;
+                            std::uint8_t id = kBoardIdUndetected;
                             if (hackrf_board_id_read(dev, &id) == HACKRF_SUCCESS
-                                && id != BOARD_ID_UNDETECTED) {
+                                && id != kBoardIdUndetected) {
                                 // Board id 5 named by hand: the older libhackrf
                                 // the AppImages build against predates the Pro
                                 // and would name it "Unknown" (see #67).

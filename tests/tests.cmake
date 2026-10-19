@@ -3540,6 +3540,11 @@ if(PYTHON3_EXECUTABLE)
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_hackrf_tx_ota_test.py)
     set_tests_properties(hackrf_tx_ota_safety PROPERTIES SKIP_RETURN_CODE 77)
+    # The x86_64 AppImage builds against Ubuntu 22.04's libhackrf 2021.03.1;
+    # a newer-only name breaks only the release build (v26.10.6). Source scan.
+    add_test(NAME libhackrf_api_floor
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_libhackrf_api.py)
     # RxApplet/VfoWidget are full-desktop translation units with no practical
     # unit-test link seam. Pin their radio-backed presentation wiring; label
     # behavior itself is covered by fm_tone_presentation_test above.
