@@ -69,8 +69,7 @@ SimBackend::SimBackend(QObject* parent) : IRadioBackend(parent)
     // Re-emit wire lifecycle as the interface's own signals (as FlexBackend does).
     connect(m_connection, &RadioConnection::connected,
             this, &IRadioBackend::connected);
-    connect(m_connection, &RadioConnection::disconnected,
-            this, &IRadioBackend::disconnected);
+    // disconnected is re-emitted by the ordered handler below, not here.
     connect(m_connection, &RadioConnection::errorOccurred,
             this, &IRadioBackend::connectionError);
 
@@ -120,12 +119,17 @@ SimBackend::SimBackend(QObject* parent) : IRadioBackend(parent)
             if (m_connected) emitInitialState();
         });
     });
+    // One handler closes the forward gate and THEN announces disconnected()
+    // (#75). As two queued slots — a signal-to-signal re-emit, then this — a
+    // worker row could be queued between them and forwarded after the
+    // announcement, which rule 6 forbids.
     connect(m_connection, &RadioConnection::disconnected, this, [this]() {
         m_connected = false;
         m_wirePanIds.clear();
         m_pansAwaitingGeometry.clear();
         QMetaObject::invokeMethod(m_signalSource, &SimSignalSource::stop,
                                   Qt::QueuedConnection);
+        emit disconnected();
     });
 
     // Seam-geometry trigger for dynamically created pans (#4887 phase 4). A
@@ -408,8 +412,8 @@ void SimBackend::disconnectRadio()
     // RadioConnection::disconnectFromRadio() has a synthetic branch that drops the
     // handle, sets Disconnected and emits disconnected() — which reaches
     // RadioModel::onDisconnected through the ONE wire-lifecycle path, and reaches
-    // our own ctor lambda (which clears m_connected / stops the timers) and our
-    // re-emit of IRadioBackend::disconnected for any seam listener. Queued: the
+    // our own ctor handler, which clears m_connected, stops the timers and then
+    // re-emits IRadioBackend::disconnected for any seam listener. Queued: the
     // connection lives on its own thread.
     // Condition on whether the WIRE will report the disconnect, not merely on
     // whether a connection object exists. Only RadioConnection's synthetic branch
