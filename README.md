@@ -296,6 +296,11 @@ powershell -File scripts\setup\setup-fftw.ps1
 ::    won't be saved between runs.
 powershell -File scripts\setup\setup-qtkeychain.ps1
 
+:: 4b. Optional: build libhackrf for the HackRF backend. It needs vcpkg (set
+::     VCPKG_ROOT to your vcpkg checkout). Skip it and the build still succeeds,
+::     with HackRF support compiled out.
+powershell -File scripts\setup\setup-hackrf.ps1
+
 :: 5. Configure. Ninja is required: the default Visual Studio generator is
 ::    multi-config (it ignores CMAKE_BUILD_TYPE) and takes a different
 ::    manifest-embed path. Point CMAKE_PREFIX_PATH at your Qt kit so

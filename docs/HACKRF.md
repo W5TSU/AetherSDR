@@ -20,6 +20,18 @@ calibration in Radio Setup.
 TUNE sends a plain carrier in any mode. FreeDV, DRM and D-STAR aren't
 available: nothing in the HackRF path decodes them.
 
+## Windows
+
+The Windows installer and portable ZIP include libhackrf (from v26.10.7), along
+with the libusb and pthreads DLLs it loads. Windows installs the WinUSB driver
+on its own the first time you plug the HackRF in, because the firmware asks for
+it, so there's no Zadig step. HackRF on Windows is built and packaged in CI but
+hasn't yet been checked against a HackRF on a Windows machine. Reports are
+welcome.
+
+To build from source, run `scripts\setup\setup-hackrf.ps1` (it needs vcpkg)
+before configuring; see the Windows steps in the README.
+
 ## Testing transmit
 
 [HACKRF-TX-TEST.md](HACKRF-TX-TEST.md) describes a one-command,
