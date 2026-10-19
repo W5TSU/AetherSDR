@@ -2750,7 +2750,10 @@ if(AETHER_BACKEND_HACKRF)
     # rtl_backend_test's own approach exactly.
     add_executable(hackrf_backend_test tests/hackrf_backend_test.cpp)
     target_include_directories(hackrf_backend_test PRIVATE src)
-    target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+    # libhackrf too, for hackrf.h: the stream-loss checks name its status
+    # codes (HackRfWorker::streamFault). aethercore links it PRIVATE.
+    target_link_libraries(hackrf_backend_test PRIVATE aethercore ${HACKRF_TARGET}
+        Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
 
     # HackRF pan/slice bookkeeping (drag keeps the slice, in-span tunes move only

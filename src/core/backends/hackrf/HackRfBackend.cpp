@@ -1344,19 +1344,25 @@ void HackRfBackend::onArbiterTimedOut(HackRfTxRxArbiter::State pendingState)
 void HackRfBackend::onArbiterTick()
 {
     m_arbiter->tick(nowMs());
+    // The same tick notices a stream that died under us (unplug); a loss is
+    // reported through streamStopped -> onWorkerStreamStopped.
+    m_worker->checkStreamHealth();
 }
 
 void HackRfBackend::onWorkerStreamStopped(bool wasRx, const QString& reason)
 {
+    if (!m_connected) return;  // a report after the session ended is stale
     qCWarning(lcHackRf) << "HackRfBackend:" << (wasRx ? "RX" : "TX")
                         << "stream stopped unexpectedly:" << reason;
     // The arbiter believes a direction is still streaming that genuinely
     // isn't (device error / unplug). There is no clean way to resynchronize
     // its state from here without risking a spurious TX start on a half-
     // reconnected device, so treat this the same as a hard disconnect
-    // rather than guess.
-    disconnectRadio();
+    // rather than guess. The error goes out first: nothing may follow
+    // disconnected() (IRadioBackend rule 6), and RtlSdrBackend orders its
+    // read error the same way.
     emit connectionError(tr("HackRF stream stopped unexpectedly: %1").arg(reason));
+    disconnectRadio();
 }
 
 void HackRfBackend::emitInitialState()

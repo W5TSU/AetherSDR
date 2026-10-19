@@ -3,6 +3,7 @@
 // exercises capabilities() declaration and the restore-state contract only.
 
 #include "core/backends/hackrf/HackRfBackend.h"
+#include "core/backends/hackrf/HackRfWorker.h"
 #include "core/dsp/WdspChannel.h"
 
 #include <QCoreApplication>
@@ -14,6 +15,18 @@
 #include <utility>
 
 using namespace AetherSDR;
+
+#ifdef AETHER_BACKEND_HACKRF
+namespace AetherSDR::hackrf {
+// A connected session without a device: enough for the stream-loss path,
+// which only flips state and reports (the worker's close() is a no-op while
+// nothing is open).
+struct HackRfBackendTestAccess {
+    static void markConnected(HackRfBackend& b) { b.m_connected = true; }
+    static HackRfWorker* worker(HackRfBackend& b) { return b.m_worker.get(); }
+};
+}  // namespace AetherSDR::hackrf
+#endif
 
 static int g_failures = 0;
 static void check(bool cond, const char* what)
@@ -260,6 +273,40 @@ int main(int argc, char** argv)
           "FMN (narrow FM) aliases onto the shared table's FM entry");
     check(hackrf::HackRfBackend::defaultPassbandForMode("CWR") == std::make_pair(-250, 250),
           "CWR (reversed-sideband CW) aliases onto the shared table's CW entry");
+
+    // ── A stream that dies under the app (#42: unplug mid-session) ─────────
+    // The worker's health rule, pure: libhackrf saying the stream is over, or
+    // no transfer for longer than the stall limit, is a fault; anything else
+    // is a healthy stream.
+    using hackrf::HackRfWorker;
+    check(HackRfWorker::streamFault(HACKRF_TRUE, 0).isEmpty(), "a streaming, fed stream is healthy");
+    check(HackRfWorker::streamFault(HACKRF_TRUE, HackRfWorker::kStreamStallMs).isEmpty(),
+          "a gap at the stall limit is still healthy");
+    check(!HackRfWorker::streamFault(HACKRF_TRUE, HackRfWorker::kStreamStallMs + 1).isEmpty(),
+          "no transfer for longer than the stall limit is a fault");
+    check(!HackRfWorker::streamFault(HACKRF_ERROR_STREAMING_STOPPED, 0).isEmpty(),
+          "libhackrf ending the stream on its own is a fault");
+    check(!HackRfWorker::streamFault(HACKRF_ERROR_STREAMING_THREAD_ERR, 0).isEmpty(),
+          "a transfer thread that is gone is a fault");
+    check(!HackRfWorker::streamFault(HACKRF_ERROR_STREAMING_EXIT_CALLED, 0).isEmpty(),
+          "a transfer thread told to exit is a fault");
+
+    // The backend's reaction: report the error, THEN disconnect, and emit
+    // nothing after disconnected() (IRadioBackend rule 6).
+    {
+        hackrf::HackRfBackend lost;
+        QStringList order;
+        QObject::connect(&lost, &IRadioBackend::connectionError, [&](const QString&) { order << "error"; });
+        QObject::connect(&lost, &IRadioBackend::disconnected, [&] { order << "disconnected"; });
+        hackrf::HackRfBackendTestAccess::markConnected(lost);
+        emit hackrf::HackRfBackendTestAccess::worker(lost)->streamStopped(true, QStringLiteral("unplugged"));
+        check(order == QStringList({"error", "disconnected"}),
+              "a lost stream reports the error, then disconnects, then nothing");
+        check(!lost.isConnected(), "a lost stream leaves the backend disconnected");
+        order.clear();
+        emit hackrf::HackRfBackendTestAccess::worker(lost)->streamStopped(true, QStringLiteral("late"));
+        check(order.isEmpty(), "a stream report after the session ended is ignored");
+    }
 
     if (g_failures == 0) {
         std::printf("hackrf_backend_test: OK\n");

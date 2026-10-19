@@ -236,6 +236,7 @@ private slots:
     void onTxDspIqReady(QVector<std::complex<float>> iq);
 
 private:
+    friend struct HackRfBackendTestAccess;
     void emitInitialState();
     // The RX WDSP channel's Config from the current mode/filter/AGC state.
     // A channel is built once per connect, off the GUI thread (connectRadio);

@@ -29,6 +29,26 @@ at low drive (the amp stays off), and reports per mode whether the sideband,
 carrier suppression, AM depth, FM deviation and CW timing are right. Every
 mode also gets a recording, a spectrum plot and a WAV.
 
+## If the HackRF is unplugged
+
+If the HackRF goes away mid-session (unplugged, a USB error, a reset),
+AetherSDR notices within about two seconds and shows "HackRF stream stopped
+unexpectedly", then disconnects. Before v26.10.7 it didn't notice: the
+spectrum froze and the session stayed "connected". Plug the HackRF back in and
+connect again from the radio list.
+
+`tools/hackrf_unplug_test.py` checks this on your own hardware, receive only.
+It starts AetherSDR, connects the HackRF and confirms it is receiving. Then it
+resets the board, which reboots it so it drops off USB and comes back, exactly
+as an unplug looks to the computer. It checks that AetherSDR disconnected by
+itself and is still running, connects again and confirms it is receiving. It
+needs pyusb (`sudo apt install python3-usb`):
+
+```sh
+python3 tools/hackrf_unplug_test.py              # reset the board
+python3 tools/hackrf_unplug_test.py --physical   # you pull the cable instead
+```
+
 ## Check your firmware first
 
 Most "it receives badly" reports on a HackRF come down to firmware. With
