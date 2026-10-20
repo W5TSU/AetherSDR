@@ -739,6 +739,9 @@ void SpectrumOverlayMenu::buildAntPanel()
     m_rfGainSlider->setTickInterval(8);
     m_rfGainSlider->setTickPosition(QSlider::TicksBelow);
     applyPrimarySliderStyle(m_rfGainSlider);
+    // Flex's range until a backend reports its own through setRfGainRange().
+    m_rfGainSlider->setAccessibleDescription(
+        tr("RF gain, minus 8 to plus 32 dB in 8 dB steps."));
     m_rfGainSlider->setToolTip("RF Gain: −8 to +32 dB (8 dB steps)\n"
                                "Step size is determined by radio hardware.");
     gainRow->addWidget(m_rfGainSlider, 1);
@@ -2998,6 +3001,12 @@ void SpectrumOverlayMenu::setRfGainRange(int low, int high, int step,
     // either — it said "dB" over a control that was three preamp positions.
     const QString unitWord = unitSuffix.trimmed().isEmpty()
         ? QStringLiteral("step") : unitSuffix.trimmed();
+    // The accessible channel first: a screen-reader user never gets the tooltip,
+    // and an HL2 (-12..+48 dB, 1 dB) must not be described as a Flex
+    // (upstream 7975bafe, #5943).
+    m_rfGainSlider->setAccessibleDescription(
+        tr("RF gain, %1 to %2 %3, in steps of %4.")
+            .arg(low).arg(high).arg(unitWord).arg(step));
     m_rfGainSlider->setToolTip(
         QString("RF Gain: %1%2 to %3%4%2 (%5%2 steps)\n"
                 "Range and step are reported by the radio.")
