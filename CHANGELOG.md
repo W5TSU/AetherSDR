@@ -8,6 +8,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.7] — 2026-10-20
+
+### HackRF on Windows (#42)
+
+- **The Windows installer and portable ZIP now include HackRF support.**
+  A HackRF is found and connected on Windows as on Linux and macOS. No
+  driver install is needed: the HackRF's firmware asks Windows for its
+  built-in WinUSB driver, so there is no Zadig step. The Windows build is
+  made and checked by CI but hasn't yet been tried with a HackRF on a
+  Windows PC, so reports are welcome.
+
+### HackRF: unplugging no longer freezes it (#42)
+
+- **Unplugging a HackRF while connected now disconnects cleanly.** The
+  spectrum used to freeze, the HackRF stayed "connected", and connecting
+  again was refused until AetherSDR was restarted. Within about 2 seconds
+  AetherSDR now reports "HackRF stream stopped unexpectedly" and
+  disconnects. Plug the HackRF back in and connect again.
+
+### The Linux x86_64 AppImage is back
+
+- **v26.10.6 shipped without the x86_64 AppImage,** and without GPG
+  signatures for any of its files. The x86_64 build uses an older libhackrf
+  that lacks one name the new HackRF Pro code used, so it failed, and the
+  signing step waits for every file. Both AppImages build again, and a new
+  check stops HackRF code from using names that older libhackrf lacks.
+
+### Icom: transmit off goes out at once (#47)
+
+- **The fail-safe "transmit off" is sent straight away.** It could wait up
+  to one 10 ms poll when the clock ticked at the wrong moment.
+
+### For testers and developers
+
+- **`tools/hackrf_unplug_test.py`** checks unplug recovery on a real HackRF.
+  It resets the HackRF over USB, or waits for you to pull the cable with
+  `--physical`, then checks that AetherSDR disconnects, keeps running and
+  connects again. It's receive only. See `docs/HACKRF.md`.
+- **Building on Windows from source** can include HackRF:
+  `scripts/setup/setup-hackrf.ps1` builds libhackrf (it needs vcpkg).
+- The simulated radio no longer sends a spectrum row after it reports a
+  disconnect (#75).
+- The weekly sanitizer runs pass again. The ASan build fits on the runner's
+  disk, slow tests get more time under the sanitizers, and two reports from
+  inside Qt 6.12 are suppressed as upstream does (#46, #47, #80).
+
 ## [v26.10.6] — 2026-10-18
 
 ### HackRF Pro: transmit at full power, checked on the air (#76)
