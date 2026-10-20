@@ -6358,6 +6358,7 @@ if (NOT _aether_ggml_baseline_str STREQUAL "")
         AETHER_GGML_CPU_BASELINE="${_aether_ggml_baseline_str}")
 endif()
 add_test(NAME system_inventory_test COMMAND system_inventory_test)
+
 # RADE V1 receive phase accumulators (#6398): the BPF mixer phase and the
 # frequency-offset phase must be renormalized or float32 rounding shrinks them
 # without bound. Socket-free DSP assertions on the vendored C directly, seeding
@@ -6374,7 +6375,6 @@ if(RADE_FOUND)
     endif()
     add_test(NAME rade_phase_renorm_test COMMAND rade_phase_renorm_test)
 endif()
-
 
 # GUI harnesses that link aethercore used to receive ThemeManager,
 # SettingsHelpers, and ShortcutManager accidentally from that engine archive.
