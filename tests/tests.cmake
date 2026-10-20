@@ -6133,6 +6133,18 @@ target_link_libraries(noise_floor_auto_adjust_gate_test PRIVATE
 add_test(NAME noise_floor_auto_adjust_gate_test
          COMMAND noise_floor_auto_adjust_gate_test)
 
+# Global HIDAPI discovery/open state under concurrent churn; fake HID symbols,
+# no hardware or sockets. Included in the default sanitizer test graph.
+if(HIDAPI_FOUND)
+    add_executable(hid_discovery_test
+        tests/hid_discovery_test.cpp
+        src/core/HidDiscovery.cpp)
+    target_include_directories(hid_discovery_test PRIVATE src ${HIDAPI_NORMALIZED_INCLUDE_DIRS})
+    target_link_libraries(hid_discovery_test PRIVATE Qt6::Core)
+    add_test(NAME hid_discovery_test COMMAND hid_discovery_test)
+    set_tests_properties(hid_discovery_test PROPERTIES TIMEOUT 30)
+endif()
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
