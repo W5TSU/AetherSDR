@@ -7625,9 +7625,11 @@ void MainWindow::applyCapabilitiesToUi(bool connected, const RadioCapabilities& 
     // setting cannot leak from an Icom into the next radio connected.
     {
         const bool radioOwnsScale = !connected || caps.radioOwnsDbmScale;
+        const bool binsAbsolute = connected && caps.panBinsAbsolute();
         const QList<SpectrumWidget*> spectra = findChildren<SpectrumWidget*>();
         for (SpectrumWidget* spectrum : spectra) {
             spectrum->setRadioOwnsDbmScale(radioOwnsScale);
+            spectrum->setPanBinsAbsolute(binsAbsolute);
         }
     }
 

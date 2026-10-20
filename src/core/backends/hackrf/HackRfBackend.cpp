@@ -332,6 +332,15 @@ RadioCapabilities HackRfBackend::capabilities() const
     // operator may correct it per device.
     c.hostLevelCalibration = true;
 
+    // The spectrum is computed on this host from raw IQ, so its bins are
+    // absolute: they do not move when the display reference moves. The dBm
+    // reading rests on that estimated reference, so the axis is not called
+    // calibrated.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    c.panAmplitude = amplitude;
+
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};
 

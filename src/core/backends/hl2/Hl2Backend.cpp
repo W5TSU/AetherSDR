@@ -1913,6 +1913,13 @@ RadioCapabilities Hl2Backend::capabilities() const
                             // RadioStateMemory's ext gate (one domain, one
                             // document — RFC #4603 PR 6).
                             | RadioCapabilities::ClientSettingsDomain::Memories;
+    // Host-computed bins, passed through onBackendSpectrumFrame untouched, so
+    // they are absolute. The axis is calibrated dBm only once the full-scale
+    // reference has been measured on this unit.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = m_dbRef.isCalibrated();
+    amplitude.binsAbsolute = true;
+    c.panAmplitude = amplitude;
     // (extensionNamespaces is declared above, with the freqcal/nb verbs it
     // names — an earlier revision of this comment claimed none existed.)
     return c;

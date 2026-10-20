@@ -405,6 +405,13 @@ RadioCapabilities AnanBackend::capabilities() const
     c.hasRadioSideDsp = false;     // DSP is engine-side (AnanRxDsp), not firmware
     c.hasAudioPeakingFilter = false; // no firmware APF verb on this path
     c.radioOwnsDbmScale = false;   // client computes it from raw IQ
+    // ...and BECAUSE the bins are the raw dBFS (binsDbfs[i] plus a 0.0f
+    // offset), they are absolute, so the noise-floor auto-adjust converges
+    // without an echo. The axis is dBFS wearing a dBm label: not calibrated.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    c.panAmplitude = amplitude;
     c.hasDdcPanEdgeRolloff = true; // see RadioCapabilities.h's own comment
     c.persistsMemories = false;    // default; stated explicitly
     c.clientSettingsDomains = {};  // no applyRestoredState()/currentOperatingState() yet

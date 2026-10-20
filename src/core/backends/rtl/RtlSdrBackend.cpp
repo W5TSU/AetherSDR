@@ -164,6 +164,13 @@ RadioCapabilities RtlSdrBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::RfGain
                             | RadioCapabilities::ClientSettingsDomain::Memories;
 
+    // Bins are absolute: 20*log10(mag/kFftSize) on raw ADC magnitudes, emitted
+    // directly. The axis is dBFS relabelled, so not calibrated dBm.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    c.panAmplitude = amplitude;
+
     // Vendor extensions
     c.extensions["rtl"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"rtl"};

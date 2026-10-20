@@ -6068,11 +6068,23 @@ add_test(NAME phone_cw_alc_gauge_fill_test
 set_tests_properties(phone_cw_alc_gauge_fill_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# The auto-floor gate (upstream #5726): its truth table, plus each family's
+# declaration read off a real backend instance. Links aethercore for the
+# backends; the RTL and HackRF rows compile only when their backends do.
+add_executable(noise_floor_auto_adjust_gate_test
+    tests/noise_floor_auto_adjust_gate_test.cpp)
+target_include_directories(noise_floor_auto_adjust_gate_test PRIVATE src tests)
+target_link_libraries(noise_floor_auto_adjust_gate_test PRIVATE
+    aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME noise_floor_auto_adjust_gate_test
+         COMMAND noise_floor_auto_adjust_gate_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    noise_floor_auto_adjust_gate_test
     firmware_close_dialog_test
     radio_setup_region_field_test
 

@@ -7,6 +7,8 @@
 #include <QVector>
 #include <QVariantMap>
 
+#include <optional>
+
 namespace AetherSDR {
 
 struct TxPowerBand {
@@ -34,6 +36,28 @@ struct SliceFrequencyControl {
     Authority authority{Authority::Unknown};
     qint64 minimumHz{0};
     qint64 maximumHz{0};
+};
+
+// What the numbers on the panadapter's VERTICAL axis mean (upstream #5725/#5726,
+// ported). Absent means NO BACKEND HAS BEEN READ, and the two fields then fall
+// to OPPOSITE legacy answers -- which is why consumers go through
+// RadioCapabilities::dbmAxisIsCalibrated() and ::panBinsAbsolute() rather than
+// reach in here and pick a default for themselves.
+struct PanAmplitudeModel {
+    // The axis is ABSOLUTE dBm at the antenna (a calibrated radio). FALSE means
+    // dBFS wearing a dBm label: self-consistent, but not comparable with another
+    // station's numbers.
+    bool calibratedDbm = false;
+
+    // The spectrum bins carry ABSOLUTE levels: they are computed HOST-side from
+    // the samples, so a bin does not move when the display reference level
+    // moves. Deliberately NOT the same question as radioOwnsDbmScale ("does the
+    // radio accept a display range and echo it back"). On a raw-IQ radio the
+    // answers differ, and absolute bins are what let the noise-floor
+    // auto-adjust converge with no echo (see NoiseFloorAutoAdjustGate.h). They
+    // also tell the waterfall that a row is in absolute dB, which the manual
+    // Black Level and NB Blank paths need.
+    bool binsAbsolute = false;
 };
 
 // A stable, radio-owned receive-filter preset. `id` is the identity used on
@@ -137,6 +161,24 @@ struct RadioCapabilities {
     int maxSlices = 1;             // independent demod slices the radio supports
     int maxPanadapters = 1;        // simultaneous panadapters
     QVector<int> sampleRatesHz;    // supported per-receiver sample rates (Hz)
+
+    // What the panadapter's vertical axis is made of. See PanAmplitudeModel:
+    // read it through the two accessors, never by unwrapping it at a call site.
+    std::optional<PanAmplitudeModel> panAmplitude;
+
+    // Absent keeps the legacy claim that the axis is dBm.
+    [[nodiscard]] bool dbmAxisIsCalibrated() const
+    {
+        return !panAmplitude || panAmplitude->calibratedDbm;
+    }
+
+    // Absent means UNDECLARED, and an undeclared backend is not assumed to have
+    // absolute bins. Costs nothing: the auto-floor gate is an OR whose other
+    // term, radioOwnsDbmScale, still defaults permissive.
+    [[nodiscard]] bool panBinsAbsolute() const
+    {
+        return panAmplitude && panAmplitude->binsAbsolute;
+    }
 
     // The frequency range the receiver can actually be tuned to, in Hz.
     //

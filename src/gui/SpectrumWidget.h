@@ -354,6 +354,11 @@ public:
     // persist to the next radio. See RadioCapabilities::radioOwnsDbmScale.
     void setRadioOwnsDbmScale(bool on) { m_radioOwnsDbmScale = on; }
     bool radioOwnsDbmScale() const { return m_radioOwnsDbmScale; }
+    // RadioCapabilities::panBinsAbsolute(): the bins do not move with the
+    // reference level, so the auto-floor converges without an echo and a
+    // waterfall row is in absolute dB. False on disconnect.
+    void setPanBinsAbsolute(bool on) { m_panBinsAbsolute = on; }
+    bool panBinsAbsolute() const { return m_panBinsAbsolute; }
     double centerMhz()    const { return m_centerMhz; }
     double bandwidthMhz() const { return m_bandwidthMhz; }
     // Width of the frequency canvas, in logical pixels: the widget width minus
@@ -1509,6 +1514,7 @@ private:
     // Defaults true so every existing backend is unaffected; only a backend
     // that opts out (RadioCapabilities::radioOwnsDbmScale=false) disarms.
     bool  m_radioOwnsDbmScale{true};
+    bool  m_panBinsAbsolute{false};
     int   m_noiseFloorPosition{75};  // 1=top, 99=bottom
     int   m_flexNoiseFloorPosition{75};
     int   m_kiwiNoiseFloorPosition{75};
