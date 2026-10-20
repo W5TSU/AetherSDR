@@ -39,6 +39,20 @@ $OutDir        = "third_party\hackrf"
 $ZipFile       = "third_party\hackrf-${HackrfVersion}.zip"
 $Stamp         = "hackrf=$HackrfVersion triplet=$Triplet"
 
+# Remove the scratch tree, best effort. Right after the build something (the
+# post-link DLL copy, or a virus scanner looking at the new DLL) can still hold
+# a handle in it for a moment; a leftover scratch tree is harmless, so retry
+# briefly and then just say so.
+function Remove-Scratch([string]$Path) {
+    foreach ($try in 1..5) {
+        if (-not (Test-Path $Path)) { return }
+        Remove-Item -Recurse -Force $Path -ErrorAction SilentlyContinue
+        if (-not (Test-Path $Path)) { return }
+        Start-Sleep -Seconds 2
+    }
+    Write-Warning "could not remove $Path (still in use); leaving it"
+}
+
 # -- Check if already set up ----------------------------------------------
 if ((Test-Path "$OutDir\lib\hackrf.lib") -and (Test-Path "$OutDir\.stamp") -and
     ((Get-Content -Raw "$OutDir\.stamp").Trim() -eq $Stamp)) {
@@ -64,8 +78,8 @@ if (-not (Test-Path $ZipFile)) {
 }
 Confirm-Sha256 -Path $ZipFile -Expected $HackrfSha256
 $tempDir = "third_party\hackrf-temp"
-if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir }
-Expand-Archive -Path $ZipFile -DestinationPath $tempDir
+Remove-Scratch $tempDir
+Expand-Archive -Force -Path $ZipFile -DestinationPath $tempDir
 $srcDir = (Resolve-Path "$tempDir\hackrf-$HackrfVersion\host\libhackrf").Path
 
 # -- Build the DLL with MSVC ----------------------------------------------
@@ -105,7 +119,7 @@ $runtime = @(Get-ChildItem "$installed\bin\libusb-1.0.dll") + @(Get-ChildItem "$
 if ($runtime.Count -lt 2) { throw "vcpkg's libusb-1.0.dll or pthreadVC*.dll is missing from $installed\bin" }
 $runtime | ForEach-Object { Copy-Item $_.FullName "$OutDir\bin\" }
 Set-Content -Path "$OutDir\.stamp" -Value $Stamp -NoNewline
-Remove-Item -Recurse -Force $tempDir
+Remove-Scratch $tempDir
 
 Write-Host "libhackrf $HackrfVersion staged in ${OutDir}:" -ForegroundColor Green
 Get-ChildItem -Recurse -File $OutDir | ForEach-Object { Write-Host "  $($_.FullName)" }
