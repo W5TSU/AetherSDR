@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -411,6 +412,8 @@ private:
     MeterPoller m_meters;
     IcomCivScheduler m_civScheduler;
     QElapsedTimer m_clock;
+    // Test seam: when set, nowMs() reads this instead of m_clock.
+    std::function<qint64()> m_nowForTest;
 
     // 48 kHz mono from the radio -> 24 kHz interleaved stereo for the engine.
     //

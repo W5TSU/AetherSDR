@@ -7,6 +7,8 @@
 #include <QLoggingCategory>
 #include <QMetaObject>
 
+#include <chrono>
+
 Q_LOGGING_CATEGORY(lcHackRf, "aether.hackrf", QtWarningMsg)
 
 namespace AetherSDR::hackrf {
@@ -29,6 +31,35 @@ HackRfWorker::HackRfWorker(QObject* parent)
 HackRfWorker::~HackRfWorker()
 {
     close();
+}
+
+qint64 HackRfWorker::steadyMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+QString HackRfWorker::streamFault(int isStreamingRc, qint64 msSinceLastTransfer)
+{
+    if (isStreamingRc != HACKRF_TRUE)
+        return QStringLiteral("libhackrf ended the stream (%1)").arg(errName(isStreamingRc));
+    if (msSinceLastTransfer > kStreamStallMs)
+        return QStringLiteral("no samples for %1 ms").arg(msSinceLastTransfer);
+    return {};
+}
+
+void HackRfWorker::checkStreamHealth()
+{
+    if (!m_device) return;
+    const bool rx = m_rxStreaming.load(std::memory_order_relaxed);
+    if (!rx && !m_txStreaming.load(std::memory_order_relaxed)) return;
+    const QString fault = streamFault(hackrf_is_streaming(m_device),
+                                      steadyMs() - m_lastTransferMs.load(std::memory_order_relaxed));
+    if (fault.isEmpty()) return;
+    // Marked stopped first, so a second tick cannot report the same loss.
+    (rx ? m_rxStreaming : m_txStreaming).store(false, std::memory_order_relaxed);
+    qCWarning(lcHackRf) << "HackRfWorker:" << (rx ? "RX" : "TX") << "stream lost:" << fault;
+    emit streamStopped(rx, fault);
 }
 
 bool HackRfWorker::open(const QString& serial)
@@ -252,6 +283,7 @@ bool HackRfWorker::startRx()
                                   " arbitration state machine in HackRfBackend)";
         return false;
     }
+    m_lastTransferMs.store(steadyMs(), std::memory_order_relaxed);
     const int rc = hackrf_start_rx(m_device, &HackRfWorker::rxCallback, this);
     if (rc != HACKRF_SUCCESS) {
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_start_rx failed:" << errName(rc);
@@ -287,6 +319,7 @@ int HackRfWorker::handleRxTransfer(hackrf_transfer* transfer)
     // conversion helper and a queued Qt signal emission (safe from any
     // thread; Qt resolves direct-vs-queued delivery from the RECEIVER's
     // thread affinity, not the emitting thread's).
+    m_lastTransferMs.store(steadyMs(), std::memory_order_relaxed);
     std::vector<std::complex<float>> converted;
     unpackRxIq(transfer->buffer, static_cast<std::size_t>(transfer->valid_length), converted);
 
@@ -311,6 +344,7 @@ bool HackRfWorker::startTx()
     }
     m_txSamplesSent.store(0, std::memory_order_relaxed);
     m_txSamplesPadded.store(0, std::memory_order_relaxed);
+    m_lastTransferMs.store(steadyMs(), std::memory_order_relaxed);
     const int rc = hackrf_start_tx(m_device, &HackRfWorker::txCallback, this);
     if (rc != HACKRF_SUCCESS) {
         qCWarning(lcHackRf) << "HackRfWorker: hackrf_start_tx failed:" << errName(rc);
@@ -365,6 +399,7 @@ int HackRfWorker::txCallback(hackrf_transfer* transfer)
 
 int HackRfWorker::handleTxTransfer(hackrf_transfer* transfer)
 {
+    m_lastTransferMs.store(steadyMs(), std::memory_order_relaxed);
     const std::size_t wantedSamples = static_cast<std::size_t>(transfer->buffer_length) / 2;
     std::vector<std::complex<float>> block;
     block.reserve(wantedSamples);

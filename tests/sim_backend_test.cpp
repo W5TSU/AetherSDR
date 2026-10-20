@@ -5,6 +5,8 @@
 // disconnect removes the slice + reconnect works, and TX stays fail-closed.
 
 #include "core/backends/sim/SimBackend.h"
+#include "core/RadioConnection.h"
+#include "core/backends/sim/SimSignalSource.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -212,6 +214,30 @@ void testDisconnectStopsAudio()
     report("audio stops after disconnect", audioSpy.count() == 0);
 }
 
+// Rule 6 on the RadioModel path (#75): RadioModel disconnects the vended
+// RadioConnection directly, and the backend must close its forward gate
+// BEFORE it announces disconnected(). Re-emitting the wire signal and closing
+// the gate in two queued slots let a worker row land between them. Emitting
+// from this thread runs the handlers direct, so this pins the ordering.
+void testNoSpectrumForwardedOnceDisconnectedIsAnnounced()
+{
+    SimBackend sim;
+    sim.connectRadio({});
+    QSignalSpy spectrumSpy(&sim, &SimBackend::spectrumFrameReady);
+    bool connectedDuringAnnouncement = true;
+    QObject::connect(&sim, &SimBackend::disconnected, &sim, [&sim, &connectedDuringAnnouncement] {
+        connectedDuringAnnouncement = sim.isConnected();
+        emit sim.signalSourceForTest()->spectrumFrameReady(0, QByteArray(1024 * int(sizeof(float)), '\0'));
+    }, Qt::DirectConnection);
+
+    emit sim.connection()->disconnected();
+
+    report("the gate is closed before disconnected() is announced",
+           !connectedDuringAnnouncement);
+    report("a spectrum row landing inside disconnected() is dropped",
+           spectrumSpy.count() == 0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -232,6 +258,7 @@ int main(int argc, char** argv)
     testEmitsAudioWhenConnected();
     testKeyingMutesAudio();
     testDisconnectStopsAudio();
+    testNoSpectrumForwardedOnceDisconnectedIsAnnounced();
 
     if (g_failed == 0) {
         std::printf("All SimBackend lifecycle checks passed\n");

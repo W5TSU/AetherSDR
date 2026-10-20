@@ -279,7 +279,7 @@ IcomCivBackend::IcomCivBackend(QObject* parent)
 
 qint64 IcomCivBackend::nowMs() const
 {
-    return m_clock.elapsed();
+    return m_nowForTest ? m_nowForTest() : m_clock.elapsed();
 }
 
 IcomCivBackend::~IcomCivBackend()
@@ -4112,7 +4112,10 @@ void IcomCivBackend::sendUserCommand(const std::vector<std::uint8_t>& frame)
         // older and will be rejected by observe().
         queueRead(*confirmation, key, IcomCivScheduler::Priority::Operator, now + 60);
     }
-    pumpCiv(now);
+    // A FRESH reading, not `now`: queueWrite() stamps the request with its own
+    // later reading, and a pump at the earlier time skips it as not yet due.
+    // For the fail-safe unkey that held PTT on until the next tick (#47).
+    pumpCiv(nowMs());
 }
 
 // Re-assert the radio's real VFO one event-loop turn from now.

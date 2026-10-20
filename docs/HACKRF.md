@@ -20,6 +20,18 @@ calibration in Radio Setup.
 TUNE sends a plain carrier in any mode. FreeDV, DRM and D-STAR aren't
 available: nothing in the HackRF path decodes them.
 
+## Windows
+
+The Windows installer and portable ZIP include libhackrf (from v26.10.7), along
+with the libusb and pthreads DLLs it loads. Windows installs the WinUSB driver
+on its own the first time you plug the HackRF in, because the firmware asks for
+it, so there's no Zadig step. HackRF on Windows is built and packaged in CI but
+hasn't yet been checked against a HackRF on a Windows machine. Reports are
+welcome.
+
+To build from source, run `scripts\setup\setup-hackrf.ps1` (it needs vcpkg)
+before configuring; see the Windows steps in the README.
+
 ## Testing transmit
 
 [HACKRF-TX-TEST.md](HACKRF-TX-TEST.md) describes a one-command,
@@ -28,6 +40,26 @@ receiver: `tools/hackrf_tx_ota_test.py`. It keys each mode for a few seconds
 at low drive (the amp stays off), and reports per mode whether the sideband,
 carrier suppression, AM depth, FM deviation and CW timing are right. Every
 mode also gets a recording, a spectrum plot and a WAV.
+
+## If the HackRF is unplugged
+
+If the HackRF goes away mid-session (unplugged, a USB error, a reset),
+AetherSDR notices within about two seconds and shows "HackRF stream stopped
+unexpectedly", then disconnects. Before v26.10.7 it didn't notice: the
+spectrum froze and the session stayed "connected". Plug the HackRF back in and
+connect again from the radio list.
+
+`tools/hackrf_unplug_test.py` checks this on your own hardware, receive only.
+It starts AetherSDR, connects the HackRF and confirms it is receiving. Then it
+resets the board, which reboots it so it drops off USB and comes back, exactly
+as an unplug looks to the computer. It checks that AetherSDR disconnected by
+itself and is still running, connects again and confirms it is receiving. It
+needs pyusb (`sudo apt install python3-usb`):
+
+```sh
+python3 tools/hackrf_unplug_test.py              # reset the board
+python3 tools/hackrf_unplug_test.py --physical   # you pull the cable instead
+```
 
 ## Check your firmware first
 

@@ -182,6 +182,21 @@ jobs:
         if: steps.cache-portaudio.outputs.cache-hit != 'true'
         run: .\scripts\setup\setup-portaudio.ps1
 
+      # The HackRF backend (#42): libhackrf built with MSVC against vcpkg's
+      # libusb and pthreads, staged with their DLLs in third_party/hackrf.
+      # REQUIRE_HACKRF below fails the configure if nothing was staged, which
+      # is how every Windows build before v26.10.7 shipped without HackRF.
+      - name: Cache libhackrf
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: cache-hackrf
+        with:
+          path: third_party/hackrf
+          key: hackrf-${{ runner.os }}-${{ hashFiles('scripts/setup/setup-hackrf.ps1') }}
+
+      - name: Setup libhackrf (HackRF backend)
+        if: steps.cache-hackrf.outputs.cache-hit != 'true'
+        run: .\scripts\setup\setup-hackrf.ps1
+
       - name: Cache DeepFilterNet3
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         id: cache-deepfilter
@@ -268,7 +283,7 @@ jobs:
           # native command), so a configure failure still fails this step —
           # the reason the bash legs need `set -o pipefail` and this one does
           # not.
-          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMQTT_TLS=OFF -DREQUIRE_KEYCHAIN=ON -DREQUIRE_SERIALPORT=ON -DREQUIRE_ASR_ONNX=ON -DREQUIRE_ASR_SHERPA=ON -DREQUIRE_ASR_GPU=ON -DASR_USE_PREBUILT_WHISPER_GPU=ON -DAETHER_GPU_SPECTRUM=ON -DCMAKE_PREFIX_PATH="$env:VULKAN_SDK" -DENABLE_NVIDIA_AFX=ON -DCMAKE_TOOLCHAIN_FILE="$env:CMAKE_TOOLCHAIN_FILE" -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TARGET_TRIPLET" | Tee-Object -FilePath configure.log
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMQTT_TLS=OFF -DREQUIRE_KEYCHAIN=ON -DREQUIRE_SERIALPORT=ON -DREQUIRE_HACKRF=ON -DREQUIRE_ASR_ONNX=ON -DREQUIRE_ASR_SHERPA=ON -DREQUIRE_ASR_GPU=ON -DASR_USE_PREBUILT_WHISPER_GPU=ON -DAETHER_GPU_SPECTRUM=ON -DCMAKE_PREFIX_PATH="$env:VULKAN_SDK" -DENABLE_NVIDIA_AFX=ON -DCMAKE_TOOLCHAIN_FILE="$env:CMAKE_TOOLCHAIN_FILE" -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TARGET_TRIPLET" | Tee-Object -FilePath configure.log
 
       # AETHER_GPU_SPECTRUM=ON is a request, not a guarantee: CMake flips it
       # back OFF without failing when Qt6GuiPrivate can't be located, and
@@ -384,6 +399,15 @@ jobs:
           }
           if (Test-Path "third_party\hidapi\bin\hidapi.dll") {
             copy third_party\hidapi\bin\hidapi.dll deploy\
+          }
+          # libhackrf and the libusb and pthreads DLLs it loads (#42).
+          # AetherSDR.exe imports hackrf.dll, so the app would not start
+          # without them; REQUIRE_HACKRF guarantees they were built.
+          foreach ($dll in @("hackrf.dll", "libusb-1.0.dll", "pthreadVC3.dll")) {
+            if (-not (Test-Path "third_party\hackrf\bin\$dll")) {
+              throw "third_party\hackrf\bin\$dll is missing (setup-hackrf.ps1)"
+            }
+            copy "third_party\hackrf\bin\$dll" deploy\
           }
           # zlib is statically linked from third_party/zlib (#2651) — no
           # DLL copy needed; zlibstatic is baked into AetherSDR.exe.

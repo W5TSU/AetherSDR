@@ -121,6 +121,21 @@ public:
     // handleTxTransfer() do.
     std::size_t txQueueDepth() const;
 
+    // Polled while connected (HackRfBackend's 50 ms arbiter tick). libhackrf
+    // reports a stream that dies under it (device error, unplug) only by
+    // calling back no more, so nothing else would notice: the spectrum would
+    // freeze and the session stay "connected". A running stream that
+    // libhackrf says has ended, or that has delivered no transfer for
+    // kStreamStallMs, is marked stopped and reported once via streamStopped().
+    void checkStreamHealth();
+    // Generous: transfers arrive every few tens of ms at any sample rate the
+    // app uses, so this only fires on a stream that has really stopped.
+    static constexpr qint64 kStreamStallMs = 2000;
+    // Why a stream that should be running is not, or empty if it is. Pure, so
+    // the rule is testable without a device. isStreamingRc is
+    // hackrf_is_streaming()'s result (HACKRF_TRUE while streaming).
+    static QString streamFault(int isStreamingRc, qint64 msSinceLastTransfer);
+
 signals:
     // RX samples, wideband and unfiltered — HackRfDdc (not yet built) is
     // what tunes a slice out of this. Delivered via a queued connection
@@ -148,6 +163,10 @@ private:
     void readBoardId();
     std::atomic<bool> m_rxStreaming{false};
     std::atomic<bool> m_txStreaming{false};
+    // Monotonic ms of the last RX/TX transfer callback (or the stream start),
+    // written on libhackrf's thread, read by checkStreamHealth().
+    std::atomic<qint64> m_lastTransferMs{0};
+    static qint64 steadyMs();
     // What the hardware was last told, and what each transmission actually
     // drained: logged at start/stop so "nothing came out" can be told apart
     // into "never streamed", "streamed silence" and "streamed a signal".

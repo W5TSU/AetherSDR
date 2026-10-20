@@ -139,6 +139,24 @@ if(NOT AETHERSDR_SANITIZER STREQUAL "none")
     message(STATUS "AetherSDR: sanitizer = ${AETHERSDR_SANITIZER} (whole tree)")
     unset(_aether_san_list)
 endif()
+# Build libaethercore as one shared library instead of a static archive. The
+# test executables that link the core each absorb a full static copy (~200 MB
+# in a Debug ASan build), which exhausts a hosted runner's disk (#47); shared,
+# they are a few MB each. For the sanitizer lane only, never for releases: the
+# shipped app links the core statically. From upstream #6136.
+option(AETHER_SHARED_CORE "Build libaethercore as a shared library (sanitizer CI only)" OFF)
+if(AETHER_SHARED_CORE)
+    if(WIN32)
+        message(FATAL_ERROR "AETHER_SHARED_CORE is not supported on Windows")
+    endif()
+    # Vendored static libraries end up inside the shared core, so they need
+    # position-independent code.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(_aether_core_library_type SHARED)
+    message(STATUS "AetherSDR: libaethercore built SHARED (AETHER_SHARED_CORE)")
+else()
+    set(_aether_core_library_type STATIC)
+endif()
 option(ENABLE_RTL "Enable the experimental receive-only RTL-SDR backend" ON)
 # Release guard, like REQUIRE_HACKRF below: the RTL-SDR backend compiles out
 # without an error when librtlsdr or fftw3f is missing, which is how every
@@ -1458,7 +1476,7 @@ add_subdirectory(third_party/wdsp EXCLUDE_FROM_ALL)
 # their feature blocks). Qt resources (resources.qrc, DFNR model qrc) stay on
 # the executable: rcc registration runs from the exe's static initializers and
 # is process-global, so core code reading ":/..." keeps working.
-add_library(aethercore STATIC
+add_library(aethercore ${_aether_core_library_type}
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
     ${RNNOISE_SOURCES}
@@ -2554,8 +2572,34 @@ endif()
 # HackRF backend (#42): libhackrf detection, then the backend's sources and
 # the AETHER_BACKEND_HACKRF definition that registers it. Follows the RTL-SDR
 # block above's template.
-if(PkgConfig_FOUND)
+# Windows: scripts/setup/setup-hackrf.ps1 builds libhackrf with MSVC and
+# stages it, with the libusb and pthreads DLLs it loads, in third_party/hackrf.
+# The DLLs are copied next to AetherSDR.exe below, which is how the installer
+# picks them up. Each probe below runs only while no target has been chosen:
+# HACKRF_FOUND cannot be the test, because pkg_check_modules caches it and a
+# reconfigure would then skip the probe that sets HACKRF_TARGET.
+set(HACKRF_TARGET "")
+if(WIN32 AND ENABLE_HACKRF)
+    set(HACKRF_ROOT "${CMAKE_SOURCE_DIR}/third_party/hackrf")
+    if(EXISTS "${HACKRF_ROOT}/include/libhackrf/hackrf.h"
+            AND EXISTS "${HACKRF_ROOT}/lib/hackrf.lib"
+            AND EXISTS "${HACKRF_ROOT}/bin/hackrf.dll")
+        add_library(HackRf::HackRf SHARED IMPORTED)
+        set_target_properties(HackRf::HackRf PROPERTIES
+            IMPORTED_IMPLIB "${HACKRF_ROOT}/lib/hackrf.lib"
+            IMPORTED_LOCATION "${HACKRF_ROOT}/bin/hackrf.dll"
+            INTERFACE_INCLUDE_DIRECTORIES "${HACKRF_ROOT}/include/libhackrf")
+        set(HACKRF_FOUND TRUE)
+        set(HACKRF_TARGET HackRf::HackRf)
+        file(GLOB HACKRF_RUNTIME_DLLS "${HACKRF_ROOT}/bin/*.dll")
+    endif()
+endif()
+
+if(PkgConfig_FOUND AND NOT HACKRF_TARGET)
     pkg_check_modules(HACKRF IMPORTED_TARGET libhackrf)
+    if(HACKRF_FOUND)
+        set(HACKRF_TARGET PkgConfig::HACKRF)
+    endif()
 endif()
 
 # vcpkg / Homebrew / hand-built installs ship no .pc file (or, like this
@@ -2563,7 +2607,7 @@ endif()
 # for pkg_check_modules but worth a fallback path regardless). hackrf.h
 # installs nested under an includedir/libhackrf/ subdirectory rather than
 # directly in an include root (unlike rtl-sdr.h), hence PATH_SUFFIXES.
-if(ENABLE_HACKRF AND NOT HACKRF_FOUND)
+if(ENABLE_HACKRF AND NOT HACKRF_TARGET)
     find_path(HACKRF_INCLUDE_DIR hackrf.h PATH_SUFFIXES libhackrf)
     find_library(HACKRF_LIBRARY NAMES hackrf libhackrf)
     if(HACKRF_INCLUDE_DIR AND HACKRF_LIBRARY)
@@ -2574,15 +2618,19 @@ if(ENABLE_HACKRF AND NOT HACKRF_FOUND)
         set(HACKRF_FOUND TRUE)
         set(HACKRF_TARGET HackRf::HackRf)
     endif()
-else()
-    set(HACKRF_TARGET PkgConfig::HACKRF)
+endif()
+
+# Found means a target to link: never a stale cached flag without one.
+if(NOT HACKRF_TARGET)
+    set(HACKRF_FOUND FALSE)
 endif()
 
 if(REQUIRE_HACKRF AND NOT (ENABLE_HACKRF AND HACKRF_FOUND))
     message(FATAL_ERROR "REQUIRE_HACKRF=ON but the HackRF backend would be compiled out "
         "(ENABLE_HACKRF=${ENABLE_HACKRF}, libhackrf found: ${HACKRF_FOUND}). "
         "Install libhackrf (Linux: libhackrf-dev; macOS release: "
-        "scripts/setup/setup-macos-deps.sh builds it) or drop REQUIRE_HACKRF.")
+        "scripts/setup/setup-macos-deps.sh builds it; Windows: "
+        "scripts/setup/setup-hackrf.ps1) or drop REQUIRE_HACKRF.")
 endif()
 
 if(NOT ENABLE_HACKRF)
@@ -2592,6 +2640,12 @@ elseif(HACKRF_FOUND)
     set(AETHER_BACKEND_HACKRF ON)
     target_compile_definitions(aethercore PUBLIC AETHER_BACKEND_HACKRF)
     target_link_libraries(aethercore PRIVATE ${HACKRF_TARGET})
+    if(WIN32 AND HACKRF_RUNTIME_DLLS)
+        add_custom_command(TARGET AetherSDR POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HACKRF_RUNTIME_DLLS} "$<TARGET_FILE_DIR:AetherSDR>"
+            COMMENT "Copying libhackrf, libusb and pthreads DLLs to the build directory")
+    endif()
     target_sources(aethercore PRIVATE
         src/core/backends/hackrf/HackRfIq.cpp
         src/core/backends/hackrf/HackRfIq.h

@@ -2750,7 +2750,10 @@ if(AETHER_BACKEND_HACKRF)
     # rtl_backend_test's own approach exactly.
     add_executable(hackrf_backend_test tests/hackrf_backend_test.cpp)
     target_include_directories(hackrf_backend_test PRIVATE src)
-    target_link_libraries(hackrf_backend_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+    # libhackrf too, for hackrf.h: the stream-loss checks name its status
+    # codes (HackRfWorker::streamFault). aethercore links it PRIVATE.
+    target_link_libraries(hackrf_backend_test PRIVATE aethercore ${HACKRF_TARGET}
+        Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME hackrf_backend_test COMMAND hackrf_backend_test)
 
     # HackRF pan/slice bookkeeping (drag keeps the slice, in-span tunes move only
@@ -3540,6 +3543,11 @@ if(PYTHON3_EXECUTABLE)
              COMMAND ${PYTHON3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_hackrf_tx_ota_test.py)
     set_tests_properties(hackrf_tx_ota_safety PROPERTIES SKIP_RETURN_CODE 77)
+    # The x86_64 AppImage builds against Ubuntu 22.04's libhackrf 2021.03.1;
+    # a newer-only name breaks only the release build (v26.10.6). Source scan.
+    add_test(NAME libhackrf_api_floor
+             COMMAND ${PYTHON3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_libhackrf_api.py)
     # RxApplet/VfoWidget are full-desktop translation units with no practical
     # unit-test link seam. Pin their radio-backed presentation wiring; label
     # behavior itself is covered by fm_tone_presentation_test above.
@@ -6344,12 +6352,42 @@ endforeach()
 # (vkamp_connection_test, asr_gpu_probe_test) keeps it. A CMake TIMEOUT
 # property always beats a `ctest --timeout` flag, so this is authoritative
 # in every lane — gate steps, sanitizers, and local dev alike.
+#
+# Sanitizer builds scale every TIMEOUT (upstream #6208). The limits are sized
+# for an uninstrumented build, and instrumentation makes the same test several
+# times slower: weather_radar_loading_test takes ~15 s plain, 26 s under ASan
+# and outran its 30 s under TSan every week (#46). So in an instrumented build
+# each TIMEOUT, the test's own or the default, is multiplied by
+# AETHER_SANITIZER_TIMEOUT_SCALE. An ordinary build keeps every limit as
+# written; if a test outgrows its limit there, raise ITS TIMEOUT, not the scale.
+# "Instrumented": AETHERSDR_SANITIZER is set, or -fsanitize= is in the C/C++
+# flags (how sanitizers.yml builds), global or for the build type.
+set(AETHER_SANITIZER_TIMEOUT_SCALE 4 CACHE STRING
+    "Multiplier applied to every test TIMEOUT in a sanitizer-instrumented build")
+if(NOT AETHER_SANITIZER_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "AETHER_SANITIZER_TIMEOUT_SCALE must be a positive "
+                        "integer, got '${AETHER_SANITIZER_TIMEOUT_SCALE}'.")
+endif()
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _aether_build_type)
+set(_aether_compile_flags "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS} \
+${CMAKE_C_FLAGS_${_aether_build_type}} ${CMAKE_CXX_FLAGS_${_aether_build_type}}")
+set(_aether_timeout_scale 1)
+if(NOT AETHERSDR_SANITIZER STREQUAL "none" OR _aether_compile_flags MATCHES "-fsanitize=")
+    set(_aether_timeout_scale ${AETHER_SANITIZER_TIMEOUT_SCALE})
+    message(STATUS "Sanitizer-instrumented build: test TIMEOUTs scaled x${_aether_timeout_scale}")
+endif()
 get_directory_property(_aether_registered_tests TESTS)
 foreach(_aether_test IN LISTS _aether_registered_tests)
     get_test_property(${_aether_test} TIMEOUT _aether_existing_timeout)
     if(NOT _aether_existing_timeout)
-        set_tests_properties(${_aether_test} PROPERTIES TIMEOUT 300)
+        set(_aether_existing_timeout 300)
     endif()
+    if(NOT _aether_existing_timeout MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "test ${_aether_test}: TIMEOUT '${_aether_existing_timeout}' "
+                            "is not a whole number of seconds, so it cannot be scaled.")
+    endif()
+    math(EXPR _aether_scaled_timeout "${_aether_existing_timeout} * ${_aether_timeout_scale}")
+    set_tests_properties(${_aether_test} PROPERTIES TIMEOUT ${_aether_scaled_timeout})
 endforeach()
 
 # Socket-free capability/extension tests: injected transport, no QLocalServer
