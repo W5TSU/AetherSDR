@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.6
+## Current cycle: post-v26.10.7
 
 ### In flight
 
@@ -156,7 +156,8 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     all 14 modes.
 - **HackRF — multi-slice receive** — the one goal of the HackRF design not
   yet shipped: several independent slices across the HackRF's wide capture,
-  each with its own DDC. The backend is single-slice today. Design:
+  each with its own DDC. The backend is single-slice today. Tracked in
+  [#79](https://github.com/W5TSU/AetherSDR/issues/79). Design:
   [`docs/superpowers/specs/2026-09-16-hackrf-backend-design.md`](docs/superpowers/specs/2026-09-16-hackrf-backend-design.md).
 - **HL2 span-following FFT bin count** — named fast-follow from the
   Hermes-Lite 2 supported-promotion (`docs/adr/0001-hermes-lite-2-supported.md`,
@@ -283,7 +284,9 @@ Highlights from the last 30 days — full list in
   corrected, CW at the pitch, cleaner FM and a remembered AGC (v26.10.5);
   then an S-meter and spectrum in dBm, the full transmit drive, and full
   transmit power on a HackRF Pro, with all 14 transmit modes checked on the
-  air (v26.10.6). Driving goal: FM amateur-satellite work. Fork-only.
+  air (v26.10.6); then Windows builds with the HackRF bundled, and a clean
+  disconnect and reconnect when it is unplugged mid-session (v26.10.7).
+  Driving goal: FM amateur-satellite work. Fork-only.
 - **The workspace canvas** — pans and applets become freely placed, resizable,
   layered items on a canvas that can span several top-level windows, with named
   workspaces, full-recall switching, radio-profile bindings and an Edit Layout
