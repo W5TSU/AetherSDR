@@ -5984,7 +5984,23 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // "Link", where the last section marker left them, put the two at opposite
     // ends of the dialog. (PR #5650 review round 3.)
     section("adcPeakDbfs", QStringLiteral("Converter"));
-    const bool haveBlock = m_bandscopeBlock.samples > 0;
+    // TWO QUESTIONS, NOT ONE (upstream 3eacdabb). `haveObservation` is "has a
+    // block ever arrived"; `haveBlock` is "is the newest one still describing
+    // now". Closing the wideband bandscope stops the EP4 stream with the link
+    // up, and these rows went on publishing the last block indefinitely:
+    // upstream measured 31 dB of commanded LNA gain moving them 0.00 dB. They
+    // now expire after three bandscope gate periods (the producer samples every
+    // 1000 ms), so a live gate may miss two blocks before a row goes absent.
+    // They also go absent during transmit, on purpose: the gate is held off
+    // while keyed, and the last pre-key number shown as current would be the
+    // fabrication this fixes. adcObservedAgoMs is not expired and says which
+    // silence it is.
+    constexpr qint64 kAdcRowMaxAgeMs = 3000;
+    const qint64 blockAgeMs =
+        m_bandscopeBlockClock.isValid() ? m_bandscopeBlockClock.elapsed() : -1;
+    const bool haveObservation = m_bandscopeBlock.samples > 0;
+    const bool haveBlock = haveObservation && blockAgeMs >= 0
+                           && blockAgeMs <= kAdcRowMaxAgeMs;
     const double peak = haveBlock ? m_bandscopeBlock.peakDbfs() : 0.0;
     const double rms  = haveBlock ? m_bandscopeBlock.rmsDbfs()  : 0.0;
     auto dbfs = [haveBlock](double v) {
@@ -6041,8 +6057,8 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // How old the reading is. A gated sensor's number is a snapshot, and a
     // snapshot with no age on it invites being read as current.
     put("adcObservedAgoMs", QStringLiteral("ADC level observed (ms ago)"),
-        (haveBlock && m_bandscopeBlockClock.isValid())
-            ? QVariant(static_cast<qulonglong>(m_bandscopeBlockClock.elapsed()))
+        (haveObservation && blockAgeMs >= 0)
+            ? QVariant(static_cast<qulonglong>(blockAgeMs))
             : QVariant());
     return h;
 }
