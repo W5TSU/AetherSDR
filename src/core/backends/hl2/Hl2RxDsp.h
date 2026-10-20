@@ -345,6 +345,7 @@ public:
     // therefore stays running at constant latency and contains nothing but
     // silence when transmit ends.
     Q_INVOKABLE void setAudioMuted(bool muted);
+    [[nodiscard]] bool isAudioMuted() const noexcept { return m_audioMuted; }
     [[nodiscard]] bool isConfigured() const noexcept { return m_channel != nullptr; }
 
     [[nodiscard]] std::size_t channelOutputBlockSize() const noexcept

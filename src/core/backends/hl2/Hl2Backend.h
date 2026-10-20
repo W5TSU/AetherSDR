@@ -196,6 +196,10 @@ public:
 
 private:
     friend struct Hl2DspReadbackTestAccess;
+    friend struct Hl2UnkeyHoldTestAccess;
+    // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
+    // timer's key-up is the only caller that passes true.
+    void applyKeying(bool key, bool cwBreakIn);
     void invalidateTxDspConfiguration();
     // Publish linkStats() on the fixed cadence the seam promises. Driven by a
     // timer here rather than by MetisClient's receive path so the tick survives
@@ -704,6 +708,17 @@ private:
     // more than one slice open this is where they become one.
     void mixReceiverAudio(int ddc, const std::vector<float>& pcm);
 
+    // The receive-audio gate and its unkey hold (upstream #5850 / #5497).
+    // applyRxAudioMute() sets the mixer gate, the slice-sampling request and
+    // every receiver's demodulator mute together. releaseRxAudioMuteAfterHold()
+    // is the key-UP path: it leaves the receiver muted for
+    // m_unkeyUnmuteHoldMs after MOX-off is queued, so the PA's own decaying
+    // carrier during the T/R turnaround never reaches the demodulator (measured
+    // upstream at +57 dB / +10.6 dBFS on an HL2). Both run on this object's
+    // thread only: mixReceiverAudio() reads m_rxAudioMuted unsynchronised.
+    void applyRxAudioMute(bool muted);
+    void releaseRxAudioMuteAfterHold();
+
     // Per-slice meter name for the seam ("SLC:LEVEL" for the first receiver, so
     // an existing single-receiver consumer keeps the name it already binds to).
     // The suffix on the rest is not decoration: MeterModel::splitMeterId reads
@@ -918,6 +933,14 @@ private:
     bool m_cwAutoKeyed = false;
     QTimer* m_cwHangTimer = nullptr;
     bool m_txMonitor = false;
+    // The receive-audio gate: true from key-down until the unkey hold expires.
+    bool m_rxAudioMuted = false;
+    // 70 ms covers the control-packet wait, the network hop, the HL2's T/R
+    // relay and the PA's decay (upstream measured the burst inside ~60 ms). A
+    // member seeded from the constant so a test can shorten it.
+    static constexpr int kUnkeyUnmuteHoldMs = 70;
+    int m_unkeyUnmuteHoldMs = kUnkeyUnmuteHoldMs;
+    QTimer* m_unkeyUnmuteTimer = nullptr;
     // Both flags above are set SYNCHRONOUSLY while the setAudioMuted they imply
     // rides a queued connection to the DSP thread, so at key-up they say
     // "sampling" a block before it is true. This gate holds the moment sampling

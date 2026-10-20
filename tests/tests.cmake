@@ -4508,6 +4508,14 @@ target_include_directories(hl2_rqst_ack_client_test PRIVATE src)
 target_link_libraries(hl2_rqst_ack_client_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_rqst_ack_client_test COMMAND hl2_rqst_ack_client_test)
 
+# The unkey unmute waits for the radio's T/R, and the MOX-off is queued ahead
+# of it (upstream #5850 / #5497). An ordering test with a clock in it — no WDSP,
+# no socket. tests/ for TestSettingsProfile.h.
+add_executable(hl2_unkey_hold_test tests/hl2_unkey_hold_test.cpp)
+target_include_directories(hl2_unkey_hold_test PRIVATE src tests)
+target_link_libraries(hl2_unkey_hold_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_unkey_hold_test COMMAND hl2_unkey_hold_test)
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
@@ -6150,6 +6158,7 @@ endif()
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    hl2_unkey_hold_test
     noise_floor_auto_adjust_gate_test
     firmware_close_dialog_test
     radio_setup_region_field_test
