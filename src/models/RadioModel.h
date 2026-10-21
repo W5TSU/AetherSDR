@@ -27,6 +27,7 @@
 #include "TunerModel.h"
 #include "AmpModel.h"
 #include "TransmitModel.h"
+#include "TuneInhibitOutputs.h"
 #include "EqualizerModel.h"
 #include "TnfModel.h"
 #include "SpotModel.h"
@@ -2169,6 +2170,9 @@ private:
     QHash<QString, int> m_panTransmitInhibitedTxSlices;
     int  m_tuneInhibitBandId{-1};  // band ID whose TX outputs were inhibited during tune
     bool m_tuneInhibitActive{false};
+    // Exactly the outputs this TUNE cycle disabled; restoreTuneInhibit()
+    // re-enables these and nothing else (TuneInhibitOutputs.h).
+    TuneInhibitOutputs m_tuneInhibitOutputs;
     // #5572 firmware-upload retry barrier. Set when an upload is dispatched to
     // the radio; cleared only when a NEW connection is established, so it
     // survives the Radio Setup dialog (and its uploader) being closed.

@@ -8001,6 +8001,12 @@ int RadioModel::bandIdForFrequency(double freqMhz) const
 
 void RadioModel::applyTuneInhibit()
 {
+    // One cycle owns the snapshot until its restore. A second start inside it
+    // (an ATU autotune during TUNE) would otherwise read the outputs this cycle
+    // already disabled as "off" and record nothing to restore for them.
+    if (m_tuneInhibitActive) {
+        return;
+    }
     auto& s = AppSettings::instance();
     double txFreq = 0.0;
     for (auto* sl : m_slices) {
@@ -8011,55 +8017,48 @@ void RadioModel::applyTuneInhibit()
     auto it = m_txBandSettings.find(bandId);
     if (it == m_txBandSettings.end()) return;
 
-    QStringList inhibited;
-    if (s.value("TuneInhibitAccTx", "False").toString() == "True" && it->accTx) {
+    const auto pref = [&s](const char* key) {
+        return s.value(QLatin1String(key), "False").toString() == "True";
+    };
+    const TuneInhibitOutputs wanted{pref("TuneInhibitAccTx"), pref("TuneInhibitTx1"),
+                                    pref("TuneInhibitTx2"), pref("TuneInhibitTx3")};
+    const TuneInhibitOutputs plan = tuneInhibitPlan(
+        wanted, TuneInhibitOutputs{it->accTx, it->tx1, it->tx2, it->tx3});
+    if (plan.accTx)
         sendCmd(QString("interlock bandset %1 acc_tx_enabled=0").arg(bandId));
-        inhibited << "ACC TX";
-    }
-    if (s.value("TuneInhibitTx1", "False").toString() == "True" && it->tx1) {
+    if (plan.tx1)
         sendCmd(QString("interlock bandset %1 tx1_enabled=0").arg(bandId));
-        inhibited << "TX1";
-    }
-    if (s.value("TuneInhibitTx2", "False").toString() == "True" && it->tx2) {
+    if (plan.tx2)
         sendCmd(QString("interlock bandset %1 tx2_enabled=0").arg(bandId));
-        inhibited << "TX2";
-    }
-    if (s.value("TuneInhibitTx3", "False").toString() == "True" && it->tx3) {
+    if (plan.tx3)
         sendCmd(QString("interlock bandset %1 tx3_enabled=0").arg(bandId));
-        inhibited << "TX3";
-    }
-    if (!inhibited.isEmpty()) {
+    if (plan.any()) {
         m_tuneInhibitBandId = bandId;
         m_tuneInhibitActive = true;
-        qDebug() << "Tune PA inhibit: disabled" << inhibited.join(", ")
+        m_tuneInhibitOutputs = plan;
+        qDebug() << "Tune PA inhibit: disabled" << plan.names().join(", ")
                  << "on band" << bandId << "before tune";
     }
 }
 
 void RadioModel::restoreTuneInhibit()
 {
-    auto& s = AppSettings::instance();
-    int id = m_tuneInhibitBandId;
-    QStringList restored;
-    if (s.value("TuneInhibitAccTx", "False").toString() == "True") {
+    // Exactly what applyTuneInhibit() disabled, on the band it disabled it on,
+    // whatever the preferences say now (upstream 52ea5981).
+    const int id = m_tuneInhibitBandId;
+    const TuneInhibitOutputs restore = m_tuneInhibitOutputs;
+    if (restore.accTx)
         sendCmd(QString("interlock bandset %1 acc_tx_enabled=1").arg(id));
-        restored << "ACC TX";
-    }
-    if (s.value("TuneInhibitTx1", "False").toString() == "True") {
+    if (restore.tx1)
         sendCmd(QString("interlock bandset %1 tx1_enabled=1").arg(id));
-        restored << "TX1";
-    }
-    if (s.value("TuneInhibitTx2", "False").toString() == "True") {
+    if (restore.tx2)
         sendCmd(QString("interlock bandset %1 tx2_enabled=1").arg(id));
-        restored << "TX2";
-    }
-    if (s.value("TuneInhibitTx3", "False").toString() == "True") {
+    if (restore.tx3)
         sendCmd(QString("interlock bandset %1 tx3_enabled=1").arg(id));
-        restored << "TX3";
-    }
-    qDebug() << "Tune PA inhibit: restored" << restored.join(", ") << "on band" << id;
+    qDebug() << "Tune PA inhibit: restored" << restore.names().join(", ") << "on band" << id;
     m_tuneInhibitActive = false;
     m_tuneInhibitBandId = -1;
+    m_tuneInhibitOutputs = {};
 }
 
 void RadioModel::onDisconnected()

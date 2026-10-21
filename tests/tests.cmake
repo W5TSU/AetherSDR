@@ -4738,6 +4738,12 @@ target_include_directories(hl2_tune_memory_test PRIVATE src tests)
 target_link_libraries(hl2_tune_memory_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tune_memory_test COMMAND hl2_tune_memory_test)
 
+# TUNE restores only the TX outputs it inhibited (upstream 52ea5981). Pure.
+add_executable(tune_inhibit_restore_test tests/tune_inhibit_restore_test.cpp)
+target_include_directories(tune_inhibit_restore_test PRIVATE src)
+target_link_libraries(tune_inhibit_restore_test PRIVATE Qt6::Core)
+add_test(NAME tune_inhibit_restore_test COMMAND tune_inhibit_restore_test)
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
