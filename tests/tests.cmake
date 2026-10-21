@@ -4438,6 +4438,13 @@ target_link_libraries(reroute_dead_controls_test PRIVATE
     aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME reroute_dead_controls_test COMMAND reroute_dead_controls_test)
 
+# #6653: SmartSDR 4.3 FDVU/FDVL over SmartCAT and rigctld. Injected stub
+# backend, protocol objects fed command text. Socket-free, nothing keyed.
+add_executable(cat_freedv_mode_tokens_test tests/cat_freedv_mode_tokens_test.cpp)
+target_include_directories(cat_freedv_mode_tokens_test PRIVATE src tests)
+target_link_libraries(cat_freedv_mode_tokens_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME cat_freedv_mode_tokens_test COMMAND cat_freedv_mode_tokens_test)
+
 # #6142: a band-stack recall into DIGU/DIGL leaves the HL2's data-mode AGC
 # alone. A real, unconnected Hl2Backend behind RadioModel. Socket-free.
 add_executable(hl2_bandstack_digital_agc_test tests/hl2_bandstack_digital_agc_test.cpp)
@@ -6832,6 +6839,7 @@ set(AETHER_SETTINGS_CONSUMERS
     gps_fix_state_test
     hl2_discovery_logging_test
     reroute_dead_controls_test
+    cat_freedv_mode_tokens_test
     hl2_bandstack_digital_agc_test
     shortcut_passthrough_test
     hl2_unkey_hold_test
