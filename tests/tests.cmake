@@ -4658,6 +4658,13 @@ target_include_directories(hl2_tune_tail_test PRIVATE src tests)
 target_link_libraries(hl2_tune_tail_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tune_tail_test COMMAND hl2_tune_tail_test)
 
+# HL2 TUNE power per band, captured and restored (upstream 4e547347).
+# Socket-free; nothing is keyed on a radio.
+add_executable(hl2_tune_memory_test tests/hl2_tune_memory_test.cpp)
+target_include_directories(hl2_tune_memory_test PRIVATE src tests)
+target_link_libraries(hl2_tune_memory_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tune_memory_test COMMAND hl2_tune_memory_test)
+
 # HL2 band filter / EP2 frame composition — socket-free, on MetisClient's own
 # packet builder. A band change must not leave two disagreeing config banks in
 # one frame (#4579).
@@ -6487,6 +6494,7 @@ add_test(NAME hl2_rx_panel_gain_test COMMAND hl2_rx_panel_gain_test)
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    hl2_tune_memory_test
     hl2_tune_tail_test
     reroute_dead_controls_test
     hl2_bandstack_digital_agc_test

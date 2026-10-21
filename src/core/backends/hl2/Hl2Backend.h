@@ -213,6 +213,7 @@ private:
     friend struct Hl2UnkeyHoldTestAccess;
     friend struct Hl2RitXitTestAccess;
     friend struct Hl2TuneTailTestAccess;
+    friend struct Hl2TuneMemoryTestAccess;
     // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
     // timer's key-up is the only caller that passes true.
     void applyKeying(bool key, bool cwBreakIn);
@@ -1051,6 +1052,15 @@ private:
     // internal application must neither bootstrap the operator baseline nor
     // record into the per-band map — only OPERATOR intent does that.
     bool m_applyingBandMemory = false;
+    // TUNE power per band, with the same first-set baseline rule as drive. -1 in
+    // m_tunePowerPercent: nothing known yet, TransmitModel's value stands.
+    QMap<QString, int> m_tuneByBand;
+    int m_tuneDefaultPercent = -1;
+    int m_tunePowerPercent = -1;
+    // Records an operator's TUNE power under the current band; false when unchanged.
+    bool recordTunePower(int percent);
+    // The band's remembered TUNE power, echoed to TransmitModel; nothing when unknown.
+    void applyTuneMemoryFor(const QString& bandKey);
 
     // The operator's TX passband, once they have set one, and the flag that says
     // they have.

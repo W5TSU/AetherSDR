@@ -2138,6 +2138,7 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
             delta.rfPower = drive;
             emit transmitChanged(delta);
         }
+        applyTuneMemoryFor(m_currentBandKey);
     }
 
     // ---- how many receivers ----
@@ -4682,6 +4683,9 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
         // Straight to the drive register rather than through setTxPower(), which
         // would overwrite the saved RF power we have to restore on release.
         if (tunePowerPercent >= 0) {
+            if (recordTunePower(tunePowerPercent)) {
+                notifyOperatingStateChanged();
+            }
             applyDrive(tunePowerPercent);
             m_rfDriveOwed = true;
         }
@@ -4691,18 +4695,57 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
     } else {
         setKeying(false);   // clears m_tuning and restores the operator's RF power
         setTxTestTone(0.0, 0.0);
+        // A band changed under the carrier held its TUNE power back
+        // (applyTuneMemoryFor); with the carrier down it applies now.
+        applyTuneMemoryFor(m_currentBandKey);
     }
 }
 
-// Drive only, straight to the register: m_rfPowerPercent stays the value the
-// unkey restores. Nothing changes unless a tune carrier is up.
+// Recorded for the band whether or not a carrier is up. Drive only, straight
+// to the register: m_rfPowerPercent stays the value the unkey restores. The
+// drive changes only while a tune carrier is up.
 void Hl2Backend::setTunePower(int percent)
 {
+    if (recordTunePower(percent)) {
+        notifyOperatingStateChanged();
+    }
     if (!m_tuning || !m_keyed) {
         return;
     }
     applyDrive(percent);
     m_rfDriveOwed = true;
+}
+
+bool Hl2Backend::recordTunePower(int percent)
+{
+    const int clamped = std::clamp(percent, 0, 100);
+    if (clamped == m_tunePowerPercent) {
+        return false;
+    }
+    m_tunePowerPercent = clamped;
+    if (!m_currentBandKey.isEmpty()) {
+        m_tuneByBand.insert(m_currentBandKey, clamped);
+    }
+    // First-set-wins baseline for bands never tuned, as for drive.
+    if (m_tuneDefaultPercent < 0) {
+        m_tuneDefaultPercent = clamped;
+    }
+    return true;
+}
+
+void Hl2Backend::applyTuneMemoryFor(const QString& bandKey)
+{
+    // Unlike drive there is no safe floor to invent: with nothing remembered
+    // TransmitModel's TUNE power stands, and the next operator change records it.
+    // Not under a carrier: the drive it runs at is the one the slider shows.
+    const int tune = m_tuneByBand.value(bandKey, m_tuneDefaultPercent);
+    if (m_tuning || tune < 0 || tune == m_tunePowerPercent) {
+        return;
+    }
+    m_tunePowerPercent = tune;
+    TransmitDelta delta;
+    delta.tunePower = tune;
+    emit transmitChanged(delta);
 }
 
 // The radio keeps radiating after the MOX-off frame: keyed IQ already in its TX
@@ -6398,6 +6441,9 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_haveRestoredState = false;
     m_lnaDbByBand.clear();
     m_driveByBand.clear();
+    m_tuneByBand.clear();
+    m_tuneDefaultPercent = -1;
+    m_tunePowerPercent = -1;
     m_lnaGainDb = hl2::kLnaDefaultGainDb;
     // The forward-response totals are per session, like the peak window itself.
     m_fwdTotalResponses = 0;
@@ -6563,6 +6609,13 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
         txSetpoints.value(QStringLiteral("driveByBand")).toObject();
     for (auto it = driveByBand.constBegin(); it != driveByBand.constEnd(); ++it)
         m_driveByBand.insert(it.key(), qBound(0, it.value().toInt(), 100));
+    if (txSetpoints.contains(QStringLiteral("tuneDefaultPercent")))
+        m_tuneDefaultPercent = qBound(
+            0, txSetpoints.value(QStringLiteral("tuneDefaultPercent")).toInt(), 100);
+    const QJsonObject tuneByBand =
+        txSetpoints.value(QStringLiteral("tuneByBand")).toObject();
+    for (auto it = tuneByBand.constBegin(); it != tuneByBand.constEnd(); ++it)
+        m_tuneByBand.insert(it.key(), qBound(0, it.value().toInt(), 100));
 
     // The mic level, DROPPED rather than clamped when it is out of range —
     // the same rule as the AGC threshold above, and for a sharper reason. This
@@ -6638,7 +6691,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
                   << valid.filterHighHz << "rate" << valid.sampleRateHz
                   << "agc" << valid.agcMode << valid.agcThreshold
                   << "lna bands" << m_lnaDbByBand.size() << "drive bands"
-                  << m_driveByBand.size();
+                  << m_driveByBand.size() << "tune bands" << m_tuneByBand.size();
 }
 
 // Every receiver's AGC pair set to what this session should come up with.
@@ -6777,6 +6830,13 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
     QJsonObject txSetpoints{{QStringLiteral("driveByBand"), driveByBand}};
     if (m_driveDefaultPercent >= 0)
         txSetpoints.insert(QStringLiteral("defaultPercent"), m_driveDefaultPercent);
+    QJsonObject tuneByBand;
+    for (auto it = m_tuneByBand.constBegin(); it != m_tuneByBand.constEnd(); ++it)
+        tuneByBand.insert(it.key(), it.value());
+    if (!tuneByBand.isEmpty())
+        txSetpoints.insert(QStringLiteral("tuneByBand"), tuneByBand);
+    if (m_tuneDefaultPercent >= 0)
+        txSetpoints.insert(QStringLiteral("tuneDefaultPercent"), m_tuneDefaultPercent);
 
     // The operator's TX passband — the Phone applet's low-cut / high-cut.
     //
@@ -6953,10 +7013,11 @@ void Hl2Backend::applyPerBandStateFor(double freqHz, const char* reason)
         delta.rfPower = drive;
         emit transmitChanged(delta);
     }
+    applyTuneMemoryFor(newBand);
 
     qCInfo(lcHl2) << "HL2 band memory (" << reason << "):" << oldBand << "->"
                   << newBand << "lna" << m_lnaGainDb << "dB drive"
-                  << m_rfPowerPercent << '%';
+                  << m_rfPowerPercent << "% tune" << m_tunePowerPercent << '%';
     notifyOperatingStateChanged();
 }
 
