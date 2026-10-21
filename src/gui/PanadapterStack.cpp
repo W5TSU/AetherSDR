@@ -24,7 +24,7 @@
 static void refreshAfterReparent(AetherSDR::SpectrumWidget* sw)
 {
     if (!sw) return;
-#if defined(Q_OS_MAC) && defined(AETHER_GPU_SPECTRUM)
+#if defined(Q_OS_MACOS) && defined(AETHER_GPU_SPECTRUM)
     const bool wasVisible = sw->isVisible();
     sw->hide();
     sw->resetGpuResources();

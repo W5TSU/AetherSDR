@@ -1039,7 +1039,7 @@ RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
                        "external control autostart enable port"),
         [this] { return buildTciServerTab(); });
 #endif
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     addPage(externalCategory, QStringLiteral("DAX"),
         QStringLiteral("dax virtual audio wsjt-x fldigi vara pipewire pulseaudio "
                        "external control autostart enable"),

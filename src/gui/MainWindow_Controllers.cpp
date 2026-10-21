@@ -2955,7 +2955,7 @@ void MainWindow::wireExternalControllers()
     // All three expose the same Qt signal contract via the
     // UlanziDialBackend alias.  See #3232 for design notes.
     m_dialBackend = new UlanziDialBackend;
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
     // macOS keeps the backend on the main thread: IOHIDManager schedules
     // its callbacks on a CFRunLoop, and only the main thread has one
     // integrated with Qt's event loop on macOS.  Linux + Windows

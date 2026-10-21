@@ -80,7 +80,7 @@ inline DaxTxPlatform currentDaxTxPlatform()
 {
 #if defined(Q_OS_WIN)
     return DaxTxPlatform::Windows;
-#elif defined(Q_OS_MAC)
+#elif defined(Q_OS_MACOS)
     return DaxTxPlatform::MacOS;
 #elif defined(Q_OS_LINUX)
     return DaxTxPlatform::Linux;
@@ -91,7 +91,7 @@ inline DaxTxPlatform currentDaxTxPlatform()
 
 inline bool currentBuildHasHostedDax()
 {
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     return true;
 #else
     return false;
@@ -102,7 +102,7 @@ inline DaxTxMode currentDaxTxMode()
 {
 #if defined(Q_OS_WIN)
     return DaxTxMode::ExternalDax2;
-#elif defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#elif defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     return DaxTxMode::HostedDax;
 #else
     return DaxTxMode::None;

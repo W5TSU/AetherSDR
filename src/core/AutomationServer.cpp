@@ -2107,7 +2107,7 @@ QJsonObject dspEngineSnapshot(const AudioEngine* a)
                                    false},
 #endif
         {"MNR",  a->mnrEnabled(),
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
                                    true},
 #else
                                    false},

@@ -41,7 +41,7 @@ struct WanRadioInfo;
 // ─── Platform checks ─────────────────────────────────────────────────────────
 
 // True when the macOS DAX HAL driver bundle is installed (always true on
-// non-mac platforms; the caller is itself #ifdef Q_OS_MAC-gated).
+// non-mac platforms; the caller is itself #ifdef Q_OS_MACOS-gated).
 bool macDaxDriverInstalled();
 
 // ─── Band admissibility ──────────────────────────────────────────────────────

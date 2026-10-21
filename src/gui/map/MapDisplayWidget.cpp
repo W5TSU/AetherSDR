@@ -61,7 +61,7 @@ constexpr qint64 kMaximumFrameCacheBytes = 256 * 1024 * 1024;
 // (PR #5595). Not a performance claim — compatibility only.
 MapView::ViewportMode flatMapViewportMode()
 {
-#if defined(Q_OS_MAC) && defined(AETHER_GPU_SPECTRUM)
+#if defined(Q_OS_MACOS) && defined(AETHER_GPU_SPECTRUM)
     return MapView::ViewportMode::Raster;
 #else
     return MapView::ViewportMode::OpenGlIfAvailable;

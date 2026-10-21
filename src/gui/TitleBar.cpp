@@ -182,7 +182,7 @@ TitleBar::TitleBar(QWidget* parent)
     // On Linux/Windows the menu bar occupies the left side, so add a stretch
     // to center the app name. On macOS the menu is at the OS level, so the
     // app name stays flush left.
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
     // Linux/Windows: center the identity cluster (menu bar is on the left)
     m_hbox->addWidget(makeDragGutter(), 1);
     m_hbox->addWidget(m_heartbeat);
@@ -224,7 +224,7 @@ TitleBar::TitleBar(QWidget* parent)
     connect(m_mfBtn, &QPushButton::clicked, this, &TitleBar::multiFlexClicked);
     m_hbox->addWidget(m_mfBtn);
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     // macOS: heartbeat after multiFLEX (left-aligned, no menu bar in title)
     m_hbox->addSpacing(4);
     m_hbox->addWidget(m_heartbeat);
@@ -588,7 +588,7 @@ bool TitleBar::startWindowMove(QMouseEvent* ev, bool useSystemMove)
             ev->accept();
             return true;
         }
-#elif !defined(Q_OS_MAC)
+#elif !defined(Q_OS_MACOS)
         // startSystemMove() reports success on xcb but the WM-driven drag it
         // hands off to is unreliable there (QTBUG-69716) — under Mutter/
         // XWayland (the common case for `QT_QPA_PLATFORM=xcb` on a Wayland
