@@ -1414,5 +1414,23 @@
   "note": "Immutable sample decode aperture and local generation carried through the existing spectrum feed. No commands, vendor types or backend access; queued observations retain the scale that produced their levels.",
   "split": "",
   "confidence": "high"
+ },
+ "core/AudioDevicePreferencePolicy.h": {
+  "tag": "ui-support",
+  "note": "Header-only policy over PC audio device ids: whether a device-list change keeps the engine's device, falls back to the system default or returns to the saved device, and whether a selection is written to the saved id (#6040). Host audio, no radio state.",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/backends/NoiseFloorAutoAdjustGate.h": {
+  "tag": "universal",
+  "note": "The ONE predicate deciding whether the noise-floor auto-adjust may move the display reference level, as an OR over two backend-neutral properties (a real dBm-range echo, or absolute spectrum bins). Deliberately free of Qt and of RadioCapabilities so the widget and its test read the same function rather than two copies; the UI reaching it is the seam working, not coupling. Family backends populate the capability it is called with.",
+  "split": "",
+  "confidence": "high"
+ },
+ "models/ReceiverSlotCount.h": {
+  "tag": "universal",
+  "note": "How many receiver letters (A, B, C, ...) the UI offers — the RX applet's slice tabs and the CAT applet's VFO targets — tracked from the connection/capability/slice edges. Family-agnostic: the backend's declared ceiling, floored by the slots live receivers occupy (#5775, #5776).",
+  "split": "",
+  "confidence": "high"
  }
 }
