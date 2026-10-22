@@ -8,6 +8,141 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.8] — 2026-10-22
+
+This release is the fifth sync of upstream fixes from `aethersdr/AetherSDR`,
+tracked in #98 (#82 to #97). Most fixes were copied as-is. A few were adapted
+to code the fork does not share with upstream. Fixes that depend on larger
+upstream changes are left for a later release.
+
+### Hermes-Lite 2: two level changes you will notice
+
+- **Receive audio is 12.04 dB quieter (#84).** The receive audio left WDSP
+  12 dB louder than the slider said. If you lowered AF to about 25 to make
+  up for it, set it back to 100.
+- **CW transmits about 6 dB (4×) more power at the same RF Power (#86).**
+  The CW carrier now runs at full scale, the same as TUNE. Check your RF
+  Power before your first CW over on this version.
+
+### Hermes-Lite 2
+
+- **A footswitch or key on the radio now shows as transmit (#86).** Receive
+  mutes too, even when AetherSDR did not key the radio.
+- **TUNE power is saved per band (#88).** It returns when you go back to a
+  band, and it is part of the saved setup.
+- **The transmit ALC ramps its gain within each block (#86).** Before, it
+  stepped once per block.
+- **Transmit fixes (#86, #87):**
+  - the forward-power reading ignores replies that are not measurements;
+  - receive stays muted until the T/R switch has turned around;
+  - TUNE power changes apply while you are tuning;
+  - the transmit tail keeps its filter.
+- **RIT and XIT work (#87).** Each receiver keeps its own setting.
+- **DIGU and DIGL start with AGC off (#87).** Your AGC setting comes back
+  when you leave those modes, including from a band-stack recall.
+- **Discovery searches every network interface (#88).** On a PC with
+  several networks, the HL2 is found on any of them. When nothing is
+  found, the log says why.
+
+### Transmit safety
+
+- **TUNE turns back on only the outputs it turned off (#89).** Before, an
+  output you had turned off yourself could be turned on.
+- **CW keying and TUNE can't both run at once (#89).**
+
+### Controls on radios other than Flex (#90)
+
+- **Some controls used to do nothing on these radios.** They now either
+  work on that radio or say why they can't. This covers:
+  - tuning step;
+  - band-stack AGC/NB/NR;
+  - NR, ANF and AM carrier;
+  - recording;
+  - VOX, monitor and speech processor;
+  - CW speed and break-in;
+  - pan zoom modes;
+  - antenna and DAX TX choices.
+- **Keys you have bound still work with keyboard shortcuts turned off.**
+  A refused key shows one status-bar notice per session.
+
+### FlexRadio (#96)
+
+- **DAX IQ offers only the rates each model supports.** 192 kHz appears
+  only on models that have it. If a saved rate is not supported, DAX IQ
+  uses 96 kHz and keeps your saved choice.
+- **NRS goes up to 50 on firmware 4.3.16 and later.** Earlier firmware
+  still goes to 100.
+- **The GPS FIX card shows the fix state.** Before, it could show
+  "Locked" when the GPS had reported only the time.
+- **Connection fixes:**
+  - SmartLink keeps its UDP path alive;
+  - a failed TCP connect retries cleanly;
+  - outgoing VITA audio is marked DSCP EF for networks that prioritise it.
+- **A hardware PTT with VOX off keeps the local TX meters and audio.**
+- **Radio nickname rules follow FlexLib.**
+- **CWX fixes.** Quotes are sent in a form the radio accepts, and macro
+  status is decoded correctly.
+- **DVK import fixes:**
+  - files are converted to the format the radio needs;
+  - licensing and admission are checked again when you start an import;
+  - names stay whole.
+
+### TCI (#93)
+
+- `tune:` is sent on every TUNE edge, and every `tune:` request gets an
+  answer.
+- `rx_enable` is sent as receivers open and close.
+- `tx_enable` says whether each receiver is allowed to transmit. Before, it
+  said which receiver owned TX.
+
+### Icom (#91)
+
+- Squelch reads back correctly at 0.
+- COMP reads back where it was written, with a range of 0 to 10 on the
+  IC-7300MK2 and IC-705.
+- After a preamp or ATT change, the other front-end stage is read back.
+
+### Spectrum and waterfall (#95)
+
+- Black Level and NB Blank work on a dBm waterfall row, which the HackRF
+  uses.
+- The waterfall time scale recovers after a long drift in frame timing.
+- Display reset puts Grid back, and sets Line Width to 1.0.
+- The ALC bar ends at the tick for its value.
+- On a Flex, the opposite end of the FFT range stays put, and frames
+  already in flight are redrawn after a scale change.
+
+### Everything else
+
+- **A saved audio device that is unplugged is kept (#94).** AetherSDR uses
+  it again when it comes back.
+- **Linux installs keep their Qt paths (#94).** An unusable PipeWire setup
+  is detected and avoided.
+- **WDSP and shutdown fixes (#83):**
+  - two WDSP data races are fixed;
+  - non-finite samples no longer reach the audio output;
+  - shutdown waits for FFTW planner users to finish instead of aborting;
+  - closing a TX channel waits for its PureSignal thread.
+- **Waterfall textures are no longer freed while a frame still uses them
+  (#85).**
+- **RADE keeps its phase stable over long sessions (#85).**
+- **HID discovery runs one search at a time (#85).**
+- **RTL-SDR stops sending spectrum and audio after a disconnect (#92).**
+- **A malformed ADIF file can no longer overflow a field length (#82).**
+- **What's New opens only web links (#82).**
+
+### Not in this release
+
+These upstream changes are not in this release. #98 tracks them:
+
+- upstream's RTL-SDR receive work: M1, WFM, multi-RX, SSB/AM and live PPM;
+- confirming a Flex nickname on the radio;
+- per-slice Auto squelch;
+- SmartSDR 4.3 per-band RCA suppression during TUNE;
+- the rest of the HL2 session-memory work;
+- the release-pipeline rewrite;
+- Qt 6.12.
+
 ## [v26.10.7] — 2026-10-20
 
 ### HackRF on Windows (#42)
