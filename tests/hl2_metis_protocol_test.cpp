@@ -1193,6 +1193,36 @@ int main()
               "all 40 bits reach the wire");
     }
 
+    // ---- IO board status read (REG_INPUT_PINS..REG_FIRMWARE_MAJOR) ----
+    {
+        // The DATA word is what i2c_bus2.v decodes at 0x3d: cmd_data[31:25] ==
+        // 7'h03 with cmd_data[24] set selects STATE_READ_CMDADDR, [22:16] is the
+        // chip and [15:8] the register the read starts from.
+        const std::uint32_t d = kIoBoardStatusReadData;
+        check(((d >> 25) & 0x7F) == 0x03, "status read carries the I2C cookie 7'h03");
+        check(((d >> 24) & 0x01) == 1, "and cmd_data[24], which makes it a READ");
+        check(((d >> 23) & 0x01) == 1, "stop bit set");
+        check(((d >> 16) & 0x7F) == kIoBoardI2cAddr, "addressed to the IO board chip");
+        check(((d >> 8) & 0xFF) == kIoBoardRegInputPins, "starting at REG_INPUT_PINS");
+        check((d & 0xFF) == 0, "C4 carries no data byte: a read writes only the pointer");
+        check(kIoBoardRegInputPins == 6, "REG_INPUT_PINS is register 6 (i2c_registers.h)");
+
+        // The reply: four bytes read from register 6 upwards, the FIRST into
+        // resp_data[7:0] (STATE_READ_DATA1), the last into [31:24].
+        const IoBoardStatus s = decodeIoBoardStatus(0x07'00'EE'2Bu);
+        check(s.inputPins == 0x2B, "DATA[7:0] is REG_INPUT_PINS");
+        check(s.antennaTuner == 0xEE, "DATA[15:8] is REG_ANTENNA_TUNER");
+        check(s.fault == 0x00, "DATA[23:16] is REG_FAULT");
+        check(s.firmwareMajor == 0x07, "DATA[31:24] is REG_FIRMWARE_MAJOR");
+        // 0x2B = 0b101011: EXTTR, In1, In3, In5.
+        check(s.receiving(), "bit 0 is EXTTR, and 1 means RECEIVE");
+        check(s.input(1) && !s.input(2) && s.input(3) && !s.input(4) && s.input(5),
+              "bits 1..5 are In1..In5");
+        check(!s.input(0) && !s.input(6), "there is no In0 and no In6");
+        check(!decodeIoBoardStatus(0x07'00'00'2Au).receiving(),
+              "EXTTR low is transmit");
+    }
+
     // ---- adcClipRatePercent: NULL AND ZERO ARE DIFFERENT FACTS ------------
     //
     // The clip evidence is one bit sampled ~190 times a second and coalesced to
