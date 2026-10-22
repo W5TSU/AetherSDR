@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.7
+## Current cycle: post-v26.10.8
 
 ### In flight
 
@@ -71,43 +71,22 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
-- **Upstream bug-fix sync (batch 5)** — a review of `aethersdr/AetherSDR`
-  on 2026-10-08 found ~115 upstream fixes since the fork's last common base
-  (2026-09-10) that are not here yet. Each was checked against the fork's
-  code; the earlier sync batches already carry the FFTW planner
-  serialization and the HL2 two-stage EP6 watchdog. Next to port, as one
-  batch:
-  - **Waterfall textures** freed while a frame still uses them (upstream
-    #6093; `712bd849`).
-  - **Two WDSP data races** (`analyzer.c`, `calcc.c`; `f655a4b4`). WDSP is
-    shared by the HL2 and HackRF.
-  - **Non-finite samples** reaching the int16 audio conversion (`e8e840d7`).
-  - **HL2 transmit:**
-    - the emergency-stop target made immutable (`4d832528`);
-    - TX audio arriving in bursts no longer spliced (`81806bb3`);
-    - receive unmute deferred past the T/R turnaround (`328bb2aa`).
-  - **RTL-SDR**: worker output gated after disconnect (`c7513e12`).
-  - **Linux installs** keep their Qt paths (`66f39322`).
+- **Upstream bug-fix sync (batch 6)** — batch 5 shipped in v26.10.8
+  ([#100](https://github.com/W5TSU/AetherSDR/pull/100)). What it deferred
+  is tracked in [#98](https://github.com/W5TSU/AetherSDR/issues/98):
+  - upstream's RTL-SDR receive work (M1, WFM, multi-RX, SSB/AM, live PPM),
+    which builds on the typed receive-intent seam the fork doesn't have;
+  - three Flex items that need live verification: nickname confirm,
+    per-slice Auto squelch, and SmartSDR 4.3 per-band RCA suppression;
+  - the rest of the HL2 session memory: receiver set, notches, FFT AVG and
+    the auto-gain law;
+  - the release-pipeline rewrite and Qt 6.12, which need a dry-run tag.
 
-  Lower priority, also HL2:
-  - CW carrier level matched to TUNE;
-  - RIT/XIT honoured;
-  - DIGU/DIGL opened with AGC off;
-  - discovery on every network interface;
-  - the full auto-RF-gain range.
-
-  Several others depend on upstream refactors this fork does not have
-  (`TxCoordinator`, the minimum-phase bandpass, the newer meter seam), so
-  they wait for a larger sync. **Open upstream HL2 bugs likely shared
-  here:**
+  **Open upstream HL2 bugs likely shared here:**
   - [#6052](https://github.com/aethersdr/AetherSDR/issues/6052): each over
     opens with 90–125 ms of keyed silence.
   - [#5198](https://github.com/aethersdr/AetherSDR/issues/5198): SSB transmit
     distortion.
-  - [#5998](https://github.com/aethersdr/AetherSDR/issues/5998): hardware
-    PTT not reflected in the app.
-  - [#5942](https://github.com/aethersdr/AetherSDR/issues/5942): RX audio
-    leaves WDSP 12 dB hot.
 - **HackRF — on-air check of the new transmit modes** — v26.10.5 added SSB,
   digital, AM and DSB transmit, verified in software: sideband, carrier
   and image measurements in `hackrf_tx_modes_test`. The on-air check is now
@@ -287,6 +266,15 @@ Highlights from the last 30 days — full list in
   air (v26.10.6); then Windows builds with the HackRF bundled, and a clean
   disconnect and reconnect when it is unplugged mid-session (v26.10.7).
   Driving goal: FM amateur-satellite work. Fork-only.
+- **Upstream fix sync, batch 5** — 82 of the 100 upstream fixes
+  reviewed in [#98](https://github.com/W5TSU/AetherSDR/issues/98)
+  (v26.10.8); the rest are deferred or don't apply. On
+  the Hermes-Lite 2: receive audio 12 dB quieter (the WDSP panel gain was
+  hot), CW at the same level as TUNE, hardware PTT shown as transmit, TUNE
+  power per band, RIT/XIT, and discovery on every interface. Also: TUNE
+  restores only the outputs it turned off, controls that did nothing on
+  non-Flex radios now work or say why, and Flex, TCI, Icom and waterfall
+  fixes.
 - **The workspace canvas** — pans and applets become freely placed, resizable,
   layered items on a canvas that can span several top-level windows, with named
   workspaces, full-recall switching, radio-profile bindings and an Edit Layout
