@@ -277,19 +277,13 @@ struct IcomBand {
 // generic relative indication rather than borrowing another radio's curve.
 [[nodiscard]] std::span<const CurvePoint> powerCurveFor(const IcomModel& model);
 
-// The front-end stages this model offers, in register order (index 0 is OFF).
-//
-// EMPTY means we have no verified ladder for this model, and the caller must
-// publish NOTHING rather than fall back to another radio's — the same rule
-// powerCurveFor states above, for the same reason. The stages are genuinely
-// per-model: an IC-7610's attenuator has several steps where the IC-705 has
-// one, and the IC-9700's preamp ladder is not the HF ladder. A button labelled
-// "20 dB" on a radio whose register means something else is exactly the
-// misdescription the control registry exists to make visible.
-//
-// A control that does not appear is a better answer than one that appears and
-// lies, so an empty span means the operator simply does not get the button.
-[[nodiscard]] std::span<const std::string_view> preampLabelsFor(const IcomModel& model);
+// The front-end stages at the radio-reported frequency, in register order
+// (index 0 is OFF). Zero frequency uses the shared stages of a ranged ladder.
+// EMPTY means no verified ladder: publish NOTHING rather than borrow another
+// radio's (stages are genuinely per-model), so the operator gets no button
+// instead of a mislabelled one.
+[[nodiscard]] std::span<const std::string_view> preampLabelsFor(
+    const IcomModel& model, std::uint64_t frequencyHz = 0);
 
 // The demodulator modes this model offers, in AetherSDR's NEUTRAL vocabulary —
 // the same strings SliceModel carries and the mode combo displays.
@@ -492,6 +486,8 @@ struct IcomModelProfile {
     std::optional<MemoryProfile> memory;
     std::optional<NetworkConfigurationProfile> networkConfiguration;
     std::span<const std::string_view> preampLabels;
+    // Zero means no frequency restriction on the model ladder.
+    std::uint64_t preampTwoStageUpperExclusiveHz = 0;
     std::span<const AttenStep> attenuatorSteps;
     std::span<const std::string_view> modes;
     std::span<const std::string_view> receiveOnlyModes;
