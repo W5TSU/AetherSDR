@@ -4,7 +4,7 @@
 
 Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine-design.md) §2, §10). One row per engine header the UI includes; converting a touchpoint means the UI reaches that surface through the versioned protocol instead of the header.
 
-**Totals:** 226 touchpoint headers (194 core, 32 models) — 226/226 tagged, 0/226 converted.
+**Totals:** 232 touchpoint headers (199 core, 33 models) — 232/232 tagged, 0/232 converted.
 
 | Header | Includers | Tag | Status |
 |---|---:|---|---|
@@ -16,6 +16,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/AetherDspModePolicy.h` | 2 | universal — Pure policy deciding when AetherDSP must disable for a given mode or slice audio mix. Operates on canonical mode/mute/gain state only; no vendor ties. | unconverted |
 | `core/AgcTCalibrator.h` | 1 | universal — Engine algo sweeping slice AGC threshold vs audio RMS/S-meter to recommend a value; only canonical state. | unconverted |
 | `core/AppSettings.h` | 100 | ui-support — Client-side XML settings store (SSDR.settings-style key/value persistence); app plumbing, not radio state. | unconverted |
+| `core/AudioDevicePreferencePolicy.h` | 1 | ui-support — Header-only policy over PC audio device ids: whether a device-list change keeps the engine's device, falls back to the system default or returns to the saved device, and whether a selection is written to the saved id (#6040). Host audio, no radio state. | unconverted |
 | `core/AudioEngine.h` | 46 | mixed(flex) — Client audio I/O + full RX/TX DSP chain (universal) fused with Flex VITA-49/DAX/Opus TX and Kiwi buffering | unconverted |
 | `core/AudioOutputRouter.h` | 1 | ui-support — Registry fanning the user-selected QAudioDevice to local playback sinks; OS device plumbing, no radio state | unconverted |
 | `core/AutomationBridgeSettings.h` | 3 | ui-support — Owned configuration for the agent automation bridge (enabled / txAllowed / txAck / readOnly) under one nested key; the secret token lives in the OS keychain, not here. Dev and test tooling — same home decision as core/AutomationServer.h. NOTE for RFC §6: txAllowed() is read as a TX-guard input by BOTH AutomationServer and Hl2Backend, so this header is a step-4 consolidation target. | unconverted |
@@ -29,7 +30,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/ChannelStripPresets.h` | 1 | universal — Named-preset save/recall/import-export for the engine audio DSP chain; operates on core-profile DSP state. | unconverted |
 | `core/ClientComp.h` | 13 | universal — Client-side TX dynamics DSP (compressor/limiter/drive/phase rotator + GR meters); radio-agnostic engine DSP. | unconverted |
 | `core/ClientDeEss.h` | 10 | universal — Client TX DSP de-esser (sidechain bandpass + dynamics, meters); radio-agnostic engine DSP chain stage | unconverted |
-| `core/ClientDisplaySettings.h` | 1 | ui-support — Radio-scoped client persistence for locally shaped waterfall cadence under the ClientDisplay feature document; UI settings plumbing, not radio-owned display state. | unconverted |
+| `core/ClientDisplaySettings.h` | 1 | ui-support — Radio-scoped client persistence for locally shaped display state (waterfall cadence, FFT FPS, the dBm range) under the ClientDisplay feature document; UI settings plumbing, not radio-owned display state. | unconverted |
 | `core/ClientEq.h` | 15 | universal — Client-side parametric EQ DSP in AudioEngine (RX/TX paths); radio-agnostic engine DSP, no vendor protocol ties. | unconverted |
 | `core/ClientFinalLimiter.h` | 1 | universal — Final-stage brickwall limiter in client TX DSP chain (ceiling/trim/DC-block + meters); radio-agnostic DSP. | unconverted |
 | `core/ClientGate.h` | 12 | universal — Client TX-chain downward expander/noise gate DSP (thresh/ratio/hold + meters) — radio-agnostic engine DSP. | unconverted |
@@ -50,6 +51,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/CwxLocalKeyer.h` | 2 | universal — Local CW sidetone keyer: text+WPM in, key-down edges out; radio-agnostic despite Flex 'CWX' naming. | unconverted |
 | `core/DaxSettings.h` | 6 | ui-support — DAX/DAX-IQ audio-bridge configuration (enable, per-channel rate/enable) persisted as one nested JSON blob under a single AppSettings key (Principle V); client-side plumbing. | unconverted |
 | `core/DaxTxPolicy.h` | 1 | vendor(flex) — Policy deciding when to claim a Flex dax_tx stream vs deferring to SmartSDR DAX2; whole surface is DAX/VITA-49. | unconverted |
+| `core/DbmRangePlausibility.h` | 2 | ui-support — Header-only predicate: could this dBm range be a real display range. Shared by the pan wiring's outbound backstop and ClientDisplaySettings' store validation; no radio state. | unconverted |
 | `core/DeviceDiagnostics.h` | 1 | ui-support — Host audio-device diagnostics (Qt device BT/USB heuristics, JSON snapshots for troubleshooting), not radio state | unconverted |
 | `core/DigitalVoiceFeature.h` | 8 | universal — Build-flag and availability filtering for digital-voice modes. Radio-agnostic mode-list logic over the DV registry. | unconverted |
 | `core/DigitalVoiceModeRegistry.h` | 1 | universal — Registry of digital-voice mode descriptors (id, settings id, display name, radio mode, underlying mode, waveform name). Canonical mode metadata; no wire coupling. | unconverted |
@@ -115,6 +117,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/PskReporterClient.h` | 1 | ui-support — pskreporter.info HTTP/MQTT fetcher for reception reports of our call; external service feed for a map dialog, no radio state | unconverted |
 | `core/QrzLookupSettings.h` | 1 | ui-support — QRZ credential/settings holder (keychain-backed); client-side settings plumbing, not radio state. | unconverted |
 | `core/QsoRecorder.h` | 1 | universal — QSO WAV recorder gated by MOX using canonical slice freq/mode + audio streams; no vendor protocol ties. | unconverted |
+| `core/QtAudioBackendGuard.h` | 1 | ui-support — Pre-QApplication probe that keeps Qt 6.12's QtMultimedia off a PipeWire backend that would crash; client startup plumbing, not radio state. | unconverted |
 | `core/RADEEngine.h` | 4 | universal — Engine-side RADE/FreeDV digital-voice codec (PCM in/out, EOO, sync/SNR); DAX mentions are just audio plumbing | unconverted |
 | `core/RadioConnection.h` | 2 | vendor(flex) — SmartSDR TCP text-protocol connection (commands/replies/status) — Flex wire protocol, per calibration anchor | unconverted |
 | `core/RadioDiscovery.h` | 3 | mixed(flex) — Device-discovery list/events are core-profile; SmartSDR UDP:4992 parsing + Multi-Flex/license fields are flex | unconverted |
@@ -130,13 +133,14 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/SettingsHelpers.h` | 2 | ui-support — QSlider live/persist debounce wiring for AppSettings saves; pure Qt client plumbing, no radio state. | unconverted |
 | `core/SettingsPaths.h` | 2 | ui-support — Single source of truth for every path in the client settings store (RFC #4603), replacing three drifted hand-copies of the config-dir logic. Client persistence plumbing. | unconverted |
 | `core/SettingsSanitizer.h` | 2 | ui-support — Recursive secret-safe rendering of the settings store for the support bundle and `--config export` (RFC #4603). Diagnostics plumbing. | unconverted |
-| `core/ShortcutManager.h` | 4 | ui-support — Keyboard shortcut registry: QShortcut bindings, persistence, conflict checks — client input plumbing, no radio state. | unconverted |
+| `core/ShortcutManager.h` | 5 | ui-support — Keyboard shortcut registry: QShortcut bindings, persistence, conflict checks — client input plumbing, no radio state. | unconverted |
 | `core/ShutdownTrace.h` | 2 | ui-support — Process-local shutdown diagnostics and support-log breadcrumbs; lifecycle plumbing, not radio state. | unconverted |
 | `core/SignalClassifier.h` | 1 | universal — ONNX CNN voice/carrier classifier over spectrogram patches; radio-agnostic engine DSP/analysis feature | unconverted |
 | `core/SmartLinkClient.h` | 3 | vendor(flex) — SmartLink WAN client: FlexRadio Auth0 login + TLS to smartlink.flexradio.com, WAN radio list/hole-punch. | unconverted |
 | `core/SpeConnection.h` | 2 | peripheral(spe) — Direct serial/ser2net client for the SPE Expert amplifier line (1.5K-FA primary target, protocol shared across 1.3K-FA/2K-FA) — a standalone USB/RS-232 accessory with no FlexRadio awareness at all, same precedent as core/AcomConnection.h. Not radio-family wire; a peripheral accessory, NOT behind the IRadioBackend radio seam. See docs/architecture/spe-expert-amplifier-design.md. | unconverted |
 | `core/SpeProtocol.h` | 2 | peripheral(spe) — Wire codec for standalone SPE Expert amplifiers over serial/ser2net. The accessory connects independently of the radio and stays outside IRadioBackend, matching the ACOM/VKAMP peripheral precedent. | unconverted |
 | `core/SpectrogramBuffer.h` | 1 | universal — Ring buffer of FFT frames per panadapter feeding CNN classifier patches; pure spectrum data, radio-agnostic. | unconverted |
+| `core/SpectrumDecodeScale.h` | 1 | universal — Immutable sample decode aperture and local generation carried through the existing spectrum feed. No commands, vendor types or backend access; queued observations retain the scale that produced their levels. | unconverted |
 | `core/SpotCollectorClient.h` | 2 | ui-support — UDP listener for DXLab SpotCollector desktop app; external integration feeding DxSpot, not radio state | unconverted |
 | `core/SpotCommandPolicy.h` | 4 | ui-support — Settings-backed passive-spots toggle gating whether client emits spot-add cmds; pure AppSettings policy, no radio state | unconverted |
 | `core/SpotModeResolver.h` | 4 | universal — Maps DX-cluster spot mode/comment/band-plan to canonical radio mode; pure spot-to-state logic, no vendor ties. | unconverted |
@@ -148,10 +152,10 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/TciServer.h` | 3 | mixed(flex) — TCI WebSocket server for WSJT-X et al: protocol surface is canonical radio state, but audio/IQ rides Flex DAX | unconverted |
 | `core/TciSettings.h` | 3 | ui-support — TCI server configuration (enable/port) persisted as one nested JSON blob under a single AppSettings key (Principle V); client-side plumbing, same home decision as CatSettings.h. | unconverted |
 | `core/TgxlConnection.h` | 2 | peripheral(4o3a) — Direct TCP client for the 4O3A Tuner Genius XL (port 9010, relay/autotune), reverse-engineered from the 4O3A management app — a standalone accessory transport, not SmartSDR. Not radio-family wire; a peripheral accessory, NOT behind the IRadioBackend radio seam (reclassified from vendor(flex), #4087 follow-up). | unconverted |
-| `core/ThemeManager.h` | 147 | ui-support — Qt token-based theming singleton (colors/fonts/QSS, theme files, editor hooks) — pure client GUI plumbing, no radio state. | unconverted |
+| `core/ThemeManager.h` | 148 | ui-support — Qt token-based theming singleton (colors/fonts/QSS, theme files, editor hooks) — pure client GUI plumbing, no radio state. | unconverted |
 | `core/ThreadCpuRing.h` | 2 | ui-support — Short host-thread CPU history used by Runtime Monitor peak and sparkline presentation. Diagnostic UI support, not radio state. | unconverted |
 | `core/TimeFrameVoter.h` | 1 | universal — Shared AetherClock time-frame types plus confidence-weighted cross-frame bit voting over a sliding window. Map-agnostic pure DSP/logic — no Qt, no GUI, no vendor ties. | unconverted |
-| `core/TxKeyingMarker.h` | 6 | ui-support — QWidget property marker guarding TX-keying controls from the automation bridge; GUI-shell plumbing, no radio state. | unconverted |
+| `core/TxKeyingMarker.h` | 8 | ui-support — QWidget property marker guarding TX-keying controls from the automation bridge; GUI-shell plumbing, no radio state. | unconverted |
 | `core/UlanziDialBackend.h` | 4 | ui-support — Platform alias for Ulanzi Dial HID knob backend (evdev/hidapi); physical input device for client, not radio state | unconverted |
 | `core/UlanziDialMacOSManager.h` | 1 | ui-support — macOS IOKit implementation of the Ulanzi Dial client input surface. Desktop hardware plumbing, not radio state. | unconverted |
 | `core/UlanziDialMappings.h` | 2 | ui-support — Owner of the Ulanzi Dial's pill→action bindings in one feature-owned document (Principle V). A control surface's own configuration — it belongs to the peripheral, not to any radio — same home decision as the FlexControl USB knob. | unconverted |
@@ -176,6 +180,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/backends/ConnectionSharingPolicy.h` | 2 | universal — Fail-closed discovery-time policy for whether a busy radio family permits another client. Canonical cross-family connection safety pending capability descriptors. | unconverted |
 | `core/backends/IRadioBackend.h` | 2 | universal — THE radio seam (RFC §5.5) — the canonical intent verbs, typed deltas and normalized signals every family implements. Universal by definition: the UI reaching this header is the seam working as designed, not coupling. Everything below it in core/backends/<family>/ is family-private. | unconverted |
 | `core/backends/LocalRadioDiscoveryMapping.h` | 1 | universal — Pure RadioInfo <-> DiscoveredRadio projection for the normalized discovery seam: family/transport labels, serial identity, endpoint only for LAN. No vendor payload crosses it and nothing here reaches a radio command. The inverse feeds the desktop picker for families it owns through RadioDiscoverySource (HackRF, #42). | unconverted |
+| `core/backends/NoiseFloorAutoAdjustGate.h` | 2 | universal — The ONE predicate deciding whether the noise-floor auto-adjust may move the display reference level, as an OR over two backend-neutral properties (a real dBm-range echo, or absolute spectrum bins). Deliberately free of Qt and of RadioCapabilities so the widget and its test read the same function rather than two copies; the UI reaching it is the seam working, not coupling. Family backends populate the capability it is called with. | unconverted |
 | `core/backends/RadioCapabilities.h` | 6 | universal — Backend-neutral capability descriptor consumed above the radio seam. Universal by definition; family implementations populate it. | unconverted |
 | `core/backends/anan/AnanDiscovery.h` | 2 | vendor(anan) — openHPSDR Protocol 2 discovery and ANAN-G2 identity handling. Family-specific discovery belongs below the ANAN backend seam. | unconverted |
 | `core/backends/anan/AnanSettings.h` | 1 | ui-support — Client-side connection and ADC configuration for the ANAN backend. Persisted setup plumbing, not live radio state. | unconverted |
@@ -226,6 +231,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `models/RadioModel.h` | 43 | mixed(flex) — Central radio aggregate: core slice/pan/TX/meter/memory state fused with Flex protocol, DAX, SmartLink, Multi-Flex | unconverted |
 | `models/RadioSession.h` | 1 | universal — Per-radio session aggregate: owns RadioModel + id/label; session concept is core-profile, no vendor surface | unconverted |
 | `models/RadioStatusOwnership.h` | 1 | vendor(flex) — SmartSDR status parsing helpers: Flex hex handles, client_handle ownership, remote_audio_rx, interlock gate | unconverted |
+| `models/ReceiverSlotCount.h` | 1 | universal — How many receiver letters (A, B, C, ...) the UI offers — the RX applet's slice tabs and the CAT applet's VFO targets — tracked from the connection/capability/slice edges. Family-agnostic: the backend's declared ceiling, floored by the slots live receivers occupy (#5775, #5776). | unconverted |
 | `models/Rn2SettingsModel.h` | 1 | universal — Process-wide owner of client-side RN2 configuration as one versioned object (Principle V). Engine DSP configuration; radio-agnostic. | unconverted |
 | `models/SliceLinkPolicy.h` | 2 | universal — Pure decision logic for Slice Link (cross-panadapter VFO link) — echo classification on integer Hz, no QObject, no I/O, no model access. Canonical slice state only. | unconverted |
 | `models/SliceModel.h` | 32 | mixed(flex) — Slice state (freq/mode/filter/DSP) is core-profile; DAX, index_letter, SmartSDR status KVs are flex ext | unconverted |

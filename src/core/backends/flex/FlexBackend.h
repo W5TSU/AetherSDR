@@ -8,6 +8,7 @@
 #include "core/backends/IRadioBackend.h"
 
 class QThread;
+class QVersionNumber;
 
 namespace AetherSDR {
 
@@ -53,6 +54,8 @@ public:
     // where RadioModel lives — capabilities() is not thread-safe (no off-thread
     // caller exists yet; this documents the assumption).
     void setModelProvider(std::function<QString()> provider);
+    void setFirmwareVersionProvider(std::function<QString()> provider);
+    void refreshFirmwareCapabilities();
 
     // The capacity THIS radio declared, as opposed to what the model table
     // estimates for radios of its kind (#5594 item 3).
@@ -72,6 +75,7 @@ public:
     void connectRadio(const RadioConnectRequest& request) override;
     void disconnectRadio() override;
     bool isConnected() const override;
+    ReceiveDispatch requestRadioNickname(const QString& nickname) override;
     void setSliceFrequency(int sliceId, double hz) override;
     void setSliceMode(int sliceId, const QString& mode) override;
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
@@ -193,6 +197,10 @@ private:
     std::function<void(const QString&)> m_sink;
     std::function<void(const QString&)> m_sliceSink;
     std::function<QString()> m_modelProvider;
+    bool firmwareAtLeast(const QVersionNumber& minimum) const;
+    int nrsLevelMaximum() const;
+    int m_announcedNrsLevelMaximum = 100;
+    std::function<QString()> m_firmwareVersionProvider;
 
     // Decode-side handle state (#4198). Captured from the amplifier/tgxl status
     // decode and consumed by invokeExtension() to build the amp/tuner relay wire,

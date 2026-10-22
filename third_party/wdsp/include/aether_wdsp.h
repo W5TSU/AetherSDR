@@ -36,6 +36,8 @@ int SetChannelState(int channel, int state, int dmode);
 void fexchange2(int channel, float* inputI, float* inputQ,
                 float* outputLeft, float* outputRight, int* error);
 void SetRXAMode(int channel, int mode);
+// RXA output panel gain, linear; create_rxa() opens it at 4.0.
+void SetRXAPanelGain1(int channel, double gain);
 void SetRXABandpassFreqs(int channel, double lowHz, double highHz);
 // Canonical passband setter. RXASetPassband() is what both reference clients
 // (Thetis, pihpsdr) call: it sets the bandpass AND the SNBA output bandwidth
@@ -258,6 +260,9 @@ uint64_t wdspPortOutstandingAllocations(void);
 // which is the window in which #5734's input overwrite happened. 0 (the
 // default) is a single relaxed load and no sleep. Process-global.
 void wdspPortSetHandoffPauseForTest(unsigned microseconds);
+// Queues a correction-file restore on a TX channel's PureSignal correction
+// thread. AetherSDR calls it only from wdsp_calcc_teardown_test (patch 22).
+void PSRestoreCorr(int channel, char* filename);
 
 #ifdef __cplusplus
 }

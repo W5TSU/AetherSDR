@@ -1151,6 +1151,12 @@ std::string WdspChannel::wisdomCacheKeyFromHeader(std::string_view header)
     return version + "-" + hex;
 }
 
+void WdspChannel::restorePureSignalCorrectionForTest(const char* path) const noexcept
+{
+    // PSRestoreCorr only copies the name; WDSP's signature is just not const.
+    PSRestoreCorr(m_channelId, const_cast<char*>(path));
+}
+
 std::unique_lock<std::mutex> WdspChannel::fftwSetupLock()
 {
     // Forwards, and keeps its name so Hl2Spectrum, AnanPanAnalyzer and
@@ -1219,6 +1225,11 @@ bool WdspChannel::validateConfig(const Config& config, std::string* error) noexc
          config.fmDeviationHz > Config::kMaxFmDeviationHz)) {
         setError(error,
             "WDSP FM deviation is outside Config::kMinFmDeviationHz..kMaxFmDeviationHz");
+        return false;
+    }
+    if (config.rxPanelGain && (config.direction != Direction::Receive
+        || !std::isfinite(*config.rxPanelGain) || *config.rxPanelGain < 0.0)) {
+        setError(error, "WDSP RX panel gain must be finite, non-negative and receive-only");
         return false;
     }
     return true;
@@ -1343,6 +1354,9 @@ void WdspChannel::open() noexcept
         SetRXAMode(m_channelId, wdspMode(m_config.mode));
         SetRXABandpassFreqs(m_channelId, m_config.filterLowHz, m_config.filterHighHz);
         RXANBPSetFreqs(m_channelId, m_config.filterLowHz, m_config.filterHighHz);
+        if (m_config.rxPanelGain) {
+            SetRXAPanelGain1(m_channelId, *m_config.rxPanelGain);
+        }
         applyRxAgc(m_channelId, m_config.agcMode, m_config.maximumAgcGainDb,
                    m_config.agcSlopeDb, m_config.agcFixedGainDb);
         // Filter length / phase mode. RXASetNC internally stops and restarts

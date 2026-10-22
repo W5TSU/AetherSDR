@@ -25,7 +25,7 @@ namespace AetherSDR {
 
 bool macDaxDriverInstalled()
 {
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     const QFileInfo driverBundle("/Library/Audio/Plug-Ins/HAL/AetherSDRDAX.driver");
     if (!driverBundle.exists() || !driverBundle.isDir())
         return false;
@@ -514,19 +514,6 @@ QPixmap buildBandStackIndicatorPixmap(bool active)
     painter.drawEllipse(2, 8, 6, 6);
     painter.drawEllipse(2, 15, 6, 6);
     return pixmap;
-}
-
-QKeySequence shortcutSequenceFromKeyEvent(const QKeyEvent* ev)
-{
-    if (!ev || ev->key() == Qt::Key_unknown)
-        return {};
-
-    const Qt::KeyboardModifiers modifiers =
-        ev->modifiers() & (Qt::ShiftModifier
-                           | Qt::ControlModifier
-                           | Qt::AltModifier
-                           | Qt::MetaModifier);
-    return QKeySequence(static_cast<int>(modifiers) | ev->key());
 }
 
 // ─── Client connection parsing (discovery / multiFLEX) ──────────────────────

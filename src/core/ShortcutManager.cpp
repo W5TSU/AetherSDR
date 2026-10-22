@@ -683,6 +683,10 @@ void ShortcutManager::rebuildShortcuts(QWidget* parent,
 
         auto* sc = new QShortcut(a.currentKey, parent);
         sc->setAutoRepeat(a.autoRepeat);
+        // A disabled QShortcut is skipped by Qt's shortcut map, so its key
+        // reaches the focused widget. An enabled one consumes the key even
+        // when the guard below refuses it (#5483).
+        sc->setEnabled(m_shortcutsEnabled);
         auto handler = a.handler;
         connect(sc, &QShortcut::activated, this, [guardFn, handler]() {
             if (guardFn && !guardFn()) return;
@@ -694,6 +698,7 @@ void ShortcutManager::rebuildShortcuts(QWidget* parent,
 
 void ShortcutManager::setShortcutsEnabled(bool enabled)
 {
+    m_shortcutsEnabled = enabled;
     for (auto* sc : m_shortcuts)
         sc->setEnabled(enabled);
 }
@@ -713,6 +718,14 @@ const ShortcutManager::Action* ShortcutManager::actionForKey(const QKeySequence&
         if (a.currentKey == key) return &a;
     }
     return nullptr;
+}
+
+const ShortcutManager::Action* ShortcutManager::operatingActionForKey(
+    const QKeySequence& key) const
+{
+    // The fork has no window-management shortcut policy: every bound action
+    // is governed by the keyboard-shortcut master switch.
+    return actionForKey(key);
 }
 
 QString ShortcutManager::conflictCheck(const QKeySequence& key,

@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QMap>
+#include <QHostAddress>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -13,6 +14,7 @@
 #include "core/backends/AmpDelta.h"
 #include "core/backends/GpsDelta.h"
 #include "core/backends/MemoryDelta.h"
+#include "core/backends/ReceiveDispatch.h"
 #include "core/backends/MeterDef.h"
 #include "core/backends/NotchDelta.h"
 #include "core/backends/ProfileDelta.h"
@@ -34,6 +36,8 @@ struct RadioConnectRequest {
     QString serial;         // when a family identifies radios by serial
     QVariantMap params;     // family-specific extras (namespaced by the backend)
     RadioSerialIdentity serialIdentity;
+    // Local IPv4 address that reached the radio; null lets the OS choose.
+    QHostAddress localBindAddress;
 };
 
 // Complete radio-owned memory state applied after the common frequency/mode
@@ -174,6 +178,9 @@ class IRadioBackend : public QObject {
     Q_OBJECT
 
 public:
+    // Radio-owned identity; client-owned nicknames retain their local store.
+    virtual ReceiveDispatch requestRadioNickname(const QString&)
+    { return ReceiveDispatch::Unsupported; }
     explicit IRadioBackend(QObject* parent = nullptr) : QObject(parent) {}
     ~IRadioBackend() override = default;
 
@@ -239,6 +246,13 @@ public:
     // configures that chain. Sent as a pair because a backend configuring a DSP
     // AGC generally needs both to make either meaningful.
     virtual void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) = 0;
+    // A stored AGC mode replayed by a band-stack recall, not an operator edit.
+    // A backend with its own per-mode AGC default (HL2 DIGU/DIGL) may keep its
+    // default and re-echo the slice; every other backend applies it as an edit.
+    virtual void recallSliceAgc(int sliceId, const QString& mode, int thresholdDb)
+    {
+        setSliceAgc(sliceId, mode, thresholdDb);
+    }
     // Move the panadapter's centre — the receiver's WINDOW, not the slice.
     // A backend whose hardware streams a fixed window retunes it; one that
     // owns a DDC moves the NCO. Without this the UI can pan the view locally
@@ -619,6 +633,14 @@ public:
     // implements it.
     virtual void setTxPower(int percent) { Q_UNUSED(percent); }
 
+    // TUNE power (0..100) changed: unkeyed, or on a carrier this client keyed.
+    // NEVER keys: a backend generating its own carrier re-applies drive to one in
+    // progress; otherwise it may only record the value (HL2 keeps it per band),
+    // since the next setTune() carries it.
+    // Owner thread, like setTxPower(). Declaring
+    // TransmitDriveControl::tunePowerAppliesLive promises it is implemented.
+    virtual void setTunePower(int percent) { Q_UNUSED(percent); }
+
     // The operator's CW pitch, in Hz (TransmitModel's range: 100..6000).
     //
     // A sidetone setting on a radio that keys itself; a TUNING setting on a
@@ -803,22 +825,18 @@ public:
     // radio-wide selected-VFO state, not a memory/slice parameter.
     virtual void setTransmitFrequencyCheck(bool on) { Q_UNUSED(on); }
 
-    virtual void setRitEnabled(bool on) { Q_UNUSED(on); }
-    virtual void setXitEnabled(bool on) { Q_UNUSED(on); }
-    virtual void setRitOffset(int hz) { Q_UNUSED(hz); }
+    // Receive and transmit incremental tuning, Hz relative to the slice's VFO. Per
+    // slice, as FlexLib's Slice.RITOn/RITFreq/XITOn/XITFreq: each slice keeps its own
+    // pair and XIT applies when that slice transmits. A radio with one receiver may
+    // ignore the id. A radio without RIT does not implement these.
+    virtual void setSliceRitEnabled(int sliceId, bool on) { Q_UNUSED(sliceId); Q_UNUSED(on); }
+    virtual void setSliceXitEnabled(int sliceId, bool on) { Q_UNUSED(sliceId); Q_UNUSED(on); }
+    virtual void setSliceRitOffset(int sliceId, int hz) { Q_UNUSED(sliceId); Q_UNUSED(hz); }
 
-    // The TRANSMIT offset, separately from the receive one.
-    //
-    // Defaults to setRitOffset() because the radio this seam was first shaped
-    // against has ONE shared register: an IC-705 keeps the shift in 21 00 and
-    // uses 21 01 / 21 02 only to choose whether it applies to receive, transmit
-    // or both. A radio with two independent registers — a Flex has separate
-    // rit_freq and xit_freq — overrides this and stops the two aliasing.
-    //
-    // Split out because without it the seam had two enables and one offset, and
-    // an XIT intent silently wrote the RIT register on every backend rather
-    // than only on the one where that is the truth.
-    virtual void setXitOffset(int hz) { setRitOffset(hz); }
+    // The TRANSMIT offset. Defaults to setSliceRitOffset() because an IC-705 has ONE
+    // shift register (21 00; 21 01 / 21 02 choose whether it applies to RX, TX or
+    // both). A radio with two registers overrides this.
+    virtual void setSliceXitOffset(int sliceId, int hz) { setSliceRitOffset(sliceId, hz); }
 
     // Transmit audio passband, in Hz above the carrier — the Phone applet's TX
     // low-cut and high-cut.

@@ -1,6 +1,7 @@
 #include "core/backends/hackrf/HackRfIq.h"
 
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstdint>
 #include <vector>
@@ -148,6 +149,21 @@ void testPackClampsOvershoot()
     packTxIq(in, raw);
     expectEqual("1.5 clamps to +127, not wrapped", static_cast<std::int8_t>(raw[0]), 127);
     expectEqual("-2.0 clamps to -127, not wrapped", static_cast<std::int8_t>(raw[1]), -127);
+}
+
+void testPackNonFiniteIsSilence()
+{
+    // A NaN or infinity from the modulator must not reach the DAC as an
+    // arbitrary byte: NaN passes std::clamp and lround(NaN) is unspecified.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    std::vector<std::complex<float>> in = {{nan, -nan}, {inf, -inf}};
+    std::uint8_t raw[4];
+    packTxIq(in, raw);
+    expectEqual("NaN I -> 0", static_cast<std::int8_t>(raw[0]), 0);
+    expectEqual("NaN Q -> 0", static_cast<std::int8_t>(raw[1]), 0);
+    expectEqual("+inf I -> 0", static_cast<std::int8_t>(raw[2]), 0);
+    expectEqual("-inf Q -> 0", static_cast<std::int8_t>(raw[3]), 0);
 }
 
 void testPackMultipleSamples()
@@ -307,6 +323,7 @@ int main()
     testPackFullScalePositive();
     testPackFullScaleNegative();
     testPackClampsOvershoot();
+    testPackNonFiniteIsSilence();
     testPackMultipleSamples();
     testRoundTripApproximatelyRecoversInput();
 

@@ -3,6 +3,8 @@
 
 #include <QString>
 #include <QStringList>
+#include <map>
+#include <memory>
 #include <optional>
 
 namespace AetherSDR {
@@ -37,6 +39,12 @@ public:
         QString source;
     };
 
+    struct TuneRequest
+    {
+        int trx { 0 };
+        bool tune { false };
+    };
+
     explicit TciProtocol(RadioModel* model, TciRoutingState* routingState = nullptr,
                          const TciTrxMap* trxMap = nullptr);
 
@@ -54,6 +62,7 @@ public:
     std::optional<VfoRequest> takeVfoRequest();
     std::optional<SplitRequest> takeSplitRequest();
     std::optional<TrxRequest> takeTrxRequest();
+    std::optional<TuneRequest> takeTuneRequest();
 
     // After handleCommand(), if the command was a master-volume SET, this
     // returns the requested level (0-100). -1 means no master-volume change
@@ -128,6 +137,7 @@ private:
     QString cmdLock(const QStringList& args, bool isSet);
     QString cmdSqlEnable(const QStringList& args, bool isSet);
     QString cmdSqlLevel(const QStringList& args, bool isSet);
+    void queueSquelch(SliceModel* s, int trx, bool on, int level);
     QString cmdVolume(const QStringList& args, bool isSet);
     QString cmdMute(const QStringList& args, bool isSet);
     QString cmdAgcMode(const QStringList& args, bool isSet);
@@ -136,7 +146,7 @@ private:
     QString cmdRxNrEnable(const QStringList& args, bool isSet);
     QString cmdRxAnfEnable(const QStringList& args, bool isSet);
     QString cmdRxApfEnable(const QStringList& args, bool isSet);
-    // AetherSDR extensions (DVK record/play)
+    // AetherSDR extensions (slice quick-record record/play)
     QString cmdRxRecord(const QStringList& args, bool isSet);
     QString cmdRxPlay(const QStringList& args, bool isSet);
     QString cmdActiveSlice(const QStringList& args);
@@ -195,6 +205,11 @@ public:
     // slice is not in the model's list.
     static int tciTrxForSlice(RadioModel* model, const SliceModel* slice);
 
+    // TCI's tx_enable is a per-receiver permission advertisement.  It does
+    // not identify the slice which currently owns TX; PTT routing resolves
+    // that separately when a client deliberately keys the radio.
+    static bool transmitPermitted(const RadioModel* model, const SliceModel* slice);
+
     // The single scan for "which trx is the TX slice", returning -1 when none
     // is marked. Both TX-trx resolvers build on this so the scan lives in one
     // place; they differ ONLY in how they map the -1 sentinel (txTrx() below
@@ -244,12 +259,20 @@ private:
     std::optional<VfoRequest> m_vfoRequest;
     std::optional<SplitRequest> m_splitRequest;
     std::optional<TrxRequest> m_trxRequest;
+    std::optional<TuneRequest> m_tuneRequest;
     int         m_pendingMasterVolume{-1};   // -1 = no change requested
     int         m_pendingTxGain{-1};         // -1 = no change requested
     int         m_activeTrx{-1};             // -1 = focus not yet known (#4160)
     int         m_iqSampleRate{48000};       // seeded by TciServer, see setIqSampleRate
     QString     m_activeLetter;              // focused slice's display letter (#4160)
     bool        m_started{false};  // client sent START
+    // sql_enable and sql_level each send the pair, and setSquelch runs on a
+    // queued hop, so a burst carrying both would read the slice's old value
+    // for the other half and undo its partner. Each half is held here until
+    // its queued setSquelch runs; shared because that hop can outlive us.
+    struct PendingSquelch { std::optional<bool> on; std::optional<int> level; };
+    std::shared_ptr<std::map<int, PendingSquelch>> m_pendingSquelch{
+        std::make_shared<std::map<int, PendingSquelch>>()};
 };
 
 } // namespace AetherSDR

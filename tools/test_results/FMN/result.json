@@ -1,0 +1,52 @@
+{
+  "mode": "FMN",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "signal",
+      "passed": true,
+      "measured": 73.0,
+      "limit": ">= 20 dB over the noise",
+      "unit": "dB"
+    },
+    {
+      "name": "modulated",
+      "passed": true,
+      "measured": 1.25,
+      "limit": "beta >= 0.1 (audio reached the modulator)",
+      "unit": ""
+    },
+    {
+      "name": "tone_frequency",
+      "passed": true,
+      "measured": 1000.0,
+      "limit": "1000 Hz +/- 2 %",
+      "unit": "Hz"
+    },
+    {
+      "name": "deviation",
+      "passed": true,
+      "measured": 1250.0,
+      "limit": "<= 2500 Hz + 10 %",
+      "unit": "Hz"
+    },
+    {
+      "name": "fmn_ratio",
+      "passed": true,
+      "measured": 0.497,
+      "limit": "0.4..0.6 of FM",
+      "unit": ""
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -61.6,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [
+    "Bessel fit: beta 1.250, residual 1.26e-06"
+  ],
+  "dial_offset_hz": -1241.6
+}

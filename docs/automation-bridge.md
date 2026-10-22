@@ -246,7 +246,7 @@ without letting it change anything — check **"Observe only"** in Radio
 Setup → Network. The bridge then refuses **every** mutating verb and
 answers only pure-introspection reads (`ping`, `verbs`, `whoami`, `get`,
 `dumpTree`, `grab`, the read-only `log` actions, `floors`, the inventory-only
-`streams` actions, and `hitTest`). In particular, it blocks `log set/reset`
+`streams` actions, `interlock probe`, and `hitTest`). In particular, it blocks `log set/reset`
 and `streams reset/resync/refresh`; the latter two stream actions clear local
 diagnostics or request a fresh radio inventory. It is
 enforced in the app, not in the MCP server, so no client can flip it
@@ -721,7 +721,7 @@ connects).
 | `audio` | — | audio-engine snapshot (RX/TX stream state, mute, buffer counters, Opus TX pacing counters, KiwiSDR TX mute gate, Receive Presentation output-signal counters) |
 | `dsp` | — | client-side AetherDSP noise-reduction state, **plus a `backend` object** carrying the backend-owned DSP read-back (`family` and a `chains` list, each entry naming its `chain` and its `level`) when the active backend reports one — see [`get dsp`](#get-dsp) |
 | `radio` | — | radio snapshot (name, model, version, connected, **connectState**, fullDuplex, transmitting, txPower, paTemp, slice/pan counts) — see [`connectState`](#connectstate). `txPower` (measured forward power, Watts, **display-smoothed** — the same number as `get meters`.`fwdPower`; `get meters`.`fwdPowerInstant` is the unsmoothed sample, which is what a gate reading back a drive change wants) and `paTemp` are **null** unless a live sample says otherwise; neither reports a fabricated zero. The operator's requested drive is `get transmit`.`rfPower`, which is a different quantity. |
-| `gps` | — | GPS status, backend-normalized `positionValid` and `source`, tracked/visible counts, grid, radio-format coordinates, altitude, speed, course, UTC time and date, frequency error, the Flex-hosted `ntpServerAddress`, the radio-owned NTP client state (`ntpClientEnabled`, `ntpClientServer`, `gpsTimeCorrection`, `ntpSyncStatus` — IC-705), and oscillator-reference state. This authenticated diagnostic response contains precise location data; the compact status bar and tooltip do not. |
+| `gps` | — | GPS status, normalized `fixState` (`3D`, `2D`, `TIME_ONLY`, `NO_FIX`, `Unknown`), backend-normalized `positionValid`, `timeValid` and `source`, tracked/visible counts, grid, radio-format coordinates, altitude, speed, course, UTC time and date, frequency error, the Flex-hosted `ntpServerAddress`, the radio-owned NTP client state (`ntpClientEnabled`, `ntpClientServer`, `gpsTimeCorrection`, `ntpSyncStatus` — IC-705), and oscillator-reference state. This authenticated diagnostic response contains precise location data; the compact status bar and tooltip do not. |
 | `transmit` | — | TX-chain snapshot: RF/tune power, mic/processor/monitor, VOX/AM/DEXP, TX filter, CW (speed/pitch/break-in/delay/sidetone/iambic mode/paddle swap/CWL/monitor gain+pan), ATU, APD. Validate that a TX/Phone/CW applet control reached the radio model. |
 | `cwx` | — | CWX keyer + queue-drain watch — see [`get cwx`](#get-cwx) |
 | `equalizer` (or `eq`) | — | 8-band RX+TX graphic EQ: `rxEnabled`/`txEnabled` and `rx`/`tx` band maps keyed by label (`63`…`8k`). Validate EQ-applet slider changes. |
@@ -1045,6 +1045,20 @@ used by the stacked trace renderer.
   sources; useful for checking that hidden histories continue updating.
 - `kiwiFftTraceFloorDbm` versus `kiwiDisplayFloorDbm` — distinguishes the FFT
   trace floor used by 3D placement from the waterfall color floor.
+- `encoderMinDbm`, `encoderMaxDbm`, `encoderRangeGeneration` — the locally
+  applied native pixel-decoder range, separate from the display axis.
+- `noiseFloorReacquiring` — whether auto floor is waiting for a settled fresh
+  sequence after a native range, tuning, antenna, or RF-gain transition.
+- `nativeInputBins` — native FFT values delivered to the widget, before its
+  temporal display smoothing, including any active local range rebase. These
+  are decoded dBm, not raw VITA pixel rows.
+- `renderedTrace` — the last native 2D trace submitted by the GPU renderer (or painted
+  by the software renderer), with its axis, floor, time, local FFT sequence,
+  and locally applied encoder generation. `valid:false` means no trace has
+  rendered, or the visible source is Kiwi/3D. These generations are local
+  diagnostics, not VITA wire tags;
+  this snapshot does not certify scanout or exclude old UDP frames. Use a
+  native screenshot to confirm the visible result.
 
 `get meters` additionally reports `temperature` and `voltage` observations with
 `status`, `value`, `unit` and `ageMs`. `status` is one of `unsupported`,
@@ -1849,6 +1863,9 @@ never sends a radio command.
 → {"cmd":"gps","action":"fixture","value":"8000"}
 ← {"ok":true,"gps":"fixture","profile":"8000","snapshot":{"status":"Locked","latitude":"34.224400000","ntpServerAddress":"192.0.2.80",…}}
 
+→ {"cmd":"gps","action":"fixfixture","value":"TIME_ONLY"}
+← {"ok":true,"gps":"fixfixture","snapshot":{"fixState":"TIME_ONLY","positionValid":false,…}}
+
 → {"cmd":"gps","action":"clearfixture"}
 ← {"ok":true,"gps":"clearfixture"}
 ```
@@ -1859,7 +1876,16 @@ minutes form seen from a FLEX-6700 GPSDO. The `8000` profile exercises decimal
 degrees and the `track` (course-over-ground) field captured from FLEX-8600
 firmware 4.2.18, plus the reserved TEST-NET-1 address `192.0.2.80` for testing
 the 8000-series NTP tip. Use `get gps` or `dumpTree` after injecting to assert
-model or widget state.
+model or widget state. Both location profiles initialize fix state to Unknown,
+matching firmware without the field. `gps fixfixture <3D|2D|TIME_ONLY|NO_FIX|UNKNOWN>`
+injects only the normalized fix-state field, preserving receiver status,
+coordinates and oscillator lock. It never establishes position validity or lock.
+`clearfixture` clears fix state, position validity, source, UTC date and the location report.
+These fixtures prove presentation and propagation, not physical GPS acquisition.
+Run `python3 tools/automation_gps_fix_probe.py --socket <socket> --output <directory>`
+against an isolated disconnected app to check all five states in the real
+AetherGPS readout, independent lock/time/position validity, and save screenshots
+and JSON evidence. The probe clears its fixture when it finishes.
 
 #### `slice rxsource`
 Selects the receive source for a slice through the same virtual-Kiwi path as
@@ -3447,6 +3473,13 @@ script that asserts on it reads a transient from the start of the over as
 though it were the power now. It is reset at each key edge, which is right for
 a needle and wrong for a test.
 
+**`forwardPowerSkippedTotal` counts HL2 forward-power responses left out of the
+peak window** because their temperature word is 0, which no working sensor
+reads. It is a total since connect and absent until a forward-power response
+arrived, so `0` is a reading. A few per key-on is normal on gateware 74.2. A
+count that rises all the time means the radio's temperature word reads 0: the
+peak hold then runs on the last value alone and reads low on speech.
+
 On the HL2, `rfPowerPercent` / `txDriveRegister` / `txDriveGated` are the
 requested-versus-applied pair for transmit drive. `txDriveRegister` is the raw
 value last written to the radio and is **absent until the first write** — a `0`
@@ -4315,8 +4348,31 @@ stops the sweep without issuing a restoration rate change. No calibration
 code changes RX audio or keys TX. Physical-radio persistence validation is
 still a separate radiocert task.
 
+### `interlock probe`
+
+`interlock probe source=MIC,VOX [vox=0|1] [owner=local|other]` runs the same
+TX-state reconciler used by incoming interlock status, with an isolated
+`TransmitModel`. It constructs no radio model, backend, transport or device,
+and never touches the active session or its GUI/audio/serial outputs.
+
+The result includes snapshots for requested, transmitting, bare VOX, empty
+source and READY phases; local transmit/audio-gate state edges; and captured
+command/keying intents. `source=` explicitly selects an empty source. Sources
+are limited to 128 uppercase ASCII letters, digits, underscores and commas;
+unknown tokens are allowed so exact-token refusal can be tested. Duplicate or
+unknown options are rejected. `owner` is an input to the ownership policy,
+not a claim that a real radio was tested. The diagnostic requires no TX
+permission and cannot create an operator intent or send a command. It also
+works in **Observe only** mode; the configured access token is still required.
+Other `interlock` actions remain blocked in observe-only mode.
+
+This provides isolated client reconciliation evidence. Status parsing,
+ownership-handle mapping and cached-source lifecycle are covered by the
+socket-free production-router tests; live firmware, visible GUI meters and
+audio devices require separate hardware validation.
+
 <!-- BEGIN GENERATED VERB TABLE (tools/gen_bridge_docs.py) -->
-<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 76 verbs. -->
+<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 77 verbs. -->
 
 | Verb | Aliases | Description |
 |---|---|---|
@@ -4352,7 +4408,8 @@ still a separate radiocert task.
 | `atu` | — | atu <bypass\|start> — antenna tuner (start is TX-gated) |
 | `slice` | — | slice <action> [args] — slice lifecycle/config (see doSlice) |
 | `notch` | — | notch <list\|add\|set\|remove\|enable> [args] — manual notch filters (add <freqMhz> [widthHz]; set <id> [freq=<mhz>] [width=<hz>]; remove <id>; enable <0\|1>) |
-| `gps` | — | gps <fixture\|clearfixture> [6000\|8000] — disconnected GPS test data |
+| `interlock` | — | interlock probe source=<tokens> [vox=0\|1] [owner=local\|other] — isolated production TX-state reconciliation; no radio or device access |
+| `gps` | — | gps <fixture\|fixfixture\|clearfixture> [profile\|fix] — disconnected GPS test data |
 | `waveform` | — | waveform <start\|stop\|unregister\|resync> [args] — digital-voice service |
 | `tune` | — | tune <mhz> [sliceId] — set a slice frequency (default: the active slice) |
 | `freqcal` | — | freqcal [get\|set <ppb>\|from_vfo <reference_mhz>\|reset] — manual frequency calibration (radios that cannot calibrate themselves) |

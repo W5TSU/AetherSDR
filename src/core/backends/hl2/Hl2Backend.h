@@ -83,6 +83,9 @@ public:
     void setSliceFilter(int sliceId, int lowHz, int highHz) override;
     void setCwPitch(int hz) override;
     void setSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
+    // A recalled AGC mode is dropped while the receiver is in DIGU/DIGL (it
+    // keeps the data mode's AGC off); otherwise it is setSliceAgc().
+    void recallSliceAgc(int sliceId, const QString& mode, int thresholdDb) override;
     // The impulse noise blanker, run on this host — the HL2 has no firmware DSP
     // to switch on, so this is the same arrangement as the manual notch: the
     // seam verb lands in WDSP here rather than on a wire. The other members of
@@ -134,6 +137,7 @@ public:
     void submitTxAudio(const QByteArray& int16Stereo, int sampleRateHz,
                        bool clientLeveled) override;
     void setTxPower(int percent) override;
+    void setTunePower(int percent) override;
     void setTxFilter(int lowHz, int highHz) override;
     void setMicGain(int level) override;
     // No default argument here on purpose: defaults on virtuals bind statically,
@@ -142,6 +146,16 @@ public:
     void setTune(bool on, int tunePowerPercent) override;
     void setTxAudioMonitor(bool on) override;
     void setTxFrequency(double hz);
+    // RIT / XIT, per receiver (#5386, #6105). RIT offsets that receiver's own
+    // receive; XIT is held per receiver and reaches the TX NCO register only
+    // while that receiver owns transmit. Neither moves the published slice
+    // frequency — that stays the dial.
+    void setSliceRitEnabled(int sliceId, bool on) override;
+    void setSliceRitOffset(int sliceId, int hz) override;
+    void setSliceXitEnabled(int sliceId, bool on) override;
+    // Overridden, not inherited: the base forwards to the RIT offset for a radio
+    // with one shared register, and the HL2's RX and TX paths are independent.
+    void setSliceXitOffset(int sliceId, int hz) override;
     void setTxDriveLevel(int level);
     // Baseband TX test tone, offsetHz from the carrier, amplitude 0..1.
     // Opt-in only — never enabled by a default.
@@ -196,6 +210,21 @@ public:
 
 private:
     friend struct Hl2DspReadbackTestAccess;
+    friend struct Hl2UnkeyHoldTestAccess;
+    friend struct Hl2RitXitTestAccess;
+    friend struct Hl2TuneTailTestAccess;
+    friend struct Hl2TuneMemoryTestAccess;
+    // Feeds EP6 status frames to the backend's own MetisClient on its I/O thread,
+    // for hl2_hardware_ptt_state_test.
+    friend struct Hl2HardwarePttTestAccess;
+    // The radio keyed or unkeyed itself (MetisClient::radioPttChanged). Observation
+    // only: it publishes the transmit state and mutes receive, and keys nothing.
+    void onRadioPttChanged(bool keyed);
+    // Emit transmitChanged{mox} when m_keyed || m_radioPtt changes, and only then.
+    void publishTransmitState();
+    // setKeying() with the CW break-in flag the unkey hold needs: the CW hang
+    // timer's key-up is the only caller that passes true.
+    void applyKeying(bool key, bool cwBreakIn);
     void invalidateTxDspConfiguration();
     // Publish linkStats() on the fixed cadence the seam promises. Driven by a
     // timer here rather than by MetisClient's receive path so the tick survives
@@ -329,6 +358,9 @@ private:
     // Clamp 0..100, map onto the drive register, honour the transmit gate.
     // Shared by setTxPower() and setTune() so the mapping exists exactly once.
     void applyDrive(int percent);
+    void beginTxTail();
+    void cancelTxTail();
+    void finishTxTail();
     static double temperatureCelsius(int raw);
     // Uncalibrated directional-coupler counts -> watts now lives beside the
     // curve itself, as AetherSDR::hl2::directionalWatts() in MetisProtocol —
@@ -454,6 +486,17 @@ private:
         // window.
         double sliceFreqHz = 10'000'000.0;   // slice
         double ncoHz       = 10'000'000.0;   // DDC / pan centre
+        // True while the NCO sits off the dial only because RIT pushed the
+        // receive frequency out of the window (the dial alone fitted), so
+        // clearing RIT re-centres it on the dial. A pan drag clears it.
+        bool ncoMovedForRit = false;
+
+        // RIT / XIT, Hz from the dial. Nothing on the wire echoes them, so
+        // emitSliceState() publishes these back as the readout.
+        bool ritOn = false;
+        int  ritHz = 0;
+        bool xitOn = false;
+        int  xitHz = 0;
 
         QString mode = QStringLiteral("USB");
         // Overwritten from defaultPassbandForMode(mode) on the first linkUp of
@@ -467,6 +510,10 @@ private:
         // so the first sliceChanged reports what WDSP was actually opened with.
         QString agcMode = QStringLiteral("med");
         int agcThresholdDb = 65;
+        // The AGC mode held while DIGU/DIGL run AGC off (followModeAgc());
+        // restored on leaving them unless the operator set AGC since. Empty
+        // when nothing is waiting. A receiver seeded from another copies it.
+        QString agcModeBeforeDigital;
 
         // Authoritative noise-blanker state, held here for the same reason the
         // AGC is: nothing on this radio echoes it back, and a receiver rebuilt
@@ -514,10 +561,27 @@ private:
     // The receiver's passband in the demodulator's audio domain — the operator's
     // carrier-relative cuts slid up (CWU) or down (CWL) onto the pitch.
     [[nodiscard]] std::pair<double, double> dspFilterHz(const Receiver& r) const noexcept;
+    // Moves r's AGC with its mode: off on entering DIGU/DIGL from
+    // previousMode, the held AGC on leaving them. Every site that writes
+    // Receiver::mode calls it. True when agcMode changed.
+    static bool followModeAgc(Receiver& r, const QString& previousMode);
     // The WDSP shift for this receiver: the slice's offset from the NCO, less
     // the BFO, so the detector's zero sits a pitch BELOW the marker (CWU) and
     // the marker itself lands on the pitch.
     [[nodiscard]] double rxShiftHz(const Receiver& r) const noexcept;
+    // Where a receiver actually listens: its dial plus its own RIT. Feeds the
+    // NCO window and the shift; sliceFreqHz stays the dial.
+    [[nodiscard]] double rxTunedHz(const Receiver& r) const noexcept;
+    // Re-run one receiver's tune after its RIT changed.
+    void retuneReceiver(int ddc);
+    // The offset clamped to kRitXitMaxHz, logging when the clamp bites.
+    [[nodiscard]] static int clampRitXit(const char* what, int hz);
+    // qCInfo naming the receiver and slice an RIT/XIT change landed on.
+    void logRitXit(const char* what, int ddc, bool on, int hz) const;
+    // SmartCatProtocol's kRitMaxHz. Only SmartCAT clamps to it: SliceModel::
+    // setRit() and the VFO's RIT/XIT steppers do not, so an offset past it can
+    // reach the setters, and they log when this clamp bites.
+    static constexpr int kRitXitMaxHz = 9999;
 
     // The operator's CW pitch, mirrored from TransmitModel through
     // setCwPitch(). Defaults to TransmitModel's own 600 so a receiver built
@@ -703,6 +767,17 @@ private:
     // on-radio mixer -- a Flex sums its slices and sends one stream -- so with
     // more than one slice open this is where they become one.
     void mixReceiverAudio(int ddc, const std::vector<float>& pcm);
+
+    // The receive-audio gate and its unkey hold (upstream #5850 / #5497).
+    // applyRxAudioMute() sets the mixer gate, the slice-sampling request and
+    // every receiver's demodulator mute together. releaseRxAudioMuteAfterHold()
+    // is the key-UP path: it leaves the receiver muted for
+    // m_unkeyUnmuteHoldMs after MOX-off is queued, so the PA's own decaying
+    // carrier during the T/R turnaround never reaches the demodulator (measured
+    // upstream at +57 dB / +10.6 dBFS on an HL2). Both run on this object's
+    // thread only: mixReceiverAudio() reads m_rxAudioMuted unsynchronised.
+    void applyRxAudioMute(bool muted);
+    void releaseRxAudioMuteAfterHold();
 
     // Per-slice meter name for the seam ("SLC:LEVEL" for the first receiver, so
     // an existing single-receiver consumer keeps the name it already binds to).
@@ -913,11 +988,40 @@ private:
     // clock is a plain monotonic source started on the first telemetry frame.
     AdcOverloadLogGate m_adcOverloadGate;
     QElapsedTimer m_telemetryClock;
+    // Session totals of Hl2Telemetry::forwardPowerSamples + forwardPowerSkipped,
+    // and of the skipped ones alone. Published in healthSnapshot(), driving
+    // nothing; the first is what makes a skipped count of 0 a reading.
+    quint64 m_fwdTotalResponses = 0;
+    quint64 m_fwdTotalSkipped = 0;
     bool m_keyed = false;
+    // The radio reports its own PTT/key (EP6 ptt_resp). Never an input to keying.
+    bool m_radioPtt = false;
+    // What transmitChanged last carried as mox: m_keyed || m_radioPtt.
+    bool m_publishedTransmit = false;
     bool m_tuning = false;
     bool m_cwAutoKeyed = false;
     QTimer* m_cwHangTimer = nullptr;
     bool m_txMonitor = false;
+    // The receive-audio gate: true from key-down until the unkey hold expires.
+    bool m_rxAudioMuted = false;
+    // 70 ms covers the control-packet wait, the network hop, the HL2's T/R
+    // relay and the PA's decay (upstream measured the burst inside ~60 ms). A
+    // member seeded from the constant so a test can shorten it.
+    static constexpr int kUnkeyUnmuteHoldMs = 70;
+    int m_unkeyUnmuteHoldMs = kUnkeyUnmuteHoldMs;
+    QTimer* m_unkeyUnmuteTimer = nullptr;
+    // How long the band filter and an owed RF drive wait after the MOX-off is
+    // queued. Gateware defaults put the radio's tail at 20 ms FIFO + 12 ms hang
+    // (radio.v:934-935; 0x17 is never written); one unit measured 40-54 ms
+    // end-to-end, and the RX hold above measured 51.66-66.15 ms of the same
+    // tail. Never below kUnkeyUnmuteHoldMs. A member so tests can shorten it.
+    static constexpr int kTxTailHoldMs = kUnkeyUnmuteHoldMs;
+    int m_txTailHoldMs = kTxTailHoldMs;
+    QTimer* m_txTailTimer = nullptr;
+    bool m_txTailPending = false;
+    // The drive register holds a tune level; the operator's RF drive is owed
+    // once no tune carrier or tail is radiating.
+    bool m_rfDriveOwed = false;
     // Both flags above are set SYNCHRONOUSLY while the setAudioMuted they imply
     // rides a queued connection to the DSP thread, so at key-up they say
     // "sampling" a block before it is true. This gate holds the moment sampling
@@ -960,6 +1064,15 @@ private:
     // internal application must neither bootstrap the operator baseline nor
     // record into the per-band map — only OPERATOR intent does that.
     bool m_applyingBandMemory = false;
+    // TUNE power per band, with the same first-set baseline rule as drive. -1 in
+    // m_tunePowerPercent: nothing known yet, TransmitModel's value stands.
+    QMap<QString, int> m_tuneByBand;
+    int m_tuneDefaultPercent = -1;
+    int m_tunePowerPercent = -1;
+    // Records an operator's TUNE power under the current band; false when unchanged.
+    bool recordTunePower(int percent);
+    // The band's remembered TUNE power, echoed to TransmitModel; nothing when unknown.
+    void applyTuneMemoryFor(const QString& bandKey);
 
     // The operator's TX passband, once they have set one, and the flag that says
     // they have.
@@ -998,11 +1111,6 @@ private:
     // what was last asked for. See the definition for why setTxFilter() is the
     // one push that does not go through here.
     void pushTxPassband(const QString& mode);
-    // Tune-carrier amplitude, full scale into the modulator. Actual radiated
-    // power is governed by the TX drive register, which is where an operator
-    // sets it; scaling here as well would make the power control non-linear for
-    // no reason.
-    static constexpr double kTuneCarrierAmplitude = 1.0;
     int m_lastFwdRaw = -1;
 
     // ---- Meter pacing / ballistics ----
@@ -1046,53 +1154,15 @@ private:
     double m_paTempC = 0.0;
     bool   m_havePaTemp = false;
 
-    // ---- Forward-power peak hold ----
-    //
-    // WHY THE SHARED BALLISTICS ABOVE ARE NOT ENOUGH HERE, and why this is a
-    // peak ESTIMATE rather than a peak measurement.
-    //
-    // A Flex reports FWDPWR from a detector the radio itself peak-reads, so
-    // MeterModel's fast-attack EMA is smoothing an already-peak-tracking
-    // signal. The HL2 has nothing of the kind: forward power is one 12-bit
-    // conversion from the `slow_adc` I2C converter, round-robined with reverse
-    // power, temperature and bias current, with no peak detector and no
-    // averaging anywhere in the gateware (rtl/slow_adc.v, rtl/control.v ~L262 —
-    // tier 1 on the source-precedence ladder). Each reading is the RF envelope
-    // at whatever instant the I2C transaction happened to land, and we see one
-    // every kTelemetryMinIntervalMs.
-    //
-    // Speech peaks last tens of milliseconds. Sampling that envelope at 10 Hz
-    // lands on a peak essentially never, so an SSB reading sat 8-12 dB below
-    // PEP while a constant-envelope FT8 or WSPR transmission — where every
-    // instant IS the peak — read full scale. That is the whole of the reported
-    // "6 W on FT8, 1 W on voice": both were making the same PEP.
-    //
-    // No host-side filter can recover a peak that was never sampled. What a
-    // hold CAN do is accumulate the maximum across a transmission: ~30
-    // independent samples in a 3 s over lands within a few dB of true PEP, and
-    // converges further the longer the operator talks. So this is honest as an
-    // estimate that settles, and dishonest as an instantaneous reading — which
-    // is why the meter description says so and why the raw counts keep being
-    // logged and published for the bridge alongside it.
-    //
-    // Instant attack, slow release, in WATTS rather than counts because the
-    // calibration curve is markedly non-linear and a peak held in counts would
-    // decay at a rate that changed with level.
-    //
-    // 0.05 per 10 Hz sample is a ~2 s release, matching what an outboard PEP
-    // wattmeter does. Slower would keep a peak past the end of the over; faster
-    // would decay between syllables and give the reading back to the average,
-    // which is exactly the failure this exists to fix.
-    //
-    // ONE DOWNSTREAM CONSEQUENCE, stated because it is not obvious: TxApplet
-    // runs its own ~2 s PEP hold + linear decay on the FWDPWR gauge (#2561),
-    // fed from MeterModel::txPeakChanged and documented there as taking the
-    // "pre-smoothed" sample. On this backend that sample is now itself held, so
-    // the applet's PEP tick and the gauge fill converge on the same number
-    // where they diverge on a Flex. That is the honest outcome rather than a
-    // defect — the fill is a peak estimate here BECAUSE the hardware gives us
-    // nothing to smooth — but the applet's tick carries no extra information on
-    // an HL2, and anyone reading the two as independent would be wrong.
+    // Forward-power peak hold: a PEP ESTIMATE. The HL2 has no peak detector: forward
+    // power is one 12-bit slow_adc I2C conversion, round-robined with reverse power,
+    // temperature and bias (rtl/slow_adc.v, rtl/control.v ~L262), reported in RADDR 1
+    // up to ~190 times a second. Keyed, the input is each publish window's maximum
+    // (Hl2Telemetry::forwardPowerPeakRaw); the hold carries it across windows:
+    // instant attack, release 0.05 per kTelemetryMinIntervalMs window (~2 s, like an
+    // outboard PEP meter), in WATTS because the calibration curve is non-linear. Raw
+    // counts are still logged and published. TxApplet's PEP tick (#2561) therefore
+    // tracks the gauge fill on an HL2.
     static constexpr double kFwdPeakReleaseAlpha = 0.05;
     double m_fwdPeakWatts = 0.0;
 

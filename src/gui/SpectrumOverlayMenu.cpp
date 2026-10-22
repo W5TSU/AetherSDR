@@ -1,4 +1,5 @@
 #include "SpectrumOverlayMenu.h"
+#include "AntennaChoiceGate.h"
 #include "DeclaredBandMenuPolicy.h"
 #include "DisplaySettings.h"
 #include "DspParamPopup.h"
@@ -640,6 +641,26 @@ void SpectrumOverlayMenu::buildAntPanel()
             updateLoopButtonVisibility();
             return;
         }
+        // A radio port the radio never published (the invented ANT1/ANT2
+        // placeholder, refreshAntennaCombo()) with no Kiwi receiver on offer:
+        // refuse visibly and put the combo back, rather than moving the label
+        // while nothing moves (AntennaChoiceGate.h).
+        {
+            const bool connected = m_radioModel && m_radioModel->isConnected();
+            const bool published =
+                (targetSlice && !targetSlice->rxAntennaList().isEmpty())
+                || (m_radioModel && !m_radioModel->antennaList().isEmpty());
+            const bool virtualAntennas = m_kiwiSdrManager
+                && !m_kiwiSdrManager->virtualAntennaTokens().isEmpty();
+            if (rxAntennaChoiceRefused(connected, published, virtualAntennas)) {
+                emit antennaChoiceRefused(false);
+                // Queued: this runs inside the combo's own index signal, and
+                // the refresh clears and refills that combo.
+                QMetaObject::invokeMethod(this, [this] { refreshAntennaCombo(); },
+                                          Qt::QueuedConnection);
+                return;
+            }
+        }
         if (targetSlice) {
             emit flexRxAntennaSelected(targetSlice->sliceId());
         }
@@ -739,6 +760,9 @@ void SpectrumOverlayMenu::buildAntPanel()
     m_rfGainSlider->setTickInterval(8);
     m_rfGainSlider->setTickPosition(QSlider::TicksBelow);
     applyPrimarySliderStyle(m_rfGainSlider);
+    // Flex's range until a backend reports its own through setRfGainRange().
+    m_rfGainSlider->setAccessibleDescription(
+        tr("RF gain, minus 8 to plus 32 dB in 8 dB steps."));
     m_rfGainSlider->setToolTip("RF Gain: −8 to +32 dB (8 dB steps)\n"
                                "Step size is determined by radio hardware.");
     gainRow->addWidget(m_rfGainSlider, 1);
@@ -1594,7 +1618,18 @@ void SpectrumOverlayMenu::updateLayout()
         // A button the radio cannot back stays hidden even when expanded, and
         // the ones below it close the gap — a blank slot would read as a
         // rendering fault rather than an absent feature.
-        const bool available = (idx != kBtnAddTnf) || m_notchesSupported;
+        //
+        // EVERY capability-hidden button has to be named here. This loop runs
+        // on every expand/collapse and sets each button's visibility outright,
+        // so a hide applied anywhere else is undone by the next toggle — which
+        // is how the DAX button (hidden by setDaxStreamsAvailable() on a radio
+        // with no DAX plane) came back on a Hermes-Lite 2 the first time the
+        // operator collapsed and reopened the menu, offering WFM on a stream
+        // nothing feeds.
+        const bool available =
+            (idx == kBtnAddTnf) ? m_notchesSupported
+            : (idx == kBtnDax)  ? m_daxStreamsAvailable
+                                : true;
         btn->setVisible(m_expanded && available);
         if (m_expanded && available) {
             btn->move(pad, y);
@@ -2397,7 +2432,7 @@ void SpectrumOverlayMenu::buildDisplayPanel()
     m_blackSlider->setToolTip("Waterfall black level. Decrease to darken the noise floor.");
     if (m_autoBlackBtn) m_autoBlackBtn->setToolTip("Automatically adjusts the waterfall black level to match the current noise floor.");
     m_rateSlider->setToolTip("Waterfall rate. 1% = slowest; 100% = fastest.");
-    if (m_wfBlankerThreshSlider) m_wfBlankerThreshSlider->setToolTip("Waterfall noise blanking threshold. Higher values blank more aggressively.");
+    if (m_wfBlankerThreshSlider) m_wfBlankerThreshSlider->setToolTip("Waterfall noise blanking threshold. Higher values blank less.");
     if (m_freqGridSpacingCmb) m_freqGridSpacingCmb->setToolTip("Frequency grid line spacing. Auto adapts to the current span.");
     if (m_freqScaleFontCmb) m_freqScaleFontCmb->setToolTip("Text size of the frequency scale labels. The scale strip grows to fit larger sizes.");
     if (m_colorSchemeCmb) m_colorSchemeCmb->setToolTip("Selects the waterfall color palette.");
@@ -2953,8 +2988,15 @@ void SpectrumOverlayMenu::setDaxStreamsAvailable(bool available)
     // The button lives in the menu row and the panel is a popup off it, so both
     // have to go — hiding only the button would leave the panel reachable if it
     // were already open when the capability changed.
-    if (m_menuBtns.size() > kBtnDax && m_menuBtns[kBtnDax]) {
-        m_menuBtns[kBtnDax]->setVisible(available);
+    // Through the layout rather than a bare setVisible, for the reason
+    // setNotchesSupported() gives: updateLayout() re-applies every button's
+    // visibility on each expand/collapse, so a direct hide here was undone by
+    // the next toggle — and a direct SHOW put the DAX button on a collapsed
+    // menu with every other button hidden.
+    const bool changed = m_daxStreamsAvailable != available;
+    m_daxStreamsAvailable = available;
+    if (changed) {
+        updateLayout();
     }
     if (!available && m_daxPanel) {
         m_daxPanel->hide();
@@ -2998,6 +3040,12 @@ void SpectrumOverlayMenu::setRfGainRange(int low, int high, int step,
     // either — it said "dB" over a control that was three preamp positions.
     const QString unitWord = unitSuffix.trimmed().isEmpty()
         ? QStringLiteral("step") : unitSuffix.trimmed();
+    // The accessible channel first: a screen-reader user never gets the tooltip,
+    // and an HL2 (-12..+48 dB, 1 dB) must not be described as a Flex
+    // (upstream 7975bafe, #5943).
+    m_rfGainSlider->setAccessibleDescription(
+        tr("RF gain, %1 to %2 %3, in steps of %4.")
+            .arg(low).arg(high).arg(unitWord).arg(step));
     m_rfGainSlider->setToolTip(
         QString("RF Gain: %1%2 to %3%4%2 (%5%2 steps)\n"
                 "Range and step are reported by the radio.")

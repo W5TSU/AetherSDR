@@ -7,6 +7,7 @@
 #include "CwSidetoneStartPolicy.h"
 #include "TxCaptureBuffer.h"
 #include "ShutdownTrace.h"
+#include "core/dsp/FftwPlannerLock.h"
 #include "ClientEq.h"
 #include "ClientComp.h"
 #include "ClientGate.h"
@@ -51,7 +52,7 @@
 #include "Resampler.h"
 #include "TxVoiceProcessor.h"
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -400,7 +401,7 @@ void logAudioOpenFailure(const QString& path,
     AudioSummaryLogger::logOpenFailure(summary);
 }
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 AudioObjectPropertyAddress macAudioAddress(AudioObjectPropertySelector selector,
                                            AudioObjectPropertyScope scope = kAudioObjectPropertyScopeGlobal)
 {
@@ -2739,7 +2740,7 @@ QJsonArray AudioEngine::audioEndpointDiagnostics() const
     endpoints.append(rx);
 
     const bool txRunning = m_audioSource != nullptr;
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     const bool txDeviceOpen = m_micBuffer && m_micBuffer->isOpen();
 #else
     const bool txDeviceOpen = !m_micDevice.isNull() && m_micDevice->isOpen();
@@ -3964,7 +3965,7 @@ bool AudioEngine::startRxStream()
         }
     }
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     if (!m_allowBluetoothTelephonyOutput.load()) {
         // Only override devices that look like Bluetooth telephony routes.
         // Telephony-only (HFP/SCO) routes cap out at 8-16 kHz and cannot
@@ -6817,6 +6818,49 @@ bool AudioEngine::needsWisdomGeneration()
 #endif
 }
 
+namespace {
+
+// True while another thread holds either FFTW planner lock. Never called with
+// one of them held by this thread (try_lock on an owned std::mutex is UB).
+bool fftwPlannerHeldElsewhere()
+{
+    for (std::mutex* m : {&fftwPlannerMutex(), &fftwfPlannerMutex()}) {
+        if (!m->try_lock()) {
+            return true;
+        }
+        m->unlock();
+    }
+    return false;
+}
+
+} // namespace
+
+bool AudioEngine::joinThreadWhilePlannerBusy(QThread& thread, int idleBudgetMs,
+                                             const char* phase)
+{
+    constexpr int kSliceMs = 250;
+    constexpr qint64 kLogEveryMs = 5000;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    qint64 nextLogMs = kLogEveryMs;
+    int idleMs = 0;
+    while (!thread.wait(kSliceMs)) {
+        if (fftwPlannerHeldElsewhere()) {
+            idleMs = 0;
+            if (elapsed.elapsed() >= nextLogMs) {
+                QMessageLogger(__FILE__, __LINE__, Q_FUNC_INFO, "aether.shutdown").info()
+                    .noquote().nospace()
+                    << "phase=" << phase << " event=waiting planner=held elapsed_ms="
+                    << elapsed.elapsed();
+                nextLogMs += kLogEveryMs;
+            }
+        } else if ((idleMs += kSliceMs) >= idleBudgetMs) {
+            return false;
+        }
+    }
+    return true;
+}
+
 SpectralNR::WisdomResult AudioEngine::generateWisdom(
     SpectralNR::WisdomProgressCb progress,
     SpectralNR::WisdomCancelCb shouldCancel)
@@ -7669,7 +7713,7 @@ TxCaptureHealthTracker::CaptureState AudioEngine::txCaptureState(QAudio::State s
 
 qint64 AudioEngine::txCaptureBufferedBytes() const
 {
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     return m_micBuffer ? m_micBuffer->size() : 0;
 #else
     return m_micDevice ? m_micDevice->bytesAvailable() : 0;
@@ -7937,7 +7981,7 @@ bool AudioEngine::startTxStream(const QHostAddress& radioAddress, quint16 radioP
 #else
     bool txBluetoothHfp = false;
     int  txPreferredOverride = 0;
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     // CoreAudio-HAL detection the factory can't derive from QAudioDevice: if this
     // is a Bluetooth-HFP capture route, put its native low rate first (#2615).
     if (const auto nativeRate = macBluetoothNativeInputRate(dev)) {
@@ -8028,7 +8072,7 @@ bool AudioEngine::startTxStream(const QHostAddress& radioAddress, quint16 radioP
              << (m_txInputRate != TxVoiceProcessor::kDspRate)
              << "RADE resample to 24k:" << m_radeTxNeedsResample;
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     // macOS: QAudioSource pull mode broken — use push mode with QBuffer
     const quint64 txLifecycleGeneration = ++m_txLifecycleGeneration;
     m_micBuffer = new QBuffer(this);
@@ -8294,7 +8338,7 @@ void AudioEngine::stopTxStream()
         logTxCaptureHealthSummary(QStringLiteral("source lifecycle ended"), false);
     }
     ++m_txLifecycleGeneration;
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     QTimer* pollTimer = m_txPollTimer;
     m_txPollTimer = nullptr;
     QBuffer* micBuffer = m_micBuffer;
@@ -8304,7 +8348,7 @@ void AudioEngine::stopTxStream()
     m_audioSource = nullptr;
     m_micDevice = nullptr;
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     if (pollTimer) {
         pollTimer->stop();
         delete pollTimer;
@@ -8319,7 +8363,7 @@ void AudioEngine::stopTxStream()
         }
         delete audioSource;
     }
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     if (micBuffer) {
         delete micBuffer;
     }
@@ -8501,7 +8545,7 @@ void AudioEngine::onTxAudioReady()
         }
         // Capture must keep being consumed while TCI owns TX audio, on every
         // platform — all three backends accumulate, just in different memory.
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
         // Push mode: QAudioSource writes into m_micBuffer, which only the
         // unsuppressed path below clears. Left alone it grows for the whole TCI
         // session (~192 KB/s at 48 kHz stereo Int16) — the same multi-GB
@@ -8549,7 +8593,7 @@ void AudioEngine::onTxAudioReady()
         }
         return;
     }
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     if (!m_micBuffer || !m_audioSource) return;
     if (m_audioSource->state() == QAudio::StoppedState) return;
     if (!m_micBuffer->isOpen()) return;
@@ -8649,8 +8693,10 @@ void AudioEngine::onTxAudioReady()
         QByteArray i16(samples * static_cast<int>(sizeof(int16_t)), Qt::Uninitialized);
         auto* d = reinterpret_cast<int16_t*>(i16.data());
         for (int i = 0; i < samples; ++i) {
+            // A NaN passes std::clamp and its cast is undefined.
+            const float v = std::isfinite(f[i]) ? f[i] : 0.0f;
             d[i] = static_cast<int16_t>(
-                std::clamp(f[i] * 32768.0f, -32768.0f, 32767.0f));
+                std::clamp(v * 32768.0f, -32768.0f, 32767.0f));
         }
         data = i16;
     }
@@ -8675,8 +8721,10 @@ void AudioEngine::onTxAudioReady()
         if (rcount <= 0) return;
         data.resize(rcount * static_cast<int>(sizeof(int16_t)));
         auto* rdst = reinterpret_cast<int16_t*>(data.data());
-        for (int i = 0; i < rcount; ++i)
-            rdst[i] = static_cast<int16_t>(std::clamp(rsrc[i] * 32768.0f, -32768.0f, 32767.0f));
+        for (int i = 0; i < rcount; ++i) {
+            const float v = std::isfinite(rsrc[i]) ? rsrc[i] : 0.0f;
+            rdst[i] = static_cast<int16_t>(std::clamp(v * 32768.0f, -32768.0f, 32767.0f));
+        }
     }
 
     // RADE mode: apply client-side gain + meter, then convert int16 → float32
@@ -8952,15 +9000,16 @@ void AudioEngine::sendVoiceTxPacket(const QByteArray& pcmData, quint32 streamId)
     }
 }
 
-void AudioEngine::setOutputDevice(const QAudioDevice& dev)
+void AudioEngine::setOutputDevice(const QAudioDevice& dev, AudioDeviceSelection selection)
 {
     m_outputDevice = dev;
     qCDebug(lcAudio) << "AudioEngine: output device set to" << dev.description();
 
-    // Persist selection
-    auto& s = AppSettings::instance();
-    s.setValue("AudioOutputDeviceId", dev.id());
-    s.save();
+    if (persistsAudioDeviceSelection(selection)) {
+        auto& s = AppSettings::instance();
+        s.setValue("AudioOutputDeviceId", dev.id());
+        s.save();
+    }
 
     // Restart RX stream if running
     if (m_audioSink) {
@@ -8971,15 +9020,16 @@ void AudioEngine::setOutputDevice(const QAudioDevice& dev)
     emit outputDeviceChanged();
 }
 
-void AudioEngine::setInputDevice(const QAudioDevice& dev)
+void AudioEngine::setInputDevice(const QAudioDevice& dev, AudioDeviceSelection selection)
 {
     m_inputDevice = dev;
     qCDebug(lcAudio) << "AudioEngine: input device set to" << dev.description();
 
-    // Persist selection
-    auto& s = AppSettings::instance();
-    s.setValue("AudioInputDeviceId", dev.id());
-    s.save();
+    if (persistsAudioDeviceSelection(selection)) {
+        auto& s = AppSettings::instance();
+        s.setValue("AudioInputDeviceId", dev.id());
+        s.save();
+    }
 
     // Restart TX stream if running
     if (m_audioSource) {
@@ -8992,7 +9042,7 @@ void AudioEngine::setInputDevice(const QAudioDevice& dev)
     emit inputDeviceChanged();
 }
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 void AudioEngine::setAllowBluetoothTelephonyOutput(bool on)
 {
     const bool changed = (m_allowBluetoothTelephonyOutput.exchange(on) != on);

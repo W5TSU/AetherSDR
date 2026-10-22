@@ -20,6 +20,7 @@
 
 #include "FlexControlDialog.h"
 #include "MainWindowHelpers.h"
+#include "MixerControlAvailability.h"
 #include "VoiceModeGate.h"   // isCwMode() — one CW-mode list, not thirteen
 #include "SpectrumOverlayMenu.h"
 #include "core/AppSettings.h"
@@ -169,6 +170,13 @@ QString tmate2PushDefaultAction(int encoderIndex)
     case 2:  return QStringLiteral("ToggleXit");
     default: return QStringLiteral("None");
     }
+}
+
+// PC Audio as the title bar persists it -- the same read applyMasterVolume()
+// makes to decide whether the master level is this computer's output.
+static bool pcAudioEnabledSetting()
+{
+    return AppSettings::instance().value("PcAudioEnabled", "True").toString() == "True";
 }
 
 static bool isCwMomentaryActionId(const QString& id)
@@ -518,6 +526,10 @@ void MainWindow::handleFlexControlButton(int button, int action)
             if (!m_radioModel.hasCommandPlane()) {
                 qCDebug(lcDevices) << "SplitActiveSlice ignored:"
                                    << "this backend takes no Flex slice-create command";
+                // A log line alone is a hardware button that silently does
+                // nothing. Say so the way the keyboard split_toggle refusal
+                // does (MainWindow_Shortcuts.cpp); one notice per session.
+                showUnsupportedControlNotice();
                 return;
             }
             if (m_radioModel.slices().size() >= m_radioModel.maxSlices()) return;
@@ -545,6 +557,7 @@ void MainWindow::handleFlexControlButton(int button, int action)
             || !m_radioModel.hasCwTextStoredMacros()) {
             qCDebug(lcCw) << "CWX macro action" << actionName
                           << "ignored: radio has no stored text-keyer macros";
+            showUnsupportedControlNotice();
         } else {
             bool ok = false;
             const int idx = actionName.mid(4).toInt(&ok);
@@ -1046,6 +1059,7 @@ void MainWindow::dispatchHidAction(const QString& actionName,
             if (!m_radioModel.hasCommandPlane()) {
                 qCDebug(lcDevices) << "SplitActiveSlice (HID) ignored:"
                                    << "this backend takes no Flex slice-create command";
+                showUnsupportedControlNotice();
                 return;
             }
             auto* s = activeSlice();
@@ -1451,6 +1465,16 @@ void MainWindow::applyFlexControlWheelAction(const QString& actionId, int steps)
 #endif
         }
     } else if (actionId == "WheelHeadphoneVolume") {
+        // A radio with no headphone output: the title-bar pair is dimmed with
+        // its reason, and the wheel refuses the same way rather than moving a
+        // dimmed slider (MixerControlAvailability.h).
+        if (!headphoneControlsAvailable(m_radioModel.isConnected(),
+                                        m_radioModel.hasCommandPlane())) {
+            qCWarning(lcDevices) << "WheelHeadphoneVolume refused:"
+                                 << "this radio has no headphone output";
+            showUnsupportedControlNotice();
+            return;
+        }
         const int next = std::clamp(m_radioModel.headphoneGain() + steps * 2, 0, 100);
         if (m_titleBar)
             m_titleBar->setHeadphoneVolume(next);
@@ -1902,12 +1926,27 @@ void MainWindow::registerMidiParams()
         },
         [this]() -> float { auto* s = activeSlice(); return s && s->adaptiveFilterEnabled() ? 1 : 0; });
 
+    // The RADIO's own NR and ANF, refused where the radio has none (HL2,
+    // ANAN, RTL: the VFO hides these buttons). The host modules (NR2, RN2,
+    // NR4, DFNR) have their own parameters below.
     reg("rx.nrEnable", "Noise Reduction", "RX", P::Toggle, 0, 1,
-        [this](float v) { if (auto* s = activeSlice()) s->setNr(v > 0.5f); },
+        [this](float v) {
+            if (auto* s = activeSlice()) {
+                if (!m_radioModel.requestRadioNoiseReduction(s, v > 0.5f)) {
+                    showUnsupportedControlNotice();
+                }
+            }
+        },
         [this]() -> float { auto* s = activeSlice(); return s && s->nrOn() ? 1 : 0; });
 
     reg("rx.anfEnable", "Auto Notch", "RX", P::Toggle, 0, 1,
-        [this](float v) { if (auto* s = activeSlice()) s->setAnf(v > 0.5f); },
+        [this](float v) {
+            if (auto* s = activeSlice()) {
+                if (!m_radioModel.requestRadioAutoNotch(s, v > 0.5f)) {
+                    showUnsupportedControlNotice();
+                }
+            }
+        },
         [this]() -> float { auto* s = activeSlice(); return s && s->anfOn() ? 1 : 0; });
 
     reg("rx.squelchEnable", "Squelch Enable", "RX", P::Toggle, 0, 1,
@@ -2034,8 +2073,18 @@ void MainWindow::registerMidiParams()
         [this](float v) { m_radioModel.transmitModel().setSpeechProcessorEnable(v > 0.5f); },
         [this]() -> float { return m_radioModel.transmitModel().speechProcessorEnable() ? 1 : 0; });
 
+    // Same refusal as the dax_toggle shortcut (MainWindow_Shortcuts.cpp): on a
+    // radio with no DAX plane the optimistic daxOn() flip would mark the client
+    // TX chain not-ready while the wire text is dropped.
     reg("phone.daxEnable", "DAX", "Phone/CW", P::Toggle, 0, 1,
-        [this](float v) { m_radioModel.transmitModel().setDax(v > 0.5f); },
+        [this](float v) {
+            if (!m_radioModel.hasDaxStreams()) {
+                qCWarning(lcDevices) << "phone.daxEnable refused: this radio has no DAX plane";
+                showUnsupportedControlNotice();
+                return;
+            }
+            m_radioModel.transmitModel().setDax(v > 0.5f);
+        },
         [this]() -> float { return m_radioModel.transmitModel().daxOn() ? 1 : 0; });
 
     reg("phone.monEnable", "Monitor", "Phone/CW", P::Toggle, 0, 1,
@@ -2050,8 +2099,14 @@ void MainWindow::registerMidiParams()
         [this](float v) { m_radioModel.transmitModel().setVoxLevel(static_cast<int>(v)); },
         [this]() -> float { return m_radioModel.transmitModel().voxLevel(); });
 
+    // Gated on the same capability that dims the Phone applet's AM carrier
+    // slider: `transmit set am_carrier=` reaches only a radio that declares it.
     reg("phone.amCarrier", "AM Carrier", "Phone/CW", P::Slider, 0, 100,
-        [this](float v) { m_radioModel.transmitModel().setAmCarrierLevel(static_cast<int>(v)); },
+        [this](float v) {
+            if (!m_radioModel.requestAmCarrierLevel(static_cast<int>(v))) {
+                showUnsupportedControlNotice();
+            }
+        },
         [this]() -> float { return m_radioModel.transmitModel().amCarrierLevel(); });
 
     reg("cw.speed", "CW Speed", "Phone/CW", P::Slider, 5, 100,
@@ -2078,8 +2133,21 @@ void MainWindow::registerMidiParams()
         [this](float v) { m_radioModel.transmitModel().setCwSwapPaddles(v > 0.5f); },
         [this]() -> float { return m_radioModel.transmitModel().cwSwapPaddles() ? 1 : 0; });
 
+    // `cw cwl_enabled` is Flex wire text; a radio without a command plane
+    // expresses CWL as the slice MODE instead (HL2, Icom, sim). There the
+    // optimistic cwlEnabled() flip is not merely dead: zero-beat reads it and
+    // mirrors its correction (MainWindow_Wiring.cpp, #5213), so a MIDI press
+    // would tune CWU the wrong way. Refuse before the flip, and say so.
     reg("cw.cwlEnable", "CWL Frequency Offset", "Phone/CW", P::Toggle, 0, 1,
-        [this](float v) { m_radioModel.transmitModel().setCwlEnabled(v > 0.5f); },
+        [this](float v) {
+            if (m_radioModel.isConnected() && !m_radioModel.hasCommandPlane()) {
+                qCWarning(lcDevices) << "cw.cwlEnable refused: this radio takes CWL"
+                                     << "as a slice mode, not an offset flag";
+                showUnsupportedControlNotice();
+                return;
+            }
+            m_radioModel.transmitModel().setCwlEnabled(v > 0.5f);
+        },
         [this]() -> float { return m_radioModel.transmitModel().cwlEnabled() ? 1 : 0; });
 
     reg("cw.breakInEnable", "CW Break-In (QSK)", "Phone/CW", P::Toggle, 0, 1,
@@ -2154,24 +2222,54 @@ void MainWindow::registerMidiParams()
 
     // ── Global ──────────────────────────────────────────────────────────
     // The mixer verbs drive the RADIO's lineout/headphone hardware outputs, a
-    // Flex command-plane feature — on a backend without one the command is
-    // dropped, which made a mapped MIDI volume knob silently dead. Refuse and
-    // log instead (M0, #5263). Rerouting these to the client-side master
-    // volume would change what the knob MEANS on Flex, so that stays an M4
-    // conversion decision, not a gate.
+    // Flex command-plane feature, and on a Flex that is what these knobs keep
+    // meaning. A connected radio with no command plane has no such mixer
+    // (MixerControlAvailability.h): the Master knob takes the title bar's own
+    // master-slider path when that radio's audio plays on this computer, and
+    // otherwise -- and always for Headphone, a jack the radio does not have --
+    // the knob refuses visibly through the one-shot notice, not with a debug
+    // line only (M0, #5263). Disconnected, nothing is sent and nothing is said.
     reg("global.masterVolume", "Master Volume", "Global", P::Slider, 0, 100,
         [this](float v) {
-            if (!m_radioModel.hasCommandPlane()) {
-                qCDebug(lcDevices) << "global.masterVolume ignored:"
-                                   << "radio mixer verbs need a Flex command plane";
+            if (m_radioModel.hasCommandPlane()) {
+                m_radioModel.sendCommand(QString("mixer lineout gain %1").arg(static_cast<int>(v)));
                 return;
             }
-            m_radioModel.sendCommand(QString("mixer lineout gain %1").arg(static_cast<int>(v)));
+            if (!m_radioModel.isConnected()) {
+                qCDebug(lcDevices) << "global.masterVolume ignored: no radio connected";
+                return;
+            }
+            if (masterKnobDrivesLocalOutput(m_radioModel.isConnected(),
+                                            m_radioModel.hasCommandPlane(),
+                                            pcAudioEnabledSetting())) {
+                const int pct = std::clamp(static_cast<int>(v), 0, 100);
+                if (m_titleBar) m_titleBar->setMasterVolume(pct);
+                applyMasterVolume(pct);
+                return;
+            }
+            qCWarning(lcDevices) << "global.masterVolume refused: no radio mixer"
+                                 << "and PC Audio is off";
+            showUnsupportedControlNotice();
         },
-        [this]() -> float { return m_radioModel.lineoutGain(); });
+        [this]() -> float {
+            if (masterKnobDrivesLocalOutput(m_radioModel.isConnected(),
+                                            m_radioModel.hasCommandPlane(),
+                                            pcAudioEnabledSetting())) {
+                return std::clamp(
+                    AppSettings::instance().value("MasterVolume", "100").toInt(), 0, 100);
+            }
+            return m_radioModel.lineoutGain();
+        });
 
     reg("global.hpVolume", "Headphone Volume", "Global", P::Slider, 0, 100,
         [this](float v) {
+            if (!headphoneControlsAvailable(m_radioModel.isConnected(),
+                                            m_radioModel.hasCommandPlane())) {
+                qCWarning(lcDevices) << "global.hpVolume refused:"
+                                     << "this radio has no headphone output";
+                showUnsupportedControlNotice();
+                return;
+            }
             if (!m_radioModel.hasCommandPlane()) {
                 qCDebug(lcDevices) << "global.hpVolume ignored:"
                                    << "radio mixer verbs need a Flex command plane";
@@ -2436,7 +2534,7 @@ void MainWindow::wireExternalControllers()
     });
     connect(m_serialPort, &SerialPortController::cwKeyChanged,
             this, [this](bool down) {
-        m_radioModel.sendCwKey(down);
+        m_radioModel.sendCwKey(down, QStringLiteral("serial:cwkey"));
     });
     connect(m_serialPort, &SerialPortController::cwPaddleChanged,
             this, [this](bool dit, bool dah) {
@@ -2446,6 +2544,13 @@ void MainWindow::wireExternalControllers()
         // state — it emits timed element edges AND drives the sidetone gate
         // directly. Otherwise the paddle acts as a straight key. The backend
         // decides whether those edges use a radio-side keyer or host IQ.
+        // No CW while TUNE is active (#5422): drop the press before the
+        // keyer starts; a release still flows. See pushCwPaddleState().
+        m_radioModel.setCwPaddleHeld(dit || dah);
+        if ((dit || dah) && !m_radioModel.transmitModel().admitsCwKeyEdge(true)) {
+            qCWarning(lcCw) << "CW paddle press refused: TUNE is active (#5422) source=serial";
+            return;
+        }
         if (m_iambicKeyer && m_iambicKeyer->isRunning()) {
             m_iambicKeyer->setPaddleState(dit, dah);
         } else {
@@ -2850,7 +2955,7 @@ void MainWindow::wireExternalControllers()
     // All three expose the same Qt signal contract via the
     // UlanziDialBackend alias.  See #3232 for design notes.
     m_dialBackend = new UlanziDialBackend;
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
     // macOS keeps the backend on the main thread: IOHIDManager schedules
     // its callbacks on a CFRunLoop, and only the main thread has one
     // integrated with Qt's event loop on macOS.  Linux + Windows

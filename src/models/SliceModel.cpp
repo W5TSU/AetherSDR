@@ -528,9 +528,19 @@ void SliceModel::setNrlLevel(int v)
     emit nrlLevelChanged(v);
 }
 
+void SliceModel::setNrsLevelMaximum(int maximum)
+{
+    if (m_nrsLevelMaximum == maximum) {
+        return;
+    }
+    m_nrsLevelMaximum = maximum;
+    // A request limit never changes radio-authoritative readback or sends intent.
+    emit nrsLevelMaximumChanged(maximum);
+}
+
 void SliceModel::setNrsLevel(int v)
 {
-    v = std::clamp(v, 0, 100);
+    v = std::clamp(v, 0, m_nrsLevelMaximum);
     // Record any explicit user choice (including a deliberate 50) so the
     // applyChanges() re-push won't fight a value the user picked themselves.
     m_nrsLevelUser = v;
@@ -561,6 +571,16 @@ void SliceModel::setAnflLevel(int v)
 
 void SliceModel::setAgcMode(const QString& mode)
 {
+    applyAgcMode(mode, false);
+}
+
+void SliceModel::recallAgcMode(const QString& mode)
+{
+    applyAgcMode(mode, true);
+}
+
+void SliceModel::applyAgcMode(const QString& mode, bool recall)
+{
     if (m_externalReceiveAudioReplacement) {
         if (m_externalReceiveAgcMode == mode) {
             return;
@@ -576,7 +596,10 @@ void SliceModel::setAgcMode(const QString& mode)
     m_agcMode = mode;
     sendCommand(QString("slice set %1 agc_mode=%2").arg(m_id).arg(mode));
     emit agcModeChanged(mode);
-    emit agcCommandIssued(m_agcMode, m_agcThreshold);
+    if (recall)
+        emit agcRecallIssued(m_agcMode, m_agcThreshold);
+    else
+        emit agcCommandIssued(m_agcMode, m_agcThreshold);
 }
 
 int SliceModel::receiveAgcThresholdMinimum() const
@@ -728,8 +751,12 @@ void SliceModel::setRit(bool on, int hz)
     m_ritFreq = hz;
     sendCommand(QString("slice set %1 rit_on=%2 rit_freq=%3")
                     .arg(m_id).arg(on ? 1 : 0).arg(hz));
+    m_ritCommandInFlight = true;
     emit ritCommandIssued(on, hz);
-    emit ritChanged(on, hz);
+    m_ritCommandInFlight = false;
+    // The members, not the arguments: a backend that answers synchronously
+    // (HL2's clamp) has already corrected them.
+    emit ritChanged(m_ritOn, m_ritFreq);
 }
 
 void SliceModel::setXit(bool on, int hz)
@@ -738,8 +765,10 @@ void SliceModel::setXit(bool on, int hz)
     m_xitFreq = hz;
     sendCommand(QString("slice set %1 xit_on=%2 xit_freq=%3")
                     .arg(m_id).arg(on ? 1 : 0).arg(hz));
+    m_xitCommandInFlight = true;
     emit xitCommandIssued(on, hz);
-    emit xitChanged(on, hz);
+    m_xitCommandInFlight = false;
+    emit xitChanged(m_xitOn, m_xitFreq);
 }
 
 void SliceModel::setDaxChannel(int ch)
@@ -1606,15 +1635,25 @@ void SliceModel::applyChanges(const SliceDelta& d)
         }
         emit squelchChanged(m_squelchOn, m_squelchLevel);
     }
+    // Guarded like the AGC pair: HL2 publishes RIT/XIT on every emitSliceState().
+    // Inside setRit()/setXit() the value is adopted and announced there, once.
     if (d.ritOn.has_value() || d.ritFreq.has_value()) {
-        if (d.ritOn.has_value())   m_ritOn   = *d.ritOn;
-        if (d.ritFreq.has_value()) m_ritFreq = *d.ritFreq;
-        emit ritChanged(m_ritOn, m_ritFreq);
+        const bool on = d.ritOn.value_or(m_ritOn);
+        const int hz = d.ritFreq.value_or(m_ritFreq);
+        if (on != m_ritOn || hz != m_ritFreq) {
+            m_ritOn = on;
+            m_ritFreq = hz;
+            if (!m_ritCommandInFlight) emit ritChanged(m_ritOn, m_ritFreq);
+        }
     }
     if (d.xitOn.has_value() || d.xitFreq.has_value()) {
-        if (d.xitOn.has_value())   m_xitOn   = *d.xitOn;
-        if (d.xitFreq.has_value()) m_xitFreq = *d.xitFreq;
-        emit xitChanged(m_xitOn, m_xitFreq);
+        const bool on = d.xitOn.value_or(m_xitOn);
+        const int hz = d.xitFreq.value_or(m_xitFreq);
+        if (on != m_xitOn || hz != m_xitFreq) {
+            m_xitOn = on;
+            m_xitFreq = hz;
+            if (!m_xitCommandInFlight) emit xitChanged(m_xitOn, m_xitFreq);
+        }
     }
     if (d.daxChannel.has_value()) {
         int ch = *d.daxChannel;

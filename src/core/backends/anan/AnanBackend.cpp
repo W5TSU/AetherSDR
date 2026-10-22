@@ -322,6 +322,8 @@ AnanBackend::AnanBackend(QObject* parent)
         // separate mix stage needed for a single receiver.
         emit audioFrameReady(bytes);
     });
+    // Ungated by design: m_dsp emits on m_ioThread, the thread that emits linkDown,
+    // so every frame is delivered before disconnected() (contract rule 6).
     connect(m_dsp, &AnanRxDsp::spectrumReady, this, [this](const std::vector<float>& binsDbfs) {
         std::vector<float> dbm(binsDbfs.size());
         for (std::size_t i = 0; i < binsDbfs.size(); ++i)
@@ -373,6 +375,12 @@ RadioCapabilities AnanBackend::capabilities() const
     c.family = QStringLiteral("anan");
     // No setTune() implementation, so no tune generator to select a mode on.
     c.twoToneGenerator = std::nullopt;
+    // No VOX, monitor or speech-processor setters. PROC would be the host
+    // ClientComp, but canTransmit is false below, so nothing serves it and the
+    // drop notice correctly stands.
+    c.voxControl = std::nullopt;
+    c.speechProcessorControl = std::nullopt;
+    c.txMonitorControl = std::nullopt;
     c.hasAgcThreshold = true; // Host receiver DSP implements threshold/off gain.
     c.manufacturer = QStringLiteral("Apache Labs");
     c.model = QStringLiteral("ANAN-G2");
@@ -397,15 +405,27 @@ RadioCapabilities AnanBackend::capabilities() const
     // rather than left absent because the ownership answer is already known; it
     // populates no TransmitDelta::rfPower today, so nothing publishes drive yet.
     c.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
-        SliceFrequencyControl::Authority::Engine};
+        SliceFrequencyControl::Authority::Engine, /*tunePowerAppliesLive=*/false};
     c.hasRadioPttReadback = false; // no PTT at all, so no readback either
+    c.radioPttObservation = std::nullopt;
     c.hasTuner = false;            // G2 has no internal ATU (Apache Labs spec)
     c.hasTunerMemories = false;    // no internal ATU, so no tuner-memory surface
     c.hasAmplifier = false;
     c.hasRadioSideDsp = false;     // DSP is engine-side (AnanRxDsp), not firmware
     c.hasAudioPeakingFilter = false; // no firmware APF verb on this path
     c.radioOwnsDbmScale = false;   // client computes it from raw IQ
+    // ...and BECAUSE the bins are the raw dBFS (binsDbfs[i] plus a 0.0f
+    // offset), they are absolute, so the noise-floor auto-adjust converges
+    // without an echo. The axis is dBFS wearing a dBm label: not calibrated.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    amplitude.clientPersistsDbmRange = false;  // no client owner is declared
+    c.panAmplitude = amplitude;
+    c.panFrameRateShaping = std::nullopt;  // no client owner is declared for FFT FPS
     c.hasDdcPanEdgeRolloff = true; // see RadioCapabilities.h's own comment
+    // No band/segment zoom: the protocol carries no per-pan zoom flag.
+    c.panZoomModes = std::nullopt;
     c.persistsMemories = false;    // default; stated explicitly
     c.clientSettingsDomains = {};  // no applyRestoredState()/currentOperatingState() yet
     c.hostDroopCalibration = true; // AnanDroopCorrection.h -- real DDC0 CIC droop,

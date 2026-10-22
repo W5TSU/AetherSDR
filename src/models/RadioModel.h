@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/CommandParser.h"   // MessageSeverity for radioMessageReceived
+#include "core/SpectrumDecodeScale.h"
 #include "core/GuiClientRegistrationState.h"
 #include "core/RadioSettingsScope.h"  // RFC #4603 radio-scoped feature documents
 #include "core/backends/GpsDelta.h"     // applyGpsChanges payload (aetherd 2.3)
@@ -26,6 +27,7 @@
 #include "TunerModel.h"
 #include "AmpModel.h"
 #include "TransmitModel.h"
+#include "TuneInhibitOutputs.h"
 #include "EqualizerModel.h"
 #include "TnfModel.h"
 #include "SpotModel.h"
@@ -62,6 +64,7 @@ inline bool wsprSeamAudioRouteReady(bool armed, const RadioCapabilities& capabil
         && capabilities.takesTxAudioOverSeam;
 }
 
+struct BandStackEntry;
 class IRadioBackend;   // aetherd RFC §5.5 radio-facing seam (owned via unique_ptr below)
 class FlexBackend;     // transitional concrete alias for 2.3 status-decode driving
 
@@ -256,6 +259,7 @@ public:
     // sending `radio callsign` so the radio's own copy stays in step.
     void setStationCallsign(const QString& callsign);
     QString nickname()     const { return m_nickname; }
+    ReceiveDispatch requestRadioNickname(const QString& nickname);
     QString region()       const { return m_region; }
     int     rttyMarkDefault() const { return m_rttyMarkDefault; }
     QString radioOptions() const { return m_radioOptions; }
@@ -268,6 +272,10 @@ public:
     QString licenseSubscription()   const { return m_licenseSubscription; }
     LicenseFeatureState licenseFeature(const QString& name) const;
     bool licenseFeatureSeen(const QString& name) const;
+    // The radio refused a dvk command as unlicensed (50004001); the reliable
+    // DVK entitlement signal, since `dvk … enabled=` is always 1. Changes emit
+    // licenseFeaturesChanged() like the other entitlement inputs.
+    bool dvkLicenseRefused() const { return m_dvkModel.licenseRefused(); }
     bool licenseFeatureEnabled(const QString& name) const;
     QString licenseFeatureReason(const QString& name) const;
 
@@ -280,7 +288,17 @@ public:
 
     // GPS data
     QString gpsStatus()    const { return m_gpsStatus; }
-    bool    gpsPositionValid() const { return m_gpsPositionValid; }
+    GpsFixState gpsFixState() const { return m_gpsFixState; }
+    // Uses legacy backend validity with a no-fix veto; no separate time-valid bit is reported.
+    bool gpsTimeValid() const
+    {
+        return m_gpsPositionValid && m_gpsFixState != GpsFixState::NoFix;
+    }
+    bool    gpsPositionValid() const
+    {
+        return m_gpsPositionValid && m_gpsFixState != GpsFixState::NoFix
+            && m_gpsFixState != GpsFixState::TimeOnly;
+    }
     QString gpsSource()    const { return m_gpsSource; }
     int     gpsTracked()   const { return m_gpsTracked; }
     int     gpsVisible()   const { return m_gpsVisible; }
@@ -572,6 +590,10 @@ public:
     bool    tcxoPresent()  const { return m_tcxoPresent; }
     bool    binauralRx()   const { return m_binauralRx; }
     bool    cwxActive()    const { return m_cwxActive; }
+    // #5422: physical paddle state from the admission points (MainWindow /
+    // serial slot), so the TUNE-start refusal cannot slip through the gap
+    // between two iambic elements when m_cwKeyActive is momentarily false.
+    void    setCwPaddleHeld(bool held) { m_cwPaddleHeld = held; }
     void    setBinauralRx(bool on);  // optimistic update + radio command
     bool    muteLocalWhenRemote() const { return m_muteLocalWhenRemote; }
     bool    autoSave() const { return m_autoSave; }
@@ -610,6 +632,36 @@ public:
     // other family that takes typed intents through the IRadioBackend seam) —
     // there, Flex wire text has nowhere to go and is dropped at the sink.
     bool hasCommandPlane() const { return m_wanConn != nullptr || m_connection != nullptr; }
+
+    // The slice's tuning step, applied on the client when the radio has no
+    // command plane to carry `slice set <n> step=`. Returns false, doing
+    // nothing, when a command plane exists: the caller sends its wire text and
+    // the radio's status echo sets the step.
+    bool applyClientOwnedSliceStep(int sliceId, int hz);
+
+    // The RADIO's own NR and ANF (`slice set nr=/anf=` on a Flex, seam verbs
+    // on an Icom); none where the radio declares no radio-side DSP (HL2,
+    // ANAN). Fails open with no backend. ANF is also there wherever a command
+    // plane exists: the Demo's synthetic connection answers `anf=`.
+    bool radioSideNoiseReductionAvailable() const;
+    bool radioSideAutoNotchAvailable() const;
+    // These return false, leaving the model untouched, where the radio lacks
+    // the control (hasRadioSideDsp, hasAmCarrierLevel); the caller says so.
+    // NR/ANF OFF is accepted there: it is already true.
+    bool requestRadioNoiseReduction(SliceModel* slice, bool on);
+    bool requestRadioAutoNotch(SliceModel* slice, bool on);
+    bool requestAmCarrierLevel(int level);
+
+    // A band-stack bookmark's AGC, NB and NR through the SliceModel setters,
+    // so they reach every backend. NR only where radio-side NR exists; AGC not
+    // while KiwiSDR external receive replaces the slice (the caller sends it).
+    void recallBandStackReceiveDsp(SliceModel* slice, const BandStackEntry& entry);
+
+    // Radio-side recording is `slice set <n> record=/play=` on the slice's
+    // command plane. Without one there is no radio-side recorder to reach, so
+    // "Radio Side" falls back to the client recorder instead of a button that
+    // latches and records nothing.
+    bool radioSideRecordingReachable() const { return hasCommandPlane(); }
 
     // ── Memory command routing ──────────────────────────────────────────────
     //
@@ -705,6 +757,9 @@ public:
     quint32 txClientHandle() const { return m_txClientHandle; }
     quint32 ourClientHandle() const;
     bool sliceMayBelongToUs(int sliceId) const;
+    // TX requires confirmed ownership on multi-client radios; early RX state
+    // may still be visible through sliceMayBelongToUs() before owners arrive.
+    bool sliceOwnedByUs(int sliceId) const;
 
     struct ClientInfo {
         QString clientId;
@@ -801,6 +856,9 @@ public:
                                      QString* error = nullptr);
     bool automationRemoveSliceFixture(int sliceId,
                                       QString* error = nullptr);
+    // Isolated production reconciliation; creates no RadioModel or transport.
+    static QJsonObject automationInterlockProbe(const QString& source,
+                                               bool voxEnabled, bool txOwnedByUs);
     bool automationApplyGpsFixture(const GpsDelta& delta,
                                    const QString& referenceState,
                                    const QString& referenceSetting,
@@ -876,8 +934,10 @@ public:
     void setPanDbmRange(float minDbm, float maxDbm);
     // A user's dBm scale for one pan: wire text on a radio with a command
     // plane, IRadioBackend::setPanDbmRange on one without. False when it was
-    // not dispatched.
-    bool requestPanDbmRange(const QString& panId, float minDbm, float maxDbm);
+    // not dispatched. onReply reports the radio's reply to the wire text; the
+    // seam path has no reply and never calls it.
+    bool requestPanDbmRange(const QString& panId, float minDbm, float maxDbm,
+                            std::function<void(int code, const QString& body)> onReply = {});
 
     // #4142 — the ONLY supported way for a USER-INTENT path to write a pan's
     // center/bandwidth/band to the radio.
@@ -1056,6 +1116,9 @@ signals:
     void infoChanged();
     void licenseFeaturesChanged();
     void connectionStateChanged(bool connected);
+    // Per-pan transmit permission changed. Consumers use the pan id to update
+    // each slice sharing that pan without inferring anything from TX ownership.
+    void panTransmitInhibitChanged(const QString& panId);
     // The connected backend's self-declared RadioCapabilities changed, or a
     // connect/disconnect changed which backend is answering. Relays
     // IRadioBackend::capabilitiesChanged and also fires on every
@@ -1123,7 +1186,8 @@ signals:
     // Per-RadioModel → per-session, which is exactly what the two-panadapter end
     // state needs.
     void panFeedSpectrumReady(quint32 streamId, const QVector<float>& binsDbm,
-                              qint64 emittedNs);
+                              qint64 emittedNs,
+                              const AetherSDR::SpectrumDecodeScale& decodeScale = {});
     void panFeedWaterfallRowReady(quint32 streamId, const QVector<float>& binsDbm,
                                   double lowFreqMhz, double highFreqMhz,
                                   quint32 timecode, qint64 emittedNs);
@@ -1431,8 +1495,8 @@ public:
     void createRxAudioStream();
     void removeRxAudioStream();
 
-    // Send a command with a response callback (for firmware uploader, etc.)
-    void sendCmdPublic(const QString& cmd, std::function<void(int code, const QString& body)> cb);
+    // True only when dispatched; the callback reports the later radio reply.
+    bool sendCmdPublic(const QString& cmd, std::function<void(int code, const QString& body)> cb);
     void requestFileUploadPort(qint64 size, const QString& uploadKind,
                                std::function<void(int code, const QString& body)> cb);
     void requestFileDownloadPort(const QString& downloadKind,
@@ -1449,7 +1513,6 @@ public:
 
 private slots:
     void onStatusReceived(const QString& object, const QMap<QString, QString>& kvs);
-    void onMessageReceived(const ParsedMessage& msg);
     void onConnected();
     void onDisconnected();
     void onConnectionError(const QString& msg);
@@ -1463,6 +1526,7 @@ private slots:
 private:
     friend struct RadioModelWakeTestAccess;
     void handleRadioStatus(const QMap<QString, QString>& kvs);
+    void adoptSoftwareVersion(const QString& version);
     // Apply a normalized radio-global delta from the backend
     // (IRadioBackend::radioChanged). aetherd RFC 2.3 — RadioModel residual.
     void applyRadioChanges(const RadioDelta& delta);
@@ -1470,6 +1534,9 @@ private:
     // (IRadioBackend::gpsChanged / memoryChanged / profileChanged). aetherd RFC
     // 2.3 — RadioModel residual.
     void applyGpsChanges(const GpsDelta& delta);
+    void resetGpsState(bool receiveMessages = true);
+    void wireGpsSessionReceivers(bool receiveMessages = true);
+    void handleMessageReceived(const ParsedMessage& msg, quint64 gpsSessionGeneration);
     void applyMemoryChanges(const MemoryDelta& delta);
     void reportMemoryImportFailure(const QString& reason);
     void applyProfileChanges(const ProfileDelta& delta);
@@ -1635,6 +1702,10 @@ private:
     QString m_family;
     std::unique_ptr<IRadioBackend> m_backend;
     QVector<TxPowerBand> m_txPowerBands;
+    // The CW pitch last handed to THIS m_backend through setCwPitch(), -1 when
+    // none has been; teardownBackend() resets it. The commandReady forward uses
+    // it to tell a dropped `cw pitch N` from one the backend already holds.
+    int m_cwPitchHandedToBackend{-1};
     double m_activeTxPowerBandLowHz = 0.0;
     double m_activeTxPowerBandHighHz = 0.0;
     // RFC #4288 Route A: when true, m_backend is a wire-less SimBackend (the demo
@@ -1725,6 +1796,11 @@ public:
     {
         stageSessionModelsForReconnect();
     }
+    // setBackendForTest() does not connect transmitChanged; this is that handler.
+    void applyBackendTransmitDeltaForTest(const TransmitDelta& delta)
+    {
+        applyBackendTransmitDelta(delta);
+    }
     void emitBackendSliceChangedForTest(int sliceId, const SliceDelta& delta)
     {
         if (m_backend) {
@@ -1752,6 +1828,8 @@ public:
 
 private:
     friend class RadioModelSliceLifecycleTestAccess;
+    friend class RadioNicknameTestAccess;
+    friend class RerouteDeadControlsTestAccess;
     void wireBackendReceiverState();
     bool dispatchSliceLifecycleCommand(const QString& command, ResponseCallback callback = {});
     quint64 m_backendReceiverGeneration = 0;
@@ -1880,6 +1958,11 @@ private:
     qint64 m_lastAudioMs{0};
     TunerModel       m_tunerModel;
     TransmitModel    m_transmitModel;
+    // A TUNE this client handed to the backend and has not yet released. A
+    // tune state decoded off the radio alone is not one, so live tune power
+    // neither reaches it nor hides its drop notice.
+    bool tuneCarrierLive() const;
+    bool m_backendTuneKeyed{false};
     EqualizerModel   m_equalizerModel;
     TnfModel         m_tnfModel;
     SpotModel        m_spotModel;
@@ -1978,9 +2061,13 @@ private:
     bool        m_txRequested{false}; // local MOX command intent (for edge sync)
     bool        m_cwKeyActive{false}; // true while CW key/paddle is held (#1379)
     bool        m_cwxActive{false};   // true while CWX send is in flight (#2047, #2097)
+    bool        m_cwPaddleHeld{false}; // true while a paddle is physically held (#5422)
     bool        m_cwxDrainArmed{false}; // CWX drain-release latch, immune to interlock flicker (#3949)
     bool        m_txAudioGate{false}; // actual TX audio gate state
     bool        m_radioTransmitting{false}; // raw interlock TX state, any owner
+    // Last mox a RadioCapabilities::radioPttObservation backend published; ORed
+    // into the command-edge fallback. Always false for every other backend.
+    bool        m_backendObservedTransmit{false};
     bool        m_operatorTransmitting{false}; // owned MOX/PTT/VOX (not tune/ATU/TCI/DAX)
     int         m_txFilterKillSamples{0};      // consecutive qualifying meter packets (#4649)
     bool        m_txFilterKillReported{false}; // latched, so we speak once per transmission
@@ -2040,6 +2127,11 @@ private:
     // GPS state
     QString m_gpsStatus;           // "Locked", "Present", "Not Present"
     bool    m_gpsPositionValid{false};
+    GpsFixState m_gpsFixState{GpsFixState::Unknown};
+    quint64 m_gpsSessionGeneration{0};
+    QMetaObject::Connection m_gpsBackendConnection;
+    QMetaObject::Connection m_gpsLanMessageConnection;
+    QMetaObject::Connection m_gpsWanMessageConnection;
     QString m_gpsSource;
     int     m_gpsTracked{0};
     int     m_gpsVisible{0};
@@ -2078,6 +2170,9 @@ private:
     QHash<QString, int> m_panTransmitInhibitedTxSlices;
     int  m_tuneInhibitBandId{-1};  // band ID whose TX outputs were inhibited during tune
     bool m_tuneInhibitActive{false};
+    // Exactly the outputs this TUNE cycle disabled; restoreTuneInhibit()
+    // re-enables these and nothing else (TuneInhibitOutputs.h).
+    TuneInhibitOutputs m_tuneInhibitOutputs;
     // #5572 firmware-upload retry barrier. Set when an upload is dispatched to
     // the radio; cleared only when a NEW connection is established, so it
     // survives the Radio Setup dialog (and its uploader) being closed.
@@ -2104,6 +2199,9 @@ private:
     void updateOperatorTransmit();
     // Raw-TX edge for backends with no interlock status plane (HL2). No-op on
     // Flex, where the edge is decoded from `interlock` status instead.
+    // IRadioBackend::transmitChanged: backend MOX is radio state, published
+    // as the raw TX edge, never as local intent.
+    void applyBackendTransmitDelta(const TransmitDelta& delta);
     void publishBackendTransmitEdge(bool tx);
     // Command-edge fallback for a backend with no radio TX readback. One that
     // declares RadioCapabilities::hasRadioPttReadback (Icom) waits for the

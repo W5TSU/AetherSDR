@@ -2,6 +2,8 @@
 
 #include "PacketLossConcealment.h"
 #include "VitaBinCoverage.h"
+#include "SpectrumDecodeScale.h"
+#include "core/backends/flex/VitaDscpMarker.h"
 
 #include <QObject>
 #include <QUdpSocket>
@@ -15,6 +17,8 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <atomic>
+#include <functional>
+#include <initializer_list>
 
 namespace AetherSDR {
 
@@ -39,6 +43,9 @@ class OpusCodec;
 
 class PanadapterStream : public QObject {
     Q_OBJECT
+    friend class VitaDscpStreamTestAccess;
+    friend class WanUdpKeepaliveTestAccess;
+    friend class WanUdpKeepaliveSocketTestAccess;
 
 public:
     static constexpr int VITA49_HEADER_BYTES = 28;
@@ -60,8 +67,8 @@ public:
     Q_INVOKABLE bool startWan(const QHostAddress& radioAddr, quint16 radioUdpPort);
 
     // Begin WAN UDP registration: sends "client udp_register handle=0x<handle>"
-    // via UDP every 50ms until VITA-49 packets arrive, then switches to
-    // "client ping handle=0x<handle>" keepalive every 5 seconds.
+    // via UDP every 50ms until a valid Flex VITA-49 packet arrives from the
+    // radio, then keeps sending udp_register every 5 seconds.
     Q_INVOKABLE void startWanUdpRegister(quint32 clientHandle);
     Q_INVOKABLE void stop();
 
@@ -71,7 +78,7 @@ public:
     bool    isRunning() const;
 
     // Update the dBm range used to scale incoming FFT bins for a specific stream.
-    void setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho = false);
+    SpectrumDecodeScale setDbmRange(quint32 streamId, float minDbm, float maxDbm, bool waitForEcho = false);
     // Abandon an in-flight client range request so the next radio-authoritative
     // range can update the FFT decoder immediately (for example, on a band change).
     bool cancelPendingDbmRange(quint32 streamId);
@@ -211,7 +218,8 @@ signals:
 
     void daxAudioReady(int channel, const QByteArray& pcm);
     void iqDataReady(int channel, const QByteArray& rawPayload, int sampleRate);
-    void spectrumReady(quint32 streamId, const QVector<float>& binsDbm, qint64 emittedNs);
+    void spectrumReady(quint32 streamId, const QVector<float>& binsDbm, qint64 emittedNs,
+                       const AetherSDR::SpectrumDecodeScale& decodeScale);
     // One row of waterfall data (intensity values, Width bins).
     void waterfallRowReady(quint32 streamId, const QVector<float>& binsDbm,
                            double lowFreqMhz, double highFreqMhz,
@@ -229,14 +237,18 @@ signals:
 
 private slots:
     void onDatagramReady();
+    void sendWanUdpRegister();
 
 private:
+    friend struct PanadapterDbmRangeTestAccess;
     void processDatagram(const QByteArray& data);
+    void confirmWanRegistration(const QByteArray& data);
     // Raise the kernel receive buffer (SO_RCVBUF) on the bound VITA-49 socket so
     // bursts / brief drain stalls don't overflow it and surface as false
     // sequence-loss (which the adaptive throttle would react to). Logs the
     // granted size — the kernel caps the request at net.core.rmem_max. (#3810)
     void applyReceiveBufferSize();
+    void applyDscpEf(const QHostAddress& destination, std::initializer_list<quint16> ports);
     void decodeFFT(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
     void decodeWaterfallTile(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
     void decodeNarrowAudio(const uchar* raw, int totalBytes, bool hasTrailer, quint32 streamId);
@@ -366,9 +378,14 @@ private:
     QHash<quint32, OrphanRec> m_orphanStreams;
     QElapsedTimer             m_orphanClock;   // monotonic source for lastSeenMs
     QUdpSocket*     m_socket{nullptr};
+    VitaDscpMarker m_dscpMarker;
+    // Inject only the marking attempt; bind/send/teardown remain production.
+    std::function<VitaDscpResult(qintptr, const QHostAddress&, std::initializer_list<quint16>)> m_dscpApplyForTest;
     quint16         m_localPort{0};
 
     QMap<quint32, QPair<float,float>> m_dbmRanges;  // streamId → (min, max)
+    QMap<quint32, quint64> m_dbmRangeGenerations;
+    quint64 m_nextDbmRangeGeneration{0};
     QMap<quint32, QPair<float,float>> m_pendingDbmRanges;  // streamId → pending echoed range
     QMap<quint32, int> m_yPixels;  // streamId → ypixels for FFT bin scaling
     RadioConnection* m_conn{nullptr};
@@ -456,9 +473,13 @@ private:
     // reason RadioConnection::m_syntheticDemo is.
     std::atomic<bool> m_hasReceivedPacket{false};
 
+    // Inject only the terminal WAN bind/write in socket-free lifecycle tests.
+    std::function<bool()> m_wanBindForTest;
+    std::function<qint64(const QByteArray&, const QHostAddress&, quint16)> m_wanWriteForTest;
+    bool m_wanBoundForTest{false};
+
     // WAN UDP registration and keepalive
-    QTimer*  m_wanRegisterTimer{nullptr};   // 50ms: "client udp_register" until first packet
-    QTimer*  m_wanPingTimer{nullptr};       // 5s: "client ping" keepalive after registration
+    QTimer*  m_wanRegisterTimer{nullptr};   // udp_register: 50 ms until VITA, then 5 s
     QTimer*  m_routedPrimeTimer{nullptr};   // 250ms: non-WAN UDP prime retry until first packet
     bool     m_isWanMode{false};
     bool     m_wanRegistered{false};

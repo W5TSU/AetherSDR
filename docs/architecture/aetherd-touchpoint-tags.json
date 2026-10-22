@@ -133,7 +133,7 @@
  },
  "core/ClientDisplaySettings.h": {
   "tag": "ui-support",
-  "note": "Radio-scoped client persistence for locally shaped waterfall cadence under the ClientDisplay feature document; UI settings plumbing, not radio-owned display state.",
+  "note": "Radio-scoped client persistence for locally shaped display state (waterfall cadence, FFT FPS, the dBm range) under the ClientDisplay feature document; UI settings plumbing, not radio-owned display state.",
   "split": "",
   "confidence": "high"
  },
@@ -239,6 +239,12 @@
   "split": "",
   "confidence": "high"
  },
+ "core/DbmRangePlausibility.h": {
+  "tag": "ui-support",
+  "note": "Header-only predicate: could this dBm range be a real display range. Shared by the pan wiring's outbound backstop and ClientDisplaySettings' store validation; no radio state.",
+  "split": "",
+  "confidence": "high"
+ },
  "core/DeviceDiagnostics.h": {
   "tag": "ui-support",
   "note": "Host audio-device diagnostics (Qt device BT/USB heuristics, JSON snapshots for troubleshooting), not radio state",
@@ -290,6 +296,12 @@
  "core/GpuSelector.h": {
   "tag": "ui-support",
   "note": "GPU enumeration + persisted QRhi render-adapter choice applied at app startup; pure client rendering plumbing",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/QtAudioBackendGuard.h": {
+  "tag": "ui-support",
+  "note": "Pre-QApplication probe that keeps Qt 6.12's QtMultimedia off a PipeWire backend that would crash; client startup plumbing, not radio state.",
   "split": "",
   "confidence": "high"
  },
@@ -1394,6 +1406,30 @@
  "core/backends/LocalRadioDiscoveryMapping.h": {
   "tag": "universal",
   "note": "Pure RadioInfo <-> DiscoveredRadio projection for the normalized discovery seam: family/transport labels, serial identity, endpoint only for LAN. No vendor payload crosses it and nothing here reaches a radio command. The inverse feeds the desktop picker for families it owns through RadioDiscoverySource (HackRF, #42).",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/SpectrumDecodeScale.h": {
+  "tag": "universal",
+  "note": "Immutable sample decode aperture and local generation carried through the existing spectrum feed. No commands, vendor types or backend access; queued observations retain the scale that produced their levels.",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/AudioDevicePreferencePolicy.h": {
+  "tag": "ui-support",
+  "note": "Header-only policy over PC audio device ids: whether a device-list change keeps the engine's device, falls back to the system default or returns to the saved device, and whether a selection is written to the saved id (#6040). Host audio, no radio state.",
+  "split": "",
+  "confidence": "high"
+ },
+ "core/backends/NoiseFloorAutoAdjustGate.h": {
+  "tag": "universal",
+  "note": "The ONE predicate deciding whether the noise-floor auto-adjust may move the display reference level, as an OR over two backend-neutral properties (a real dBm-range echo, or absolute spectrum bins). Deliberately free of Qt and of RadioCapabilities so the widget and its test read the same function rather than two copies; the UI reaching it is the seam working, not coupling. Family backends populate the capability it is called with.",
+  "split": "",
+  "confidence": "high"
+ },
+ "models/ReceiverSlotCount.h": {
+  "tag": "universal",
+  "note": "How many receiver letters (A, B, C, ...) the UI offers — the RX applet's slice tabs and the CAT applet's VFO targets — tracked from the connection/capability/slice edges. Family-agnostic: the backend's declared ceiling, floored by the slots live receivers occupy (#5775, #5776).",
   "split": "",
   "confidence": "high"
  }

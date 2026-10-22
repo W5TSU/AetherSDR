@@ -2,6 +2,7 @@
 #if defined(Q_OS_WIN) && defined(HAVE_HIDAPI)
 
 #include "UlanziDialWindowsManager.h"
+#include "HidDiscovery.h"
 #include "core/LogManager.h"
 #include "core/UlanziChordDecoder.h"
 
@@ -50,7 +51,7 @@ constexpr const wchar_t* kProductMatch = L"Ulanzi Dial";
 UlanziDialWindowsManager::UlanziDialWindowsManager(QObject* parent)
     : QObject(parent)
 {
-    hid_init();
+    HidDiscovery::init();
     m_pollTimer = new QTimer(this);
     m_pollTimer->setInterval(POLL_INTERVAL_MS);
     connect(m_pollTimer, &QTimer::timeout, this, &UlanziDialWindowsManager::poll);
@@ -64,7 +65,6 @@ UlanziDialWindowsManager::UlanziDialWindowsManager(QObject* parent)
 UlanziDialWindowsManager::~UlanziDialWindowsManager()
 {
     stop();
-    hid_exit();
 }
 
 void UlanziDialWindowsManager::start()
@@ -86,11 +86,11 @@ void UlanziDialWindowsManager::stop()
 bool UlanziDialWindowsManager::rescan()
 {
     closeAll();
-    struct hid_device_info* infos = hid_enumerate(0, 0);
+    struct hid_device_info* infos = HidDiscovery::enumerate(0, 0);
     for (auto* info = infos; info; info = info->next) {
         if (!info->product_string) continue;
         if (wcsstr(info->product_string, kProductMatch) == nullptr) continue;
-        hid_device* h = hid_open_path(info->path);
+        hid_device* h = HidDiscovery::openPath(info->path);
         if (!h) continue;
         hid_set_nonblocking(h, 1);
         OpenDevice dev;

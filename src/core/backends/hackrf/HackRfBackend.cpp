@@ -276,6 +276,12 @@ RadioCapabilities HackRfBackend::capabilities() const
     c.hostModulates = true;         // WDSP TXA on this host, once wired — see the class comment
     c.takesTxAudioOverSeam = true;  // audio reaches this backend via submitTxAudio, not DAX/VITA-49
     c.hasRadioPttReadback = false;  // no readback plane, matches HL2 — setKeying's command edge is the only edge
+    // The HOST owns the drive (the TX VGA and amp, set by applyTxDrive()), so
+    // rfPower() is operator intent, not radio-confirmed power -- the HL2's
+    // shape. Declaring it also tells RadioModel that RF and TUNE power reach
+    // this backend as typed intents, so their Flex text is not a "drop".
+    c.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
+        SliceFrequencyControl::Authority::Engine};
     for (const QString& m : supportedModes())
         if (!canTransmitMode(m))
             c.receiveOnlyModes.append(m);
@@ -331,6 +337,19 @@ RadioCapabilities HackRfBackend::capabilities() const
     // dBFS -> dBm rests on an estimated reference (HackRfDbReference), so the
     // operator may correct it per device.
     c.hostLevelCalibration = true;
+
+    // The spectrum is computed on this host from raw IQ, so its bins are
+    // absolute: they do not move when the display reference moves. The dBm
+    // reading rests on that estimated reference, so the axis is not called
+    // calibrated.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    amplitude.clientPersistsDbmRange = false;  // no client owner is declared
+    c.panAmplitude = amplitude;
+    c.panFrameRateShaping = std::nullopt;  // no client owner is declared for FFT FPS
+    // No band/segment zoom: no command plane, no per-pan zoom flag.
+    c.panZoomModes = std::nullopt;
 
     c.extensions["hackrf"] = QVariantMap{{"serial", m_serial}};
     c.extensionNamespaces = {"hackrf"};

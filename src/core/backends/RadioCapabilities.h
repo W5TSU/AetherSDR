@@ -7,6 +7,8 @@
 #include <QVector>
 #include <QVariantMap>
 
+#include <optional>
+
 namespace AetherSDR {
 
 struct TxPowerBand {
@@ -34,6 +36,43 @@ struct SliceFrequencyControl {
     Authority authority{Authority::Unknown};
     qint64 minimumHz{0};
     qint64 maximumHz{0};
+};
+
+// What the numbers on the panadapter's VERTICAL axis mean (upstream #5725/#5726,
+// ported). Absent means NO BACKEND HAS BEEN READ, and the two fields then fall
+// to OPPOSITE legacy answers -- which is why consumers go through
+// RadioCapabilities::dbmAxisIsCalibrated() and ::panBinsAbsolute() rather than
+// reach in here and pick a default for themselves.
+struct PanAmplitudeModel {
+    // The axis is ABSOLUTE dBm at the antenna (a calibrated radio). FALSE means
+    // dBFS wearing a dBm label: self-consistent, but not comparable with another
+    // station's numbers.
+    bool calibratedDbm = false;
+
+    // The spectrum bins carry ABSOLUTE levels: they are computed HOST-side from
+    // the samples, so a bin does not move when the display reference level
+    // moves. Deliberately NOT the same question as radioOwnsDbmScale ("does the
+    // radio accept a display range and echo it back"). On a raw-IQ radio the
+    // answers differ, and absolute bins are what let the noise-floor
+    // auto-adjust converge with no echo (see NoiseFloorAutoAdjustGate.h). They
+    // also tell the waterfall that a row is in absolute dB, which the manual
+    // Black Level and NB Blank paths need.
+    bool binsAbsolute = false;
+
+    // Explicit client persistence owner for the pan's dBm range (the axis
+    // limits the operator sets). False preserves a family's existing settings
+    // behavior. Read through RadioCapabilities::clientPersistsDbmRange().
+    bool clientPersistsDbmRange = false;
+};
+
+// The FFT frame rate of a pan whose frames this engine paces (Display, FFT
+// FPS). Absent: no owner is declared for it and the client stores nothing,
+// which is every family's existing behavior (a Flex stores and reports its own).
+struct PanFrameRateShaping {
+    // Explicit client persistence owner for the FFT frame rate. False preserves
+    // a family's existing settings behavior. No default: an engaging backend
+    // must state its own value.
+    bool clientPersistsFrameRate;
 };
 
 // A stable, radio-owned receive-filter preset. `id` is the identity used on
@@ -138,6 +177,75 @@ struct RadioCapabilities {
     int maxPanadapters = 1;        // simultaneous panadapters
     QVector<int> sampleRatesHz;    // supported per-receiver sample rates (Hz)
 
+    // What the panadapter's vertical axis is made of. See PanAmplitudeModel:
+    // read it through the two accessors, never by unwrapping it at a call site.
+    std::optional<PanAmplitudeModel> panAmplitude;
+
+    // Absent keeps the legacy claim that the axis is dBm.
+    [[nodiscard]] bool dbmAxisIsCalibrated() const
+    {
+        return !panAmplitude || panAmplitude->calibratedDbm;
+    }
+
+    // Absent means UNDECLARED, and an undeclared backend is not assumed to have
+    // absolute bins. Costs nothing: the auto-floor gate is an OR whose other
+    // term, radioOwnsDbmScale, still defaults permissive.
+    [[nodiscard]] bool panBinsAbsolute() const
+    {
+        return panAmplitude && panAmplitude->binsAbsolute;
+    }
+
+    // See PanFrameRateShaping. Absent = the client keeps no FFT frame rate.
+    std::optional<PanFrameRateShaping> panFrameRateShaping;
+
+    // The one predicate for storing and for restoring the FFT frame rate.
+    // Absent is "not declared", and an undeclared backend owns nothing here.
+    [[nodiscard]] bool clientPersistsPanFrameRate() const
+    {
+        return panFrameRateShaping && panFrameRateShaping->clientPersistsFrameRate;
+    }
+
+    // The one predicate for storing and for restoring the pan's dBm range. The
+    // declaration counts only with absolute bins: the client writes the range
+    // into the pan model, which is safe only where no bin is scaled by it.
+    [[nodiscard]] bool clientPersistsDbmRange() const
+    {
+        return panAmplitude && panAmplitude->clientPersistsDbmRange
+            && panAmplitude->binsAbsolute;
+    }
+
+
+    // Per-pan band/segment zoom: `display pan set <panId> band_zoom=<0|1>` and
+    // the matching `segment_zoom=`, the radio-authoritative flags that snap a
+    // panadapter to the current band or segment (#4057). ENGAGED means the
+    // radio answers that wire text; ABSENT means UNDECLARED.
+    //
+    // ABSENT REFUSES, and that direction is the point. The failure this exists
+    // to stop is the HERMES.md section 17 dead control: on a radio with no
+    // command plane the write is dropped inside RadioModel::sendCmd while the
+    // UI control moves anyway, so an operator gets a zoom button that lies.
+    // Every surface that can issue the write asks gui/PanZoomModeGate.h, which
+    // reads this record and refuses when it is absent.
+    //
+    // A RECORD AND NOT ANOTHER BOOL, per the M2 convention above: `band_zoom`
+    // and `segment_zoom` are two separate wire keys that happen to travel
+    // together today, so the first radio that answers one and not the other
+    // gets a field in here rather than a second loose boolean and a hunt
+    // through every consumer of the first.
+    //
+    // A CAPABILITY AND NOT A FAMILY STRING. The button enable used to ask
+    // RadioModel::usesFlexCommandPlane(), which is literally `family() ==
+    // "flex"`; #5554's standing notice is that no new family-string branch may
+    // be added above the seam. A second family that gains a zoom verb engages
+    // this record in its own capabilities() and needs no edit in the UI.
+    struct PanZoomModes {
+        // The verb that carries both modes, recorded so the declaration names
+        // what it grants rather than being a bare presence bit. DIAGNOSTIC, in
+        // exactly TwoToneGenerator::selectionCommand's sense below: the gate
+        // branches on this record being ENGAGED and never on the string.
+        QString setCommand;
+    };
+    std::optional<PanZoomModes> panZoomModes;
     // The frequency range the receiver can actually be tuned to, in Hz.
     //
     // Both zero means "not reported" — clients then keep whatever range they
@@ -225,6 +333,9 @@ struct RadioCapabilities {
     struct TransmitDriveControl {
         SliceFrequencyControl::Authority authority{
             SliceFrequencyControl::Authority::Unknown};
+        // IRadioBackend::setTunePower() re-applies drive to a TUNE carrier in
+        // progress. False: tune power reaches the backend only at key-down.
+        bool tunePowerAppliesLive = false;
     };
     std::optional<TransmitDriveControl> transmitDriveControl;
 
@@ -443,6 +554,13 @@ struct RadioCapabilities {
     bool hasTuner = false;         // antenna tuner / ATU matching control
     bool hasTunerMemories = false; // radio-side ATU memory recall/database
     bool hasAmplifier = false;     // integrated or controllable PA
+    // Shape of the existing desktop NRS level verb. Absent preserves the
+    // legacy 0..100 request range; this grants no additional daemon method.
+    struct NrsLevelControl {
+        int levelMaximum = 100;
+    };
+    std::optional<NrsLevelControl> nrsLevelControl;
+
     bool hasExtendedDsp = false;   // extended firmware DSP filters (NRS/RNN/NRF)
 
     // The WDSP LMS / FFT filter family — NRL (leaky LMS noise reduction), ANFL
@@ -509,12 +627,16 @@ struct RadioCapabilities {
     // tone. A radio can have either, both or neither.
     bool hasManualNotch = false;
 
-    // Inclusive upper bound of the radio's speech-processor level control.
-    // Flex-shaped controls use 0..2 (NOR/DX/DX+); a model with an evidenced
-    // continuous control publishes a maximum greater than 2. The minimum is
-    // always zero. The legacy-shape default is intentional; see ADDING A FIELD.
-    int speechProcessorLevelMaximum = 2;
-    QString speechProcessorLabel = QStringLiteral("PROC");
+    // The radio's own speech processor (Flex by its command plane; otherwise
+    // IRadioBackend::setSpeechProcessor must apply it). Absent: the P/CW face
+    // keeps PROC 0..2, and a host-modulating transmitter's ClientComp is the
+    // processor instead (#6086). levelMaximum: inclusive top of the level, 2 for
+    // NOR/DX/DX+, larger for an evidenced continuous control; minimum is zero.
+    struct SpeechProcessorControl {
+        int levelMaximum = 2;
+        QString label{QStringLiteral("PROC")};
+    };
+    std::optional<SpeechProcessorControl> speechProcessorControl;
 
     // The radio can temporarily monitor the transmit frequency while the
     // operator holds a control. This is Icom's XFC (CI-V 1C 02), not a
@@ -599,7 +721,17 @@ struct RadioCapabilities {
     // False preserves the existing mode-specific client squelch policy.
     bool hasModeIndependentSquelch = false;
     bool hasAmCarrierLevel = false;
-    bool hasVoxDelay = false;
+
+    // The radio's own VOX and SSB transmit monitor (Flex by its command plane;
+    // otherwise IRadioBackend::setVox / setTxMonitor must apply them). Absent:
+    // their wire text reaches nothing, and the drop notice says so (#6086).
+    // hasDelay: the VOX hang time is applied too, not just enable and level.
+    struct VoxControl {
+        bool hasDelay = false;
+    };
+    std::optional<VoxControl> voxControl;
+    struct TxMonitorControl {};
+    std::optional<TxMonitorControl> txMonitorControl;
 
 
     // Transmit audio reaches this backend through IRadioBackend::submitTxAudio
@@ -636,6 +768,14 @@ struct RadioCapabilities {
     // decoded by RadioModel directly, not published through this seam.
     // Icom: ✅ (decoded CI-V `1C 00`).
     bool hasRadioPttReadback = false;
+
+    // The backend also publishes on transmitChanged the keying the radio did by
+    // itself (its PTT or key input), which setKeying() never commanded. Observed
+    // state: it reaches radioTransmittingChanged and nothing that keys. setKeying()
+    // stays the authority for host keying, so RadioModel keeps the command-edge
+    // fallback and ORs the two. HL2: EP6 ptt_resp, which host MOX never raises.
+    struct RadioPttObservation {};
+    std::optional<RadioPttObservation> radioPttObservation;
 
     // The RX filter widths this radio can actually reach, in Hz. EMPTY means
     // "continuous, or unknown" and the UI keeps its own configurable list.
@@ -697,6 +837,9 @@ struct RadioCapabilities {
     // reaching the bridge is a separate null-check on panStream() in
     // MainWindow::startDax() — a crash guard, deliberately not merged with this.
     bool hasDaxStreams = false;
+    // Discrete DAX IQ request rates in Hz. Empty means unsupported or unknown.
+    // Applied by the existing DaxIqModel command path, including stream restore.
+    QList<int> daxIqSampleRates;
 
     // Audio DSP runs INSIDE the radio, driven by command-plane verbs, rather than
     // on this host. True for a Flex, whose firmware owns NR/NB/ANF/NRL/ANFL/ANFT,
@@ -856,8 +999,8 @@ struct RadioCapabilities {
     // operator's Passive toggle and every existing radio-publication path.
     //
     // This is intentionally a backend policy, not a `family == "icom"` check
-    // above the seam. It lets Icom declare its CI-V limitation without
-    // changing Flex, HL2, or Sim spot behavior.
+    // above the seam. Icom declares its CI-V limitation with it, and HL2 its
+    // missing command plane, without changing Flex or Sim spot behavior.
     bool alwaysUseClientSideSpots = false;
 
     // The RADIO reports its own position/time from an on-board GNSS receiver, so

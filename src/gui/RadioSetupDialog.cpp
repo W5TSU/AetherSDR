@@ -1039,7 +1039,7 @@ RadioSetupDialog::RadioSetupDialog(RadioModel* model, AudioEngine* audio,
                        "external control autostart enable port"),
         [this] { return buildTciServerTab(); });
 #endif
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     addPage(externalCategory, QStringLiteral("DAX"),
         QStringLiteral("dax virtual audio wsjt-x fldigi vara pipewire pulseaudio "
                        "external control autostart enable"),
@@ -1657,16 +1657,8 @@ QWidget* RadioSetupDialog::buildRadioTab()
                                               m_modelLabel),
                         0, 0);
 
-        // Initial nickname text. For a non-Flex radio the name lives in
-        // AppSettings (keyed by serial/MAC), not on the radio, so read it back
-        // from there — otherwise the field would show the model default even
-        // after the operator set a custom name. Flex keeps its existing
-        // model-sourced behaviour. This must gate on exactly the same
-        // "is it Flex?" test as the editingFinished handler below: gating the
-        // read on family=="hl2" while the write covers every non-Flex family
-        // would persist a name for e.g. kiwi that the field then never shows.
-        QString initialNickname = m_model->nickname().isEmpty()
-            ? m_model->name() : m_model->nickname();
+        // Radio-owned nicknames may be empty. Other radios use the local store.
+        QString initialNickname = m_model->nickname();
         {
             const RadioInfo info = m_model->lastRadioInfo();
             if (!hl2::Hl2Discovery::nicknameLivesOnRadio(info))
@@ -1694,6 +1686,10 @@ QWidget* RadioSetupDialog::buildRadioTab()
                         1, 0);
 
         connect(m_nicknameEdit, &QLineEdit::editingFinished, this, [this] {
+            // Return on an untouched field must not write radio-persisted identity.
+            if (!m_nicknameEdit->isModified()) {
+                return;
+            }
             const RadioInfo info = m_model->lastRadioInfo();
             // Only FlexRadio has an on-radio name store ("radio name" command).
             // Every other family (HL2, the sim demo, any future non-Flex backend)
@@ -1702,12 +1698,16 @@ QWidget* RadioSetupDialog::buildRadioTab()
             // keyed by the radio's stable serial, so discovery shows it in the
             // picker on the next sweep and RadioSetup reads it back on reopen.
             if (hl2::Hl2Discovery::nicknameLivesOnRadio(info)) {
-                m_model->sendCommand("radio name " + m_nicknameEdit->text());
+                if (m_model->requestRadioNickname(m_nicknameEdit->text())
+                    == ReceiveDispatch::Unsupported) {
+                    m_nicknameEdit->setText(m_model->nickname());
+                }
             } else {
                 // Commits eagerly inside; don't rely on the shutdown save.
                 hl2::Hl2Discovery::setNickname(info.family, info.serial,
                                                m_nicknameEdit->text());
             }
+            m_nicknameEdit->setModified(false);
         });
         connect(m_callsignEdit, &QLineEdit::editingFinished, this, [this] {
             // Persist client-side on EVERY family, then additionally write the
@@ -1745,6 +1745,10 @@ QWidget* RadioSetupDialog::buildRadioTab()
         connect(m_model, &RadioModel::infoChanged, this, [this] {
             if (m_modelLabel) {
                 m_modelLabel->setText(displayOrDash(m_model->model()));
+            }
+            if (m_nicknameEdit && !m_nicknameEdit->isModified()
+                && hl2::Hl2Discovery::nicknameLivesOnRadio(m_model->lastRadioInfo())) {
+                m_nicknameEdit->setText(m_model->nickname());
             }
         });
 
@@ -3167,23 +3171,59 @@ QWidget* RadioSetupDialog::buildTxTab()
         auto* mpLbl = new QLabel("Max Power:");
         applyLabelStyle(mpLbl);
         grid->addWidget(mpLbl, 0, 0);
+        // A backend declaring txPowerBands reports maxPowerLevel() as the
+        // band's rated watts, shown only once haveMaxPowerLevel() says it was
+        // reported (#5637). Without a command plane the field is read-only,
+        // since its write would be dropped. With one, it is the original Flex
+        // field: same unit, editor, clamp and write.
+        const bool maxPowerIsRatedWatts =
+            !m_model->backendCapabilities().txPowerBands.isEmpty();
+        const bool ratedWattsReported = maxPowerIsRatedWatts
+            && tx.haveMaxPowerLevel() && tx.maxPowerLevel() > 0;
+        const bool maxPowerWritable =
+            !maxPowerIsRatedWatts && m_model->hasCommandPlane();
+
         auto* mpRow = new QHBoxLayout;
-        auto* mpEdit = new QLineEdit(QString::number(tx.maxPowerLevel()));
+        auto* mpEdit = new QLineEdit(
+            maxPowerIsRatedWatts && !ratedWattsReported
+                ? QString()
+                : QString::number(tx.maxPowerLevel()));
         applyEditStyle(mpEdit);
         mpEdit->setFixedWidth(50);
+        mpEdit->setAccessibleName(tr("Max Power"));
         mpRow->addWidget(mpEdit);
-        auto* mpUnit = new QLabel("%");
+        auto* mpUnit = new QLabel(
+            !maxPowerIsRatedWatts ? QStringLiteral("%")
+            : ratedWattsReported  ? QStringLiteral("W")
+                                  : QString());
         applyLabelStyle(mpUnit);
         mpRow->addWidget(mpUnit);
         mpRow->addStretch(1);
         grid->addLayout(mpRow, 0, 1);
 
-        connect(mpEdit, &QLineEdit::editingFinished, this, [this, mpEdit] {
-            int val = qBound(0, mpEdit->text().toInt(), 100);
-            mpEdit->setText(QString::number(val));
-            m_model->sendCommand(
-                QString("transmit set max_power_level=%1").arg(val));
-        });
+        if (maxPowerWritable) {
+            connect(mpEdit, &QLineEdit::editingFinished, this, [this, mpEdit] {
+                int val = qBound(0, mpEdit->text().toInt(), 100);
+                mpEdit->setText(QString::number(val));
+                m_model->sendCommand(
+                    QString("transmit set max_power_level=%1").arg(val));
+            });
+        } else {
+            // Read-only, not disabled, so it stays focusable; the reason goes
+            // on accessibleDescription too (docs/a11y.md).
+            const QString why = ratedWattsReported
+                ? tr("The radio's rated output. This radio does not accept a "
+                     "maximum power setting from here.")
+                : maxPowerIsRatedWatts
+                ? tr("The radio has not reported its rated output yet. This "
+                     "radio does not accept a maximum power setting from "
+                     "here.")
+                : tr("This radio does not accept a maximum power setting "
+                     "from here.");
+            mpEdit->setReadOnly(true);
+            mpEdit->setToolTip(why);
+            mpEdit->setAccessibleDescription(why);
+        }
 
         auto* swLbl = new QLabel("Show TX in Waterfall:");
         applyLabelStyle(swLbl);

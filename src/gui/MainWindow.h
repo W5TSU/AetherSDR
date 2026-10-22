@@ -30,6 +30,7 @@
 #include "gui/CenterLockRebindTracker.h"
 #include "gui/DaxRestorePolicy.h"       // #4558 last-session DAX restore window
 #include "gui/KiwiRebindTracker.h"      // #4158 band-recall Kiwi re-bind policy
+#include "gui/ShortcutRefusalNotice.h"
 #include "core/CatPort.h"
 #ifdef HAVE_WEBSOCKETS
 #include "core/TciServer.h"
@@ -129,6 +130,7 @@ class TitleBar;
 class KiwiSdrManager;
 struct KiwiSdrAntennaProfile;
 class SpectrumWidget;
+class StatusBarNoticeLabel;
 class SpectrumOverlayMenu;
 class IRadioBackend;
 class PanadapterApplet;
@@ -182,7 +184,7 @@ class UlanziDialMapperDialog;
 class EvdevEncoderManager;
 #elif defined(Q_OS_WIN) && defined(HAVE_HIDAPI)
 class UlanziDialWindowsManager;
-#elif defined(Q_OS_MAC)
+#elif defined(Q_OS_MACOS)
 class UlanziDialMacOSManager;
 #else
 class UlanziDialBackend;
@@ -192,7 +194,7 @@ class DvkPanel;
 #ifdef HAVE_RADE
 class RADEEngine;
 #endif
-#if defined(Q_OS_MAC)
+#if defined(Q_OS_MACOS)
 class VirtualAudioBridge;
 using DaxBridge = VirtualAudioBridge;
 #elif defined(HAVE_PIPEWIRE)
@@ -402,10 +404,15 @@ private:
     void handleAudioDeviceListChanged();
     void applyAudioDeviceSelection(const QAudioDevice& inputDevice,
                                    const QAudioDevice& outputDevice,
+                                   AudioDeviceSelection inputSelection,
+                                   AudioDeviceSelection outputSelection,
                                    bool reinitializePcInput);
     void resetMissingAudioDevicesToDefault(bool resetInput,
                                            bool resetOutput,
                                            bool reinitializePcInput);
+    void restorePreferredAudioDevices(const QAudioDevice& inputDevice,
+                                      const QAudioDevice& outputDevice,
+                                      bool reinitializePcInput);
     SliceModel* activeSlice() const;
 
     // Push the connected backend's reported tuning range into one overlay
@@ -528,6 +535,9 @@ private:
     // cannot honor. Shared by the commandDropped path and by the
     // capability gates that refuse BEFORE the send (M0, #5263).
     void showUnsupportedControlNotice();
+    // An antenna button or combo refused a pick because the radio published no
+    // port to choose (AntennaChoiceGate.h). Log it and say so, once a session.
+    void announceAntennaChoiceRefused(bool tx);
     // Constructor wiring blocks extracted per #3351 Phase 2 — each runs once
     // from the constructor, in original order, defined in its subject TU.
     void wireModemAudioCompletion(); // MainWindow_Wiring.cpp
@@ -756,6 +766,15 @@ private:
     int cloneDisplaySettingsToAllPans(PanadapterApplet* source);
     AetherSDR::DeferredSettingsWrites m_pendingDisplayWrites;
     void scheduleClientWaterfallRateSave(int panIndex, int rate);
+    // FFT FPS and the dBm scale, which a Flex stores for a pan and a radio
+    // with no display engine does not. Same store and deferral as the
+    // waterfall rate, only where the backend declares the client the owner.
+    bool clientPersistsFftFps() const;
+    void scheduleClientFftFpsSave(int panIndex, int fps);
+    bool clientOwnsPanDbmRange() const;
+    void adoptClientOwnedDbmRange(const QString& panId, int panIndex,
+                                  float minDbm, float maxDbm);
+    void restoreClientOwnedDbmRange(PanadapterModel* pan, int panIndex);
     void wirePanDisplayStatus(PanadapterApplet* applet, PanadapterModel* pan);
     void reassertUnmutedSliceAudioForPan(const QString& panId);
     void onMuteAllSlicesToggle();
@@ -1002,6 +1021,9 @@ private:
     void beginSliderShortcutLease(QWidget* slider);
     void renewSliderShortcutLease();
     void releaseSliderShortcutLease(bool clearFocus);
+    // Arm the operating QShortcuts only when keyboard shortcuts are on and no
+    // slider holds the lease; otherwise their keys fall through (#5483).
+    void syncOperatingShortcutsEnabled();
 
     BandSnapshot captureCurrentBandState() const;
     void restoreBandState(const BandSnapshot& snap);
@@ -1033,6 +1055,9 @@ private:
     // hardcoded Qt::Key_Space) so a reassigned PTT-hold key actually keys the
     // radio. Returns true when the bound key was consumed (#3879).
     bool handlePttHoldShortcut(QKeyEvent* keyEvent, QEvent::Type eventType);
+    // Says once per session that a bound key was refused because keyboard
+    // shortcuts are off. Never consumes the key.
+    void noticeRefusedShortcut(QKeyEvent* keyEvent);
     // Fail-safe-to-RX for the momentary-keying family (PTT-hold, CW straight
     // key / paddles). Called when the window/app is deactivated while a
     // momentary key is "held" in our state — the KeyRelease that would un-key
@@ -1126,7 +1151,7 @@ private:
     CatPort* catPort(int i) const { return m_session->catPort(i); }
 
     // Returns how many CAT ports should be visible in the UI given radio state.
-    // 1 when no radio; maxSlicesForModel() when connected.
+    // 1 when no radio; the backend-aware receiver count when connected.
     int catPortTargetCount() const;
     // Start/stop ports to match CatEnabled master + per-port Enabled flags.
     void applyCatPortCount();
@@ -1346,7 +1371,7 @@ private:
     EvdevEncoderManager*       m_dialBackend{nullptr};
 #elif defined(Q_OS_WIN) && defined(HAVE_HIDAPI)
     UlanziDialWindowsManager*  m_dialBackend{nullptr};
-#elif defined(Q_OS_MAC)
+#elif defined(Q_OS_MACOS)
     UlanziDialMacOSManager*    m_dialBackend{nullptr};
 #else
     UlanziDialBackend*         m_dialBackend{nullptr};
@@ -1506,6 +1531,10 @@ private:
     QPointer<ContributeDialog> m_contributeDialog;
     QPointer<AetherDspDialog> m_dspDialog;
     QPointer<QDialog> m_nr2WisdomDialog;
+    // The running NR2 wisdom worker and its cancel flag, so shutdown can stop
+    // it before AudioEngine teardown needs the FFTW planner lock (#6287).
+    QPointer<QThread> m_nr2WisdomThread;
+    std::shared_ptr<std::atomic_bool> m_nr2WisdomCancel;
 #ifdef HAVE_MQTT
     QPointer<MqttSettingsDialog> m_mqttSettingsDialog;
 #endif
@@ -1743,6 +1772,8 @@ private:
     qint64 m_bsConnectGraceUntilMs{0};   // suppress auto-save right after connect
     bool m_keyboardShortcutsEnabled{false}; // global enable for keyboard shortcuts (View menu)
     bool m_pttHoldActive{false};           // true while the PTT-hold key is held (#3879)
+    ShortcutRefusalNotice m_shortcutRefusalNotice; // once per session (#5483)
+    StatusBarNoticeLabel* m_shortcutNoticeLabel{nullptr}; // owned by the status bar
     bool m_cwStraightKeyActive{false};
     bool m_cwLeftPaddleActive{false};
     bool m_cwRightPaddleActive{false};
@@ -1962,7 +1993,7 @@ private:
     // mode change) toggled it.
     void reflectWfmButtons(bool on, int sliceId);
 
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     DaxBridge* m_daxBridge{nullptr};
     QString m_savedMicSelection;  // restore on stopDax
     bool startDax();

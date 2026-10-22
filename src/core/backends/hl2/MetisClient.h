@@ -42,6 +42,10 @@ public:
 
     struct Params {
         QHostAddress host;
+        // When set, bind the streaming socket to this local interface. This is
+        // the interface on which discovery reached the radio; retaining it
+        // avoids handing a multi-homed host back to the route table.
+        QHostAddress localAddress;
         quint16 port = kMetisPort;
         SampleRate sampleRate = SampleRate::R48k;
         // RX1's NCO. Receivers beyond the first start here too and are moved by
@@ -88,6 +92,7 @@ public:
     struct Discovered {
         DiscoveryReply reply;
         QHostAddress address;
+        QHostAddress localAddress;
     };
 
     // Transport counters for the network readouts. Everything here is measured
@@ -547,6 +552,11 @@ signals:
     // bits of the fill level, and no sample count at all. See
     // Hl2Telemetry::apply().
     void telemetryUpdated(const AetherSDR::hl2::Hl2Telemetry& t);
+    // The radio's own keying changed: ptt_resp = cw_on | ext_ptt (control.v:456,
+    // gateware 74), the PTT/key jack or the internal keyer. Host MOX never raises
+    // it. An observation, per edge and unthrottled; false is also emitted when the
+    // stream ends or goes silent with the bit set.
+    void radioPttChanged(bool keyed);
     // ONE ACCEPTED BANDSCOPE BLOCK — 2048 contiguous converter samples, merged
     // from the four in-phase EP4 packets the gate kept. Never per packet: a
     // packet is a quarter of the record and its peak is not the record's.
@@ -592,6 +602,12 @@ private slots:
 
 private:
     void sendControlPacket();           // one round-robin EP2 C&C packet
+    // Append `bank` to m_oneShot only while a session is running -- the gate
+    // for the live-control setters that queue a single bank (#4579). It keeps
+    // a bank out of the queue while stopped; what an ended session left
+    // undrained is stop()'s to discard or keep.
+    // setIoBoardTxFrequencyHz() refuses at its top instead, for its own dedupe.
+    void queueOneShotIfRunning(const Cc& bank);
     // One datagram off this socket, whatever endpoint it came from: the EP6/EP4
     // branch, the sequence accounting, telemetry and the IQ decode. Split out of
     // onReadyRead's drain loop so the whole ingest path can be driven from
@@ -621,6 +637,8 @@ private:
     // A ptt_resp transition reported by the radio: the bandscope's interlock
     // edges for keying this client did not initiate.
     void onRadioPttEdge(bool keyed);
+    // No stream, no observation: drop a PTT the radio last reported, with its edge.
+    void clearRadioPtt();
     void bandscopeOnPacket(std::uint32_t seq, std::uint32_t drops,
                            std::span<const std::uint8_t> bytes);
     // Begin one arming cycle: raise wide_spectrum, clear the accumulator, arm
@@ -655,7 +673,38 @@ private:
     // metis-start so the DDC latches sample rate / NCO / receiver count from a
     // real C&C frame; a stream started before any C&C has landed emits ADC-idle
     // samples (Q pinned to zero) until one does.
+    // Blocking (two msleep(10)), so only start() may call it, before the EP2
+    // pacer and the EP6 stream exist. A restart on a live stream is spaced by
+    // advanceReceiverCountRestart() instead.
     void sendPrimingBurst(int countPerBank);
+    // One bank of the priming burst: countPerBank C&C frames, back to back.
+    void sendPrimingBank(int countPerBank);
+    // A 64-byte run/stop datagram to the radio (unicast, m_host:m_port), through
+    // m_commandSinkForTest when a test installed one. Used by the receiver-count
+    // restart and the bandscope run byte; start(), stop() and the start retry
+    // still write the socket directly.
+    qint64 sendCommandDatagram(const std::array<std::uint8_t, 64>& cmd);
+    bool hasCommandTransport() const noexcept
+    {
+        return m_socket != nullptr || static_cast<bool>(m_commandSinkForTest);
+    }
+    // setReceiverCount()'s stop -> prime -> start -> prime sequence, driven by
+    // m_restartTimer instead of msleep so the EP2 pacer keeps feeding the radio
+    // and EP6 keeps draining. Each call performs the next step once at least
+    // kPrimingBankSpacingMs has passed since the previous one.
+    void advanceReceiverCountRestart();
+    // Arm the timer for the step after this one, measuring from now.
+    void scheduleReceiverCountRestartStep();
+    // Abandon a restart in flight (stop(), or a newer setReceiverCount()).
+    void cancelReceiverCountRestart() noexcept;
+    // True between a restart's metis-stop and its metis-start: every datagram
+    // that reaches the socket then is in the OLD payload layout, and no run byte
+    // may go out, because any run byte with bit 0 set IS a start.
+    bool restartAwaitingStart() const noexcept
+    {
+        return m_restartStep == RestartStep::PrimeBeforeStart
+            || m_restartStep == RestartStep::Start;
+    }
     // Seed the start-retry budget and start its timer. The datagram itself is
     // NOT sent here: the three callers put different bytes on the wire --
     // start() and setReceiverCount() send metisStart(), onWatchdogTick()'s
@@ -753,6 +802,23 @@ private:
     QTimer* m_connectWatchdog = nullptr;  // single-shot: first-EP6 deadline
     QTimer* m_startRetryTimer = nullptr;  // re-sends metis-start until EP6 flows
     int     m_startAttempts = 0;          // start datagrams sent this connect
+    // The receiver-count restart in flight, if any. The step names what the
+    // NEXT timeout does. See advanceReceiverCountRestart().
+    enum class RestartStep : std::uint8_t {
+        Idle,              // no restart in flight
+        PrimeBeforeStart,  // send the second pre-start priming bank
+        Start,             // discard stale EP6, send metis-start, first post-start bank
+        PrimeAfterStart,   // send the second post-start bank
+        Finish,            // arm the start retry, re-apply the bandscope gate
+    };
+    // The spacing the two msleep(10) calls in sendPrimingBurst() gave each bank.
+    // A FLOOR: a step that fires early is re-armed for the remainder.
+    static constexpr int kPrimingBankSpacingMs = 10;
+    static constexpr int kPrimingFramesPerBank = 3;
+    QTimer* m_restartTimer = nullptr;     // single-shot: the next restart step
+    QElapsedTimer m_restartStepClock;     // since the previous restart step
+    RestartStep m_restartStep = RestartStep::Idle;
+    int m_restartStalePackets = 0;        // old-layout datagrams discarded this restart
     QElapsedTimer m_ep2Clock;             // pacer reference clock
     QElapsedTimer m_sinceLastEp6;         // silence detection
     // A recovery is in flight for the CURRENT silence. Set when the watchdog
@@ -830,6 +896,8 @@ private:
     // radio in that order, and neither should wait up to three frames for the
     // rotation to come back around.
     friend struct MetisClientTestAccess; // socket-free transport-state injection
+    std::function<qint64(const std::array<std::uint8_t, kUsbPacketSize>&)> m_packetSinkForTest;
+    std::function<qint64(const std::array<std::uint8_t, 64>&)> m_commandSinkForTest;
     std::deque<Cc> m_oneShot;           // which register pair to send next
     // The single RQST slot. Drained AFTER m_oneShot, never before: a one-shot is
     // a write the operator asked for, and letting a read-back overtake it would
@@ -926,6 +994,7 @@ private:
     // 384 kHz. The meters only need ~10 Hz; rate-limit the cross-thread emit so
     // publishTelemetry() does not flood the GUI thread. (#4449 review)
     QElapsedTimer m_telemetryEmitClock;
+    ForwardPowerWindow m_fwdWindow;      // forward-power peak of the current emit window
     static constexpr qint64 kTelemetryMinIntervalMs = 100;
 
     // ---- transport counters (see LinkCounters) ----

@@ -767,6 +767,7 @@ set(CORE_SOURCES
     src/core/backends/LocalRadioDiscoverySource.cpp  # native discovery below the vendor seam
     src/core/backends/MemoryWireCodec.cpp    # memory kv-set decode, shared by Flex + local bank
     src/core/backends/flex/FlexBackend.cpp   # aetherd RFC step 2.2 (§5.5)
+    src/core/backends/flex/VitaDscpMarker.cpp     # DSCP EF marking for outgoing VITA UDP
     src/core/backends/sim/SimBackend.cpp     # demo mode — 2nd IRadioBackend (RFC #4288)
     src/core/backends/sim/SimSignalSource.cpp  # demo RX engine, worker thread (#4878)
     src/core/backends/sim/SpectrumPatternGenerator.cpp  # demo mode — signal engine (RFC #4288 Phase 2)
@@ -819,6 +820,7 @@ set(CORE_SOURCES
     src/core/RadioStateMemory.cpp   # RFC #4603 client-side radio memory
     src/core/RtlSliceSettings.cpp   # RFC #5468 persistence foundation
     src/core/GpuSelector.cpp
+    src/core/QtAudioBackendGuard.cpp  # pre-QApplication: keeps Qt 6.12 off a crashing PipeWire backend
     src/core/AgcTCalibrator.cpp
     src/core/AdaptiveFilterEngine.cpp
     src/core/OccupiedRegion.cpp
@@ -931,6 +933,7 @@ set(CORE_SOURCES
     src/core/DigitalVoiceModeRegistry.cpp
     src/core/DigitalVoiceWaveformTelemetry.cpp
     src/core/DigitalVoiceWaveformProcess.cpp
+    src/core/DvkWavConverter.cpp
     src/core/DvkWavTransfer.cpp
     src/core/ZipArchive.cpp
     src/core/ProfileTransfer.cpp
@@ -1027,6 +1030,7 @@ set(MODEL_SOURCES
     src/models/RadioModel.cpp
     src/models/DeclaredBands.cpp
     src/models/RadioSession.cpp
+    src/models/ReceiverSlotCount.cpp
     src/models/ModelCapabilities.cpp
     src/models/AntennaAliasStore.cpp
     src/models/SliceModel.cpp
@@ -2719,6 +2723,8 @@ if(HIDAPI_FOUND)
     # HAVE_HIDAPI directly.
     target_compile_definitions(aethercore PUBLIC HAVE_HIDAPI)
     target_sources(aethercore PRIVATE
+        src/core/HidDiscovery.cpp
+        src/core/HidDiscovery.h
         src/core/HidEncoderManager.cpp
         src/core/HidEncoderManager.h
         src/core/HidDeviceParser.cpp
@@ -3032,6 +3038,14 @@ if(ENABLE_SPECBLEACH)
     endif()
 endif()
 
+# QtAudioBackendGuard loads libpipewire at runtime (dlopen), the way Qt itself
+# does, so it has no build-time PipeWire dependency. libdl is part of libc on
+# every glibc this tree supports; linked explicitly so the guard does not ride
+# on the DFNR or AFX blocks below happening to pull it in.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(aethercore PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 if(ENABLE_DFNR)
     target_compile_definitions(aethercore PUBLIC HAVE_DFNR)
     target_include_directories(aethercore PRIVATE ${DEEPFILTER_DIR}/include)
@@ -3235,6 +3249,11 @@ include(tests/tests.cmake)
 
 # ── Install rules ────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
+
+if(LINUX AND NOT DEFINED CMAKE_INSTALL_RPATH_USE_LINK_PATH)
+    # Keep pinned or non-system Qt loadable after install; explicit builder overrides win.
+    set_property(TARGET AetherSDR PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
+endif()
 
 if(APPLE)
     install(TARGETS AetherSDR

@@ -107,6 +107,7 @@ public:
     int     anfLevel()    const { return m_anfLevel; }
     int     nrlLevel()    const { return m_nrlLevel; }
     int     nrsLevel()    const { return m_nrsLevel; }
+    int     nrsLevelMaximum() const { return m_nrsLevelMaximum; }
     int     nrfLevel()    const { return m_nrfLevel; }
     int     anflLevel()   const { return m_anflLevel; }
     int     mnLevel()     const { return m_mnLevel; }
@@ -202,8 +203,8 @@ public:
     // the two fight on reconnect. On a backend with no command plane there is no
     // radio opinion to defer to, the host bank owns the channel, and a recalled
     // step would otherwise never take because the wire command that normally
-    // round-trips it is dropped. Named for its one caller so the exception stays
-    // visible; see RadioModel::recallCachedMemory().
+    // round-trips it is dropped. Callers: RadioModel::recallCachedMemory() and
+    // RadioModel::applyClientOwnedSliceStep(), both only without a command plane.
     void    applyRecalledStepHz(int hz);
     QVector<int> stepList() const { return m_stepList; }
     int     daxChannel()  const { return m_daxChannel; }
@@ -311,6 +312,9 @@ public:
     void setAnflLevel(int v);
     void setMnLevel(int v);
     void setAgcMode(const QString& mode);
+    // A stored AGC mode replayed by a bookmark recall; the backend decides
+    // whether it overrides the mode's own AGC default.
+    void recallAgcMode(const QString& mode);
     void setAgcThreshold(int value);
     void setAgcOffLevel(int value);
     void setSquelch(bool on, int level);
@@ -395,6 +399,9 @@ signals:
     // setAgcThreshold(), and always carries BOTH values because a backend
     // configuring a DSP AGC needs the pair to act on either.
     void agcCommandIssued(const QString& mode, int thresholdDb);
+    // A bookmark recall's AGC mode (recallAgcMode()), carried apart from an
+    // operator edit so the backend can keep a data mode's AGC default.
+    void agcRecallIssued(const QString& mode, int thresholdDb);
 
     // RECEIVE DSP THE RADIO RUNS. Same contract as the signals above: emitted
     // only by the operator-facing setters, never by status application, so a
@@ -482,6 +489,7 @@ signals:
     void anfLevelChanged(int v);
     void nrlLevelChanged(int v);
     void nrsLevelChanged(int v);
+    void nrsLevelMaximumChanged(int maximum);
     void nrfLevelChanged(int v);
     void anflLevelChanged(int v);
     void mnLevelChanged(int v);
@@ -549,6 +557,12 @@ public:
     static bool filterCarrierStraddlingFamily(const QString& mode);
 
 private:
+    // The NRS request ceiling the connected backend declares
+    // (RadioCapabilities::nrsLevelControl); only RadioModel sets it.
+    friend class RadioModel;
+    void setNrsLevelMaximum(int maximum);
+    int m_nrsLevelMaximum = 100;
+    void applyAgcMode(const QString& mode, bool recall);
     // Sign-guarded, idempotent (lo,hi)→(-hi,-lo) mirror of the stored filter
     // when its polarity is wrong for m_mode; true if it changed anything.
     bool normalizeFilterPolarity();
@@ -647,6 +661,11 @@ private:
     int     m_ritFreq{0};
     bool    m_xitOn{false};
     int     m_xitFreq{0};
+    // True while setRit()/setXit() is inside its command emit. A backend that
+    // answers the enable and offset verbs synchronously publishes each step;
+    // those are adopted silently and announced once, as the final value.
+    bool    m_ritCommandInFlight{false};
+    bool    m_xitCommandInFlight{false};
     int     m_daxChannel{0};
     int     m_rttyMark{2125};
     int     m_rttyMarkDefault{2125};

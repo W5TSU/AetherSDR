@@ -31,6 +31,7 @@
 #include <QHostAddress>
 #include <QLoggingCategory>
 #include <QPointer>
+#include <QThread>
 
 #include <algorithm>
 #include <cstddef>
@@ -194,6 +195,13 @@ int wdspAgcMode(const QString& mode) noexcept
 // namespace AetherSDR::hl2, so the calls below resolve to the header's versions
 // with no `using`.
 
+// The data modes WSJT-X and similar decoders select.
+bool isDigitalDataMode(const QString& mode) noexcept
+{
+    return mode.compare(QLatin1String("DIGU"), Qt::CaseInsensitive) == 0
+           || mode.compare(QLatin1String("DIGL"), Qt::CaseInsensitive) == 0;
+}
+
 // The same question for the AGC vocabulary, and it needs asking for the same
 // reason: wdspAgcMode() FALLS BACK to medium for anything it does not
 // recognise, so a corrupt or hand-edited document would otherwise turn into a
@@ -344,6 +352,25 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
     m_txDsp->moveToThread(m_ioThread);
     m_ioThread->start();
 
+    // THE UNKEY HOLD. Single-shot and parented here, so it fires on this
+    // object's thread -- the same thread applyKeying() runs on, which lets a
+    // re-key stop it with a plain call and no lock.
+    m_unkeyUnmuteTimer = new QTimer(this);
+    m_unkeyUnmuteTimer->setSingleShot(true);
+    connect(m_unkeyUnmuteTimer, &QTimer::timeout, this, [this] {
+        // A re-key inside the window stops this timer, so reaching here keyed
+        // should be impossible; this check keeps "should" from becoming an
+        // unmute in the middle of a transmission.
+        if ((m_keyed || m_radioPtt) && !m_txMonitor) {
+            return;
+        }
+        applyRxAudioMute(false);
+    });
+
+    m_txTailTimer = new QTimer(this);
+    m_txTailTimer->setSingleShot(true);
+    connect(m_txTailTimer, &QTimer::timeout, this, &Hl2Backend::finishTxTail);
+
     m_cwHangTimer = new QTimer(this);
     m_cwHangTimer->setSingleShot(true);
     connect(m_cwHangTimer, &QTimer::timeout, this, [this] {
@@ -351,7 +378,11 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
             return;
         }
         m_cwAutoKeyed = false;
-        setKeying(false);
+        // applyKeying() with cwBreakIn TRUE: this is the only key-UP that comes
+        // from full break-in, and the unkey hold has to know that (see the QSK
+        // branch in applyKeying()). setKeying() hard-codes false. Nothing else
+        // moves on the wire: MetisClient's MOX-off is the same either way.
+        applyKeying(false, /*cwBreakIn=*/true);
     });
 
     // Raw IQ -> the per-receiver DSP chains. ONE connection for every receiver,
@@ -461,7 +492,11 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         // stated value instead of whatever the widget happened to hold.
         publishWideState();
     });
+    connect(m_metis, &MetisClient::radioPttChanged, this, &Hl2Backend::onRadioPttChanged);
     connect(m_metis, &MetisClient::linkDown, this, [this] {
+        // No link, no observation: a PTT the radio last reported ends here, so the
+        // model never stays in transmit on a radio it can no longer hear.
+        onRadioPttChanged(false);
         if (m_connected) {
             m_connected = false;
             m_ceilingAnnouncer.reset();   // #5594 (M1): re-seeded on the next connect
@@ -815,6 +850,13 @@ void Hl2Backend::buildReceivers(int count)
             // same frequency is deliberate: parked at 0 Hz they would draw
             // panadapters of DC and read as a hardware fault on first connect.
             r = previous.front();
+            // RIT/XIT are that receiver's own, as on a Flex slice: a new
+            // receiver starts with both off, as createPanadapter()'s does.
+            r.ritOn = false;
+            r.ritHz = 0;
+            r.xitOn = false;
+            r.xitHz = 0;
+            r.ncoMovedForRit = false;
         }
         r.dsp = nullptr;             // never inherited; recreated below
         r.audioMuted = false;
@@ -863,10 +905,19 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
     // it at signal time survives any renumbering with no rewiring at all.
     const int ui = ids->uiNumber;
 
+    // Rule 6 holds by ordering: the DSP emits on m_ioThread, the thread that
+    // emits linkDown, so no frame is delivered after disconnected(). A frame is
+    // published only while its producer is still the receiver behind its UI
+    // number: a queued frame outlives disconnect() and deleteLater(), and a
+    // reopened receiver can take the same number. audioReady and meterUpdate
+    // below apply the same check.
     connect(dsp, &Hl2RxDsp::spectrumReady, this,
-            [this, ui](const std::vector<float>& bins) {
-        if (!m_ids.byUi(ui))
+            [this, ui, producer = QPointer<Hl2RxDsp>(dsp)](const std::vector<float>& bins) {
+        const auto* ids = m_ids.byUi(ui);
+        const Receiver* receiver = ids ? rx(ids->ddcIndex) : nullptr;
+        if (!producer || !receiver || receiver->dsp != producer.data()) {
             return;
+        }
         // dBFS -> dBm through the one object that owns the reference. Two
         // terms now: the DERIVED full-scale figure, and -lnaGain. The second
         // is the part that is exactly right whatever the first is worth --
@@ -894,9 +945,10 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
     });
 
     connect(dsp, &Hl2RxDsp::audioReady, this,
-            [this, ui](const std::vector<float>& pcm) {
+            [this, ui, producer = QPointer<Hl2RxDsp>(dsp)](const std::vector<float>& pcm) {
         const auto* ids = m_ids.byUi(ui);
-        if (!ids)
+        const Receiver* receiver = ids ? rx(ids->ddcIndex) : nullptr;
+        if (!producer || !receiver || receiver->dsp != producer.data())
             return;
         // THIS SLICE's audio, before the mixer touches it. Per-slice consumers
         // (a TCI receiver channel, a decoder) need one slice's audio and cannot
@@ -912,11 +964,12 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
     });
 
     connect(dsp, &Hl2RxDsp::meterUpdate, this,
-            [this, ui](float dbfs) {
+            [this, ui, producer = QPointer<Hl2RxDsp>(dsp)](float dbfs) {
         const auto* ids = m_ids.byUi(ui);
         Receiver* r = ids ? rx(ids->ddcIndex) : nullptr;
-        if (!r)
+        if (!producer || !r || r->dsp != producer.data()) {
             return;
+        }
         // Same reference as the spectrum -- a meter that moved on a gain
         // change while the trace stayed put would be its own kind of lie.
         const double dbm = m_dbRef.toDbm(dbfs);
@@ -1018,6 +1071,7 @@ bool Hl2Backend::createPanadapter()
         seed.filterLowHz = first.filterLowHz;
         seed.filterHighHz = first.filterHighHz;
         seed.agcMode = first.agcMode;
+        seed.agcModeBeforeDigital = first.agcModeBeforeDigital;
         seed.agcThresholdDb = first.agcThresholdDb;
     }
     m_rx.push_back(seed);
@@ -1172,7 +1226,8 @@ bool Hl2Backend::removePanadapter(const QString& panId)
     // Miss the second and, closing DDC 0 of three, transmit "on DDC 2" ends up
     // naming a receiver that is now something else — and nothing reads a TX NCO
     // back to contradict it.
-    if (ddc == m_txDdc) {
+    const bool txMoved = (ddc == m_txDdc);
+    if (txMoved) {
         // Transmit has to live SOMEWHERE. Move it to the first surviving
         // receiver rather than leaving m_txDdc pointing at a receiver that no
         // longer exists — which would make txSlice() null and every later key
@@ -1302,6 +1357,11 @@ bool Hl2Backend::removePanadapter(const QString& panId)
     // Closing one can take the set back onto a single band.
     applyBandFilter("close receiver");
     publishWideState();
+    // Transmit moved: re-run the new owner's tune, as setTxSlice() does, so the
+    // TX register (with the new owner's XIT) leaves the closed receiver.
+    if (txMoved) {
+        retuneReceiver(m_txDdc);
+    }
     // The TX slice may have moved; republish so the indicator follows.
     emitAllSliceState();
     return true;
@@ -1326,6 +1386,50 @@ void Hl2Backend::publishWideState()
         emit panWideChanged(ids.panId, spanned);
 }
 
+void Hl2Backend::publishTransmitState()
+{
+    const bool transmitting = m_keyed || m_radioPtt;
+    if (transmitting == m_publishedTransmit) {
+        return;
+    }
+    m_publishedTransmit = transmitting;
+    TransmitDelta delta;
+    delta.mox = transmitting;
+    emit transmitChanged(delta);
+}
+
+void Hl2Backend::onRadioPttChanged(bool keyed)
+{
+    Q_ASSERT_X(thread() == QThread::currentThread(), "onRadioPttChanged",
+               "called off the Hl2Backend's own thread");
+    if (m_radioPtt == keyed) {
+        return;
+    }
+    m_radioPtt = keyed;
+    publishTransmitState();
+    // While the host is keyed its own key owns the mute and, at its unkey, the
+    // release. Nothing here reaches MetisClient: the radio keyed itself, and the
+    // host follows it for display and receive audio only (#5998).
+    if (m_keyed) {
+        return;
+    }
+    if (!keyed) {
+        // The same hold as a host unkey: the PA is decaying either way.
+        releaseRxAudioMuteAfterHold();
+        return;
+    }
+    if (m_txMonitor) {
+        return;
+    }
+    if (m_unkeyUnmuteTimer) {
+        m_unkeyUnmuteTimer->stop();
+    }
+    applyRxAudioMute(true);
+    for (auto& q : m_mixPending) {
+        q.clear();
+    }
+}
+
 void Hl2Backend::mixReceiverAudio(int ddc, const std::vector<float>& pcm)
 {
     // Belt and braces with the demodulator mute. This drops any block that was
@@ -1340,8 +1444,9 @@ void Hl2Backend::mixReceiverAudio(int ddc, const std::vector<float>& pcm)
     // demodulator-mute change alone would leave it a no-op on this backend, and a
     // diagnostic that reads silence draws a confident wrong conclusion from it
     // (#4487 review, finding 1). Off by default; only a measurement turns it on.
-    if (m_keyed && !m_txMonitor)
+    if (m_rxAudioMuted) {
         return;
+    }
     const Receiver* r = rx(ddc);
     if (!r || r->audioMuted)
         return;   // not queued at all: a muted receiver must not accumulate
@@ -1753,8 +1858,11 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.hostModulates = true;
     // Same tap, same seam — see RadioCapabilities::takesTxAudioOverSeam.
     c.takesTxAudioOverSeam = true;             // PC runs the modulator; no on-radio mic jacks
-    // No PTT status plane: the command edge is the only keyed edge there is.
+    // ptt_resp is cw_on | ext_ptt (control.v:456): it never follows host MOX, so
+    // the command edge stays the keyed edge for our own keying and the readback is
+    // declared as an observation of the radio's own inputs only.
     c.hasRadioPttReadback = false;
+    c.radioPttObservation = RadioCapabilities::RadioPttObservation{};
     c.txPowerMaxWatts = 0.0;            // uncalibrated; see the oracle on power counts
     // HL2 publishes an instantaneous directional estimate; preserve the
     // established client-side PEP response above the backend seam.
@@ -1765,7 +1873,7 @@ RadioCapabilities Hl2Backend::capabilities() const
     // 100 with no RF leaving the radio. Consumers that act on drive must see that
     // distinction rather than infer applied power from a request.
     c.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
-        SliceFrequencyControl::Authority::Engine};
+        SliceFrequencyControl::Authority::Engine, /*tunePowerAppliesLive=*/true};
     c.hasRadioDialLock = false;
     c.hasTuner = false;
     c.hasTunerMemories = false;
@@ -1779,6 +1887,10 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.hasManualNotch = false;
     c.hasTransmitFrequencyCheck = false;
     c.hasDdcPanEdgeRolloff = false;
+    // No band/segment zoom: this backend vends no command plane at all, so
+    // `display pan set ... band_zoom=` is dropped inside RadioModel::sendCmd.
+    // Declaring absence is what makes the control refuse rather than lie.
+    c.panZoomModes = std::nullopt;
     // The one member of the noise family that is NOT moot here. WDSP's ANB runs
     // on this host, on the raw IQ, ahead of the demodulator — the same
     // arrangement as the manual notch and for the same reason (oracle addendum
@@ -1841,7 +1953,14 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.hasFullDuplex = false;
     c.hasWaveforms = false;             // no installable plugin surface
     c.hasMultiClientSessions = false;   // one client owns the radio
-    c.alwaysUseClientSideSpots = false;
+    // Spots live in this client or nowhere. The Flex path publishes every
+    // DX-cluster, RBN, WSJT-X, POTA and manual spot as `spot add` wire text and
+    // waits for the radio's `spot <id>` status to put it on the panadapter. The
+    // HL2 has no command plane, so RadioModel::sendCmd drops that text and no
+    // status ever comes back: with this false, spots were fetched and never
+    // drawn. True routes them into the passive-local SpotModel, the same
+    // fallback Icom declares for the same reason.
+    c.alwaysUseClientSideSpots = true;
     // Manual notches, and the one piece of DSP on this radio that is NOT absent
     // just because hasRadioSideDsp is false. The notch runs in WDSP on this
     // host, which is the whole point: the HL2 sends raw IQ, so a notch either
@@ -1873,8 +1992,10 @@ RadioCapabilities Hl2Backend::capabilities() const
     c.hasSupplyVoltageTelemetry = false;
     c.hasPaTemperatureTelemetry = true;
     c.hasPaCurrentTelemetry = false;
-    c.speechProcessorLevelMaximum = 2;
-    c.speechProcessorLabel = QStringLiteral("PROC");
+    // PROC runs in this host's ClientComp (hostModulates), not in the radio.
+    c.speechProcessorControl = std::nullopt;
+    c.voxControl = std::nullopt;
+    c.txMonitorControl = std::nullopt;
     c.hasMainFanTelemetry = false;
     // The HL2 persists NOTHING across power cycles — "the radio reports no
     // VFO, so the app is authoritative and must push" (pushInitialState).
@@ -1906,6 +2027,19 @@ RadioCapabilities Hl2Backend::capabilities() const
                             // RadioStateMemory's ext gate (one domain, one
                             // document — RFC #4603 PR 6).
                             | RadioCapabilities::ClientSettingsDomain::Memories;
+    // Host-computed bins, passed through onBackendSpectrumFrame untouched, so
+    // they are absolute. The axis is calibrated dBm only once the full-scale
+    // reference has been measured on this unit.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = m_dbRef.isCalibrated();
+    amplitude.binsAbsolute = true;
+    // No register holds a display range and nothing reports one: the client
+    // is the only memory the operator's dBm range has.
+    amplitude.clientPersistsDbmRange = true;
+    c.panAmplitude = amplitude;
+    // The pan's frame rate is paced on this host and the radio stores no
+    // display state: the client is the only memory FFT FPS has.
+    c.panFrameRateShaping = PanFrameRateShaping{/*clientPersistsFrameRate*/ true};
     // (extensionNamespaces is declared above, with the freqcal/nb verbs it
     // names — an earlier revision of this comment claimed none existed.)
     return c;
@@ -2055,6 +2189,7 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
             delta.rfPower = drive;
             emit transmitChanged(delta);
         }
+        applyTuneMemoryFor(m_currentBandKey);
     }
 
     // ---- how many receivers ----
@@ -2103,6 +2238,8 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
     MetisClient::Params mp;
     mp.host = host;
     mp.port = request.port ? request.port : kMetisPort;
+    if (request.localBindAddress.protocol() == QAbstractSocket::IPv4Protocol)
+        mp.localAddress = request.localBindAddress;
     mp.sampleRate = sampleRateEnum(m_sampleRateHz);
     // COMMANDED, not true-RF: this seeds MetisClient's initial RX and TX
     // command banks, which are register contents. Everything else in this
@@ -2125,8 +2262,12 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
         // in one round trip, using the same parser the broadcast sweep uses.
         // Short timeout: this is on the connect path, and a board that does not
         // answer just leaves us with the conservative default below.
-        QMetaObject::invokeMethod(m_metis, [this, &host] {
+        QMetaObject::invokeMethod(m_metis, [this, &host, &mp] {
             for (const auto& d : m_metis->discover(400, host, kMetisPort)) {
+                // Keep the interface even when an older/short discovery reply
+                // omits byte 20; it is still the route that reached the radio.
+                if (mp.localAddress.isNull())
+                    mp.localAddress = d.localAddress;
                 if (d.reply.numRx > 0) {
                     m_boardMaxRx = d.reply.numRx;
                     break;
@@ -2751,6 +2892,7 @@ void Hl2Backend::disconnectRadio()
     // finishSpanRebuild(); a span request parked behind it is stale for the same
     // reason — the operator has since asked to be disconnected.
     m_queuedSpanHz = 0.0;
+    cancelTxTail();
 
     if (m_metis)
         // Queued: serialises behind whatever the I/O thread is doing.
@@ -2835,14 +2977,26 @@ void Hl2Backend::setSliceFrequency(int sliceId, double hz)
     // Stay clear of the band edges: the passband rolls off there, and a slice
     // parked in the roll-off would be attenuated for no visible reason.
     const double usableHz = halfSpanHz * kUsablePassbandFraction;
-    if (std::abs(hz - r->ncoHz) > usableHz) {
-        r->ncoHz = hz;
+    // The window is judged on where the receiver LISTENS (dial + its RIT), so
+    // a RIT offset past the edge moves the NCO too.
+    const double tunedHz = rxTunedHz(*r);
+    const bool ritApplies = (tunedHz != r->sliceFreqHz);
+    const bool outsideWindow = std::abs(tunedHz - r->ncoHz) > usableHz;
+    // A move RIT alone caused is undone when RIT stops applying to this
+    // receiver (cleared or zeroed) — the NCO comes back
+    // to the dial, or the pan centre stays offset by the old RIT for good.
+    const bool ritReturn = !outsideWindow && !ritApplies && r->ncoMovedForRit;
+    if (outsideWindow || ritReturn) {
+        // Judged against the NCO BEFORE it moves: did the dial alone fit?
+        r->ncoMovedForRit = outsideWindow && ritApplies
+            && std::abs(r->sliceFreqHz - r->ncoHz) <= usableHz;
+        r->ncoHz = tunedHz;
         if (m_metis)
             // THIS receiver's NCO register, not RX1's. The two-argument overload
             // is the whole reason the receivers can sit on different bands.
             QMetaObject::invokeMethod(m_metis, "setRxFrequencyHz", Qt::QueuedConnection,
                 Q_ARG(int, ddc),
-                Q_ARG(std::uint32_t, ncoCommandHz(hz)));
+                Q_ARG(std::uint32_t, ncoCommandHz(tunedHz)));
         // Notch centres are measured from the NCO, so moving it without saying
         // so leaves every notch parked at its old RF frequency — the operator
         // tunes across the band and the notches follow them, which is precisely
@@ -2901,6 +3055,27 @@ void Hl2Backend::setSliceFrequency(int sliceId, double hz)
     notifyOperatingStateChanged();
 }
 
+// DIGU/DIGL run AGC off: medium AGC raises the noise between FT8 frames,
+// which inflates the decoder's noise reference and costs weak decodes beside
+// a strong signal (#5629). The held AGC returns on leaving them. Never
+// re-imposed inside a data mode, so an operator's own AGC choice stands.
+bool Hl2Backend::followModeAgc(Receiver& r, const QString& previousMode)
+{
+    const bool wasDigital = isDigitalDataMode(previousMode);
+    const bool isDigital = isDigitalDataMode(r.mode);
+    if (isDigital && !wasDigital) {
+        r.agcModeBeforeDigital = r.agcMode;
+        r.agcMode = QStringLiteral("off");
+        return true;
+    }
+    if (wasDigital && !isDigital && !r.agcModeBeforeDigital.isEmpty()) {
+        r.agcMode = r.agcModeBeforeDigital;
+        r.agcModeBeforeDigital.clear();
+        return true;
+    }
+    return false;
+}
+
 void Hl2Backend::setSliceMode(int sliceId, const QString& mode)
 {
     const int ddc = ddcForSlice(sliceId);
@@ -2925,6 +3100,12 @@ void Hl2Backend::setSliceMode(int sliceId, const QString& mode)
         const auto [lo, hi] = defaultPassbandForMode(mode);
         r->filterLowHz  = lo;
         r->filterHighHz = hi;
+    }
+
+    if (followModeAgc(*r, previous) && r->dsp) {
+        QMetaObject::invokeMethod(r->dsp, "setAgc", Qt::QueuedConnection,
+            Q_ARG(int, wdspAgcMode(r->agcMode)),
+            Q_ARG(double, m_dbRef.agcCeilingDb(r->agcThresholdDb)));
     }
 
     // ORDER IS LOAD-BEARING: mode FIRST, then passband -- and the passband is
@@ -2998,6 +3179,21 @@ void Hl2Backend::setSliceFilter(int sliceId, int lowHz, int highHz)
     notifyOperatingStateChanged();
 }
 
+// A recalled AGC mode is a stored value, not the operator's choice, so
+// DIGU/DIGL keep the AGC they run (#6142). The slice optimistically shows the
+// stored mode; the echo puts back what the receiver holds. The echo must stay
+// synchronous: the threshold recall that follows reads the slice's mode, and a
+// stale one would clear the held AGC.
+void Hl2Backend::recallSliceAgc(int sliceId, const QString& mode, int thresholdDb)
+{
+    const int ddc = ddcForSlice(sliceId);
+    if (const Receiver* r = rx(ddc); r && isDigitalDataMode(r->mode)) {
+        emitSliceState(ddc);
+        return;
+    }
+    setSliceAgc(sliceId, mode, thresholdDb);
+}
+
 void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
 {
     const int ddc = ddcForSlice(sliceId);
@@ -3025,11 +3221,22 @@ void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
     // while wdspAgcMode() silently ran med and the NEXT launch dropped it via
     // isKnownAgcModeString(). The applet, the DSP, the document and the restore
     // all disagreed. An unknown string now leaves the mode where it was.
-    if (!m.isEmpty() && isKnownAgcModeString(m))
+    // AGC threshold: the slice's 0..100 maps to 0..60 dB of WDSP max gain, so
+    // the default 65 lands at 39 dB. Measured on WWV 10 MHz USB: clean through
+    // 40 dB, clipping hard by 50 dB.
+    // Validated on the way in so capture only stores what restore accepts; an
+    // unknown mode string leaves the mode unchanged.
+    if (!m.isEmpty() && isKnownAgcModeString(m)) {
+        // A changed mode is the operator's choice, so leaving DIGU/DIGL no
+        // longer overrides it. A threshold change repeats the current mode.
+        if (m != r->agcMode) {
+            r->agcModeBeforeDigital.clear();
+        }
         r->agcMode = m;
-    else if (!m.isEmpty())
+    } else if (!m.isEmpty()) {
         qCWarning(lcHl2) << "HL2: ignoring unknown AGC mode" << mode
                          << "- keeping" << r->agcMode;
+    }
     r->agcThresholdDb = qBound(0, thresholdDb, 100);
     // THE REMEMBERED PAIR IS THE LAST ONE THE OPERATOR SET, on whichever
     // receiver. Capture used to read rx(m_txDdc) instead, which split the model:
@@ -3038,7 +3245,9 @@ void Hl2Backend::setSliceAgc(int sliceId, const QString& mode, int thresholdDb)
     // capture was not the change that got captured — and the next launch seeded
     // every receiver from it. Flat restore is the deliberate design (see
     // seedReceiverAgc); this makes the capture side agree with it.
-    m_agcMode = r->agcMode;
+    // A data mode's own "off" is not the operator's choice and is not captured.
+    m_agcMode = r->agcModeBeforeDigital.isEmpty() ? r->agcMode
+                                                  : r->agcModeBeforeDigital;
     m_agcThresholdDb = r->agcThresholdDb;
     // WDSP IS TOLD WHAT THE RECEIVER NOW HOLDS, not what the caller asked for.
     // Deriving from `m` meant a refused mode still reached the DSP as
@@ -3405,6 +3614,8 @@ void Hl2Backend::setPanCenter(const QString& panId, double hz, PanCenterIntent)
     if (hz == r->ncoHz)
         return;
     r->ncoHz = hz;
+    // The operator placed the centre: it is theirs now, not RIT's to undo.
+    r->ncoMovedForRit = false;
     if (m_metis)
         QMetaObject::invokeMethod(m_metis, "setRxFrequencyHz", Qt::QueuedConnection,
             Q_ARG(int, ddc),
@@ -3793,7 +4004,46 @@ void Hl2Backend::setPanPeakHold(const QString& panId, bool on)
         Q_ARG(bool, on));
 }
 
+void Hl2Backend::applyRxAudioMute(bool muted)
+{
+    Q_ASSERT_X(thread() == QThread::currentThread(), "applyRxAudioMute",
+               "called off the Hl2Backend's own thread");
+    m_rxAudioMuted = muted;
+    // Record the moment sampling is asked to RESUME, at the same site that asks
+    // for it. The unmute is queued, so SliceSamplingGate turns that request into
+    // an answer taken from the stamp on the reading.
+    m_sliceSampling.setRequested(!muted, hl2::steadyNowNs());
+    for (Receiver& r : m_rx) {
+        if (r.dsp) {
+            QMetaObject::invokeMethod(r.dsp, "setAudioMuted", Qt::QueuedConnection,
+                Q_ARG(bool, muted));
+        }
+    }
+}
+
+void Hl2Backend::releaseRxAudioMuteAfterHold()
+{
+    Q_ASSERT_X(thread() == QThread::currentThread(), "releaseRxAudioMuteAfterHold",
+               "called off the Hl2Backend's own thread");
+    if (!m_rxAudioMuted) {
+        if (m_unkeyUnmuteTimer) {
+            m_unkeyUnmuteTimer->stop();
+        }
+        return;
+    }
+    if (m_unkeyUnmuteHoldMs <= 0 || !m_unkeyUnmuteTimer) {
+        applyRxAudioMute(false);
+        return;
+    }
+    m_unkeyUnmuteTimer->start(m_unkeyUnmuteHoldMs);
+}
+
 void Hl2Backend::setKeying(bool key)
+{
+    applyKeying(key, /*cwBreakIn=*/false);
+}
+
+void Hl2Backend::applyKeying(bool key, bool cwBreakIn)
 {
     // Keying is gated twice on purpose. capabilities().canTransmit reflects the
     // gate, so the engine guard above the seam already refuses when transmit is
@@ -3864,16 +4114,12 @@ void Hl2Backend::setKeying(bool key)
 
     const bool keyChanged = m_keyed != key;
     m_keyed = key;
-    if (keyChanged) {
-        // Manual PTT is already mirrored optimistically by RadioModel, but CW
-        // break-in keys inside this backend. Publish that edge so the TX
-        // indicator, TCI clients and receive-side TX gates see the real state.
-        // TransmitDelta::mox is observed state, not client intent, so this does
-        // not start microphone capture or feed a second key command back down.
-        TransmitDelta delta;
-        delta.mox = key;
-        emit transmitChanged(delta);
-    }
+    // Manual PTT is already mirrored optimistically by RadioModel, but CW
+    // break-in keys inside this backend. Publish that edge so the TX
+    // indicator, TCI clients and receive-side TX gates see the real state.
+    // TransmitDelta::mox is observed state, not client intent, so this does
+    // not start microphone capture or feed a second key command back down.
+    publishTransmitState();
     // MUTE RECEIVE AUDIO WHILE TRANSMITTING.
     //
     // The HL2 keeps receiving while it transmits, and what it receives is our
@@ -3897,16 +4143,15 @@ void Hl2Backend::setKeying(bool key)
     // transmitter by construction. The monitor is off by default and only a
     // measurement turns it on. Applied to every receiver for the same reason the
     // mute is: whichever one the capture is taken from must not be silenced.
-    const bool muteWhileKeyed = key && !m_txMonitor;
-    // Record the moment sampling is asked to RESUME, at the same site that asks
-    // for it. The unmute below is queued, so at key-up `!muteWhileKeyed` is true
-    // a block before Hl2RxDsp has unmuted; SliceSamplingGate turns that request
-    // into an answer taken from the stamp on the reading.
-    m_sliceSampling.setRequested(!muteWhileKeyed, hl2::steadyNowNs());
-    for (Receiver& r : m_rx) {
-        if (r.dsp)
-            QMetaObject::invokeMethod(r.dsp, "setAudioMuted", Qt::QueuedConnection,
-                Q_ARG(bool, muteWhileKeyed));
+    // A PTT the radio itself still reports keeps the mute through a host unkey.
+    const bool muteWhileKeyed = (key || m_radioPtt) && !m_txMonitor;
+    // Mute at once on key-down; the UNMUTE waits until MOX-off is on the queue
+    // (below) and then for the unkey hold (upstream #5850).
+    if (muteWhileKeyed) {
+        if (m_unkeyUnmuteTimer) {
+            m_unkeyUnmuteTimer->stop();   // a re-key inside the hold cancels it
+        }
+        applyRxAudioMute(true);
     }
     // Drop whatever was already queued for the mix. On unkey these would be the
     // stalest blocks in the buffer and would play out ahead of live audio.
@@ -3915,7 +4160,11 @@ void Hl2Backend::setKeying(bool key)
 
     // While keyed the shared filter board must follow the TRANSMIT receiver
     // rather than the agree-or-bypass receive policy — see applyBandFilter().
-    applyBandFilter(key ? "key" : "unkey");
+    // A re-key inside the transmit tail cancels the tail: the carrier continues.
+    if (key) {
+        cancelTxTail();
+        applyBandFilter("key");
+    }
 
     // A VOICE key must never inherit a TUNE carrier.
     //
@@ -3929,13 +4178,16 @@ void Hl2Backend::setKeying(bool key)
     // clearing that indiscriminately broke exactly that case.
     if (key && !m_tuning && m_toneFromTune)
         setTxTestTone(0.0, 0.0);
+    bool wasTuning = false;
     if (!key) {
         if (m_cwHangTimer) {
             m_cwHangTimer->stop();
         }
         m_cwAutoKeyed = false;
         // An unkey ends tune too, however it was started — so the drive register
-        // has to come back HERE, not in setTune()'s release branch.
+        // has to come back on THIS path, not in setTune()'s release branch. It
+        // comes back once the transmit tail has drained (finishTxTail()), and
+        // the band filter with it: the radio is still radiating until then.
         //
         // setTune(false, …) is only reached when the operator releases the TUNE
         // toggle. Every other way a tune ends — the automation TX watchdog and
@@ -3947,27 +4199,55 @@ void Hl2Backend::setKeying(bool key)
         // same line, setTxPower() no longer held off: the radio stayed at tune
         // power until the operator happened to move the slider. A subsequent
         // voice transmission would have gone out at 10%.
-        const bool wasTuning = m_tuning;
+        wasTuning = m_tuning;
         m_tuning = false;
-        if (wasTuning) {
-            setTxPower(m_rfPowerPercent);
-            // AND re-decide the filter, because the call above ran while
-            // m_tuning was still set.
-            //
-            // applyBandFilter() branches on (m_keyed || m_tuning): with receivers
-            // spanning bands it forces the TX receiver's filter while either is
-            // true, and bypasses otherwise. On a tune-initiated unkey m_keyed is
-            // already false but m_tuning was not, so the earlier call took the
-            // forced branch and left the bank on the TX receiver's filter with
-            // the other receivers attenuated. Nothing re-ran it: the early-out on
-            // `oc == m_ocFilterByte` means the stuck value looks current, so it
-            // survives until someone happens to retune.
-            applyBandFilter("tune-end");
-        }
     }
     if (m_metis)
         QMetaObject::invokeMethod(m_metis, "setMox", Qt::QueuedConnection,
             Q_ARG(bool, key));
+    // The receive filter and an owed RF drive wait out the radio's transmit
+    // tail (see kTxTailHoldMs), armed only after the MOX-off is queued.
+    if (!key) {
+        if (keyChanged || wasTuning) {
+            beginTxTail();
+        } else if (!m_txTailPending) {
+            applyBandFilter("unkey");
+        }
+    }
+    // AND ONLY NOW THE RELEASE -- after the MOX-off above is on the queue, so
+    // even at a hold of zero the unmute is posted behind it, never ahead.
+    if (!muteWhileKeyed) {
+        if (key) {
+            // Key-down with the TX audio monitor on: the monitor asked to hear
+            // the transmitter, and there is no turnaround to wait for.
+            if (m_unkeyUnmuteTimer) {
+                m_unkeyUnmuteTimer->stop();
+            }
+            if (m_rxAudioMuted) {
+                applyRxAudioMute(false);
+            }
+        } else if (cwBreakIn && m_cwHangTimer
+                   && m_cwHangTimer->interval() < m_unkeyUnmuteHoldMs) {
+            // CW full break-in with a hang SHORTER than the hold skips it: the
+            // hold would swallow the inter-element space and take QSK away (the
+            // maintainer's ruling upstream, #5850). At a longer delay the hang
+            // fires once, at the end of the over, and takes the hold below.
+            if (m_unkeyUnmuteTimer) {
+                m_unkeyUnmuteTimer->stop();
+            }
+            if (m_rxAudioMuted) {
+                applyRxAudioMute(false);
+            }
+        } else if (keyChanged) {
+            // The one true key-up edge: the only site that arms a hold.
+            releaseRxAudioMuteAfterHold();
+        } else if (!m_unkeyUnmuteTimer || !m_unkeyUnmuteTimer->isActive()) {
+            // A redundant unkey (stopTune() then setMox(false)) with no hold
+            // running. A redundant unkey with a hold running inherits it rather
+            // than restarting it.
+            releaseRxAudioMuteAfterHold();
+        }
+    }
     if (!key) {
         // Drop buffered audio on unkey so the next transmission does not open
         // with the tail of the previous one. BOTH stages hold audio and both
@@ -4061,8 +4341,25 @@ void Hl2Backend::setTxFrequency(double hz)
     // TX is single-stage: there is no software shift behind this the way there
     // is on receive, so the 1 Hz register granularity is the floor here. At
     // 10 ppm on 28 MHz that is a 280 Hz error corrected to under 1 Hz.
+    //
+    // XIT lands here and ONLY here: every caller passes the transmit receiver's
+    // dial, so that receiver's XIT reaches the TX register on every path that
+    // writes it (tune, TX slice move, reconnect, calibration) and never the
+    // receive side.
+    const Receiver* txRx = rx(m_txDdc);
+    const int xitHz = (txRx && txRx->xitOn) ? txRx->xitHz : 0;
+    double txHz = hz + xitHz;
+    // XIT can take the command through zero behind the dial guard, and
+    // ncoCommandHz() maps that to DC. Skipping the write is no better: the
+    // register keeps its last value, possibly another band. Hold the dial.
+    if (txHz <= 0.0) {
+        qCWarning(lcHl2) << "HL2: XIT" << xitHz << "Hz would put TX at" << txHz
+                         << "Hz from a dial of" << hz
+                         << "Hz; TX register holds the dial, XIT not applied";
+        txHz = hz;
+    }
     QMetaObject::invokeMethod(m_metis, "setTxFrequencyHz", Qt::QueuedConnection,
-        Q_ARG(std::uint32_t, ncoCommandHz(hz)));
+        Q_ARG(std::uint32_t, ncoCommandHz(txHz)));
 
     // The I/O Board's automatic TX-frequency push (the accessory's own
     // README: "the only required SDR modification is sending the transmit
@@ -4112,7 +4409,119 @@ double Hl2Backend::rxShiftHz(const Receiver& r) const noexcept
     // Unscaled by the frequency calibration on purpose: this term is an audio
     // offset, not an RF frequency. Scaling it would be applying a crystal
     // correction to the operator's sidetone pitch.
-    return dspShiftHz(r.sliceFreqHz, r.ncoHz) - cwBfoHz(r.mode);
+    return dspShiftHz(rxTunedHz(r), r.ncoHz) - cwBfoHz(r.mode);
+}
+
+double Hl2Backend::rxTunedHz(const Receiver& r) const noexcept
+{
+    // Every receiver has its own NCO, so each carries its own RIT, as a Flex
+    // slice does. Added before dspShiftHz() so it stays in the TRUE-RF domain
+    // the frequency calibration already corrects.
+    return r.sliceFreqHz + (r.ritOn ? r.ritHz : 0);
+}
+
+void Hl2Backend::retuneReceiver(int ddc)
+{
+    // The same re-run setPanSampleRate() uses: re-centres the NCO only if the
+    // receive frequency left the window, re-pushes the shift, re-emits state.
+    const Hl2ReceiverIds* ids = m_ids.byDdc(ddc);
+    const Receiver* r = rx(ddc);
+    if (ids && r) {
+        setSliceFrequency(ids->uiNumber, r->sliceFreqHz);
+    }
+}
+
+int Hl2Backend::clampRitXit(const char* what, int hz)
+{
+    const int clamped = std::clamp(hz, -kRitXitMaxHz, kRitXitMaxHz);
+    if (clamped != hz) {
+        qCWarning(lcHl2) << "HL2:" << what << "offset" << hz << "Hz clamped to" << clamped
+                         << "Hz (limit +/-" << kRitXitMaxHz << "Hz)";
+    }
+    return clamped;
+}
+
+void Hl2Backend::logRitXit(const char* what, int ddc, bool on, int hz) const
+{
+    const Hl2ReceiverIds* ids = m_ids.byDdc(ddc);
+    qCInfo(lcHl2) << "HL2:" << what << (on ? "on," : "off,") << "offset" << hz
+                  << "Hz on receiver DDC" << ddc << "slice" << (ids ? ids->uiNumber : -1)
+                  << (ddc == m_txDdc ? "(transmit)" : "(receive only)");
+}
+
+// Each setter ends by publishing the receiver's RIT/XIT, so the readout follows
+// what the receiver holds: an offset the clamp cut, and the final value of an
+// enable-then-offset pair. retuneReceiver() publishes as part of the re-tune.
+void Hl2Backend::setSliceRitEnabled(int sliceId, bool on)
+{
+    const int ddc = ddcForSlice(sliceId);
+    Receiver* r = rx(ddc);
+    if (!r || on == r->ritOn) {
+        return;
+    }
+    r->ritOn = on;
+    logRitXit("RIT", ddc, r->ritOn, r->ritHz);
+    if (r->ritHz != 0) {
+        retuneReceiver(ddc);
+    } else {
+        emitSliceState(ddc);
+    }
+}
+
+void Hl2Backend::setSliceRitOffset(int sliceId, int hz)
+{
+    const int ddc = ddcForSlice(sliceId);
+    Receiver* r = rx(ddc);
+    if (!r) {
+        return;
+    }
+    const int clamped = clampRitXit("RIT", hz);
+    if (clamped == r->ritHz && clamped == hz) {
+        return;
+    }
+    const bool moves = r->ritOn && clamped != r->ritHz;
+    r->ritHz = clamped;
+    logRitXit("RIT", ddc, r->ritOn, r->ritHz);
+    if (moves) {
+        retuneReceiver(ddc);
+    } else {
+        emitSliceState(ddc);
+    }
+}
+
+void Hl2Backend::setSliceXitEnabled(int sliceId, bool on)
+{
+    const int ddc = ddcForSlice(sliceId);
+    Receiver* r = rx(ddc);
+    if (!r || on == r->xitOn) {
+        return;
+    }
+    r->xitOn = on;
+    logRitXit("XIT", ddc, r->xitOn, r->xitHz);
+    if (r->xitHz != 0 && ddc == m_txDdc) {
+        setTxFrequency(r->sliceFreqHz);
+    }
+    emitSliceState(ddc);
+}
+
+void Hl2Backend::setSliceXitOffset(int sliceId, int hz)
+{
+    const int ddc = ddcForSlice(sliceId);
+    Receiver* r = rx(ddc);
+    if (!r) {
+        return;
+    }
+    const int clamped = clampRitXit("XIT", hz);
+    if (clamped == r->xitHz && clamped == hz) {
+        return;
+    }
+    const bool moves = r->xitOn && clamped != r->xitHz && ddc == m_txDdc;
+    r->xitHz = clamped;
+    logRitXit("XIT", ddc, r->xitOn, r->xitHz);
+    if (moves) {
+        setTxFrequency(r->sliceFreqHz);
+    }
+    emitSliceState(ddc);
 }
 
 void Hl2Backend::setCwPitch(int hz)
@@ -4275,11 +4684,20 @@ void Hl2Backend::setTxAudioMonitor(bool on)
     // Enabling the monitor mid-transmission is the second way sampling resumes,
     // and the one where the held peak is most likely still fresh by age — the
     // key-down that froze it may be only milliseconds old. Same gate, same site.
-    m_sliceSampling.setRequested(!(m_keyed && !on), hl2::steadyNowNs());
-    for (Receiver& r : m_rx) {
-        if (r.dsp)
-            QMetaObject::invokeMethod(r.dsp, "setAudioMuted", Qt::QueuedConnection,
-                Q_ARG(bool, m_keyed && !on));
+    const bool keyed = m_keyed || m_radioPtt;
+    if (keyed && !on) {
+        if (m_unkeyUnmuteTimer) {
+            m_unkeyUnmuteTimer->stop();
+        }
+        applyRxAudioMute(true);
+    } else if (!on && !keyed && m_unkeyUnmuteTimer && m_unkeyUnmuteTimer->isActive()) {
+        // Turning the monitor OFF inside an unkey hold: the hold is still
+        // covering the turnaround, so leave it to finish.
+    } else {
+        applyRxAudioMute(false);
+        if (m_unkeyUnmuteTimer) {
+            m_unkeyUnmuteTimer->stop();   // overtaken, or answered on purpose
+        }
     }
 }
 
@@ -4313,20 +4731,112 @@ void Hl2Backend::setTune(bool on, int tunePowerPercent)
         m_tuning = true;
         // Straight to the drive register rather than through setTxPower(), which
         // would overwrite the saved RF power we have to restore on release.
-        if (tunePowerPercent >= 0)
+        if (tunePowerPercent >= 0) {
+            if (recordTunePower(tunePowerPercent)) {
+                notifyOperatingStateChanged();
+            }
             applyDrive(tunePowerPercent);
-        setTxTestTone(0.0, kTuneCarrierAmplitude);
+            m_rfDriveOwed = true;
+        }
+        setTxTestTone(0.0, kHl2CarrierAmplitude);
         m_toneFromTune = true;   // set AFTER: setTxTestTone clears the flag
         setKeying(true);
     } else {
         setKeying(false);   // clears m_tuning and restores the operator's RF power
         setTxTestTone(0.0, 0.0);
+        // A band changed under the carrier held its TUNE power back
+        // (applyTuneMemoryFor); with the carrier down it applies now.
+        applyTuneMemoryFor(m_currentBandKey);
+    }
+}
+
+// Recorded for the band whether or not a carrier is up. Drive only, straight
+// to the register: m_rfPowerPercent stays the value the unkey restores. The
+// drive changes only while a tune carrier is up.
+void Hl2Backend::setTunePower(int percent)
+{
+    if (recordTunePower(percent)) {
+        notifyOperatingStateChanged();
+    }
+    if (!m_tuning || !m_keyed) {
+        return;
+    }
+    applyDrive(percent);
+    m_rfDriveOwed = true;
+}
+
+bool Hl2Backend::recordTunePower(int percent)
+{
+    const int clamped = std::clamp(percent, 0, 100);
+    if (clamped == m_tunePowerPercent) {
+        return false;
+    }
+    m_tunePowerPercent = clamped;
+    if (!m_currentBandKey.isEmpty()) {
+        m_tuneByBand.insert(m_currentBandKey, clamped);
+    }
+    // First-set-wins baseline for bands never tuned, as for drive.
+    if (m_tuneDefaultPercent < 0) {
+        m_tuneDefaultPercent = clamped;
+    }
+    return true;
+}
+
+void Hl2Backend::applyTuneMemoryFor(const QString& bandKey)
+{
+    // Unlike drive there is no safe floor to invent: with nothing remembered
+    // TransmitModel's TUNE power stands, and the next operator change records it.
+    // Not under a carrier: the drive it runs at is the one the slider shows.
+    const int tune = m_tuneByBand.value(bandKey, m_tuneDefaultPercent);
+    if (m_tuning || tune < 0 || tune == m_tunePowerPercent) {
+        return;
+    }
+    m_tunePowerPercent = tune;
+    TransmitDelta delta;
+    delta.tunePower = tune;
+    emit transmitChanged(delta);
+}
+
+// The radio keeps radiating after the MOX-off frame: keyed IQ already in its TX
+// FIFO drains (tx_buffer_latency, radio.v:934) and the last sample is held for
+// ptt_hang_time (radio.v:935, 1036-1047), while drive applies at once
+// (ad9866ctrl.v:134-140). So the band filter and an owed RF drive wait.
+void Hl2Backend::beginTxTail()
+{
+    m_txTailPending = true;
+    if (m_txTailHoldMs <= 0) {
+        finishTxTail();
+        return;
+    }
+    if (!m_txTailTimer->isActive()) {
+        m_txTailTimer->start(m_txTailHoldMs);
+    }
+}
+
+void Hl2Backend::cancelTxTail()
+{
+    if (m_txTailTimer) {
+        m_txTailTimer->stop();
+    }
+    m_txTailPending = false;
+}
+
+void Hl2Backend::finishTxTail()
+{
+    if (!m_txTailPending || m_keyed) {
+        return;
+    }
+    m_txTailPending = false;
+    applyBandFilter("unkey");
+    if (m_rfDriveOwed && !m_tuning) {
+        m_rfDriveOwed = false;
+        applyDrive(m_rfPowerPercent);
     }
 }
 
 // Clamp, map to the drive register, and honour the transmit gate. Shared by
-// setTxPower() and setTune() so the mapping — whose coarseness is documented in
-// setTxPower() — exists once and cannot drift between the two.
+// setTxPower(), setTune() and setTunePower() so the mapping — whose coarseness
+// is documented in setTxPower() — exists once and cannot drift between them.
 void Hl2Backend::applyDrive(int percent)
 {
     // Drive is gated exactly like keying. setTxDriveLevel writes the PA-enable
@@ -4547,6 +5057,9 @@ void Hl2Backend::setTxPower(int percent)
     notifyOperatingStateChanged();
     if (m_tuning)
         return;   // tune power owns the drive register until the carrier drops
+    if (m_rfDriveOwed && m_txTailPending)
+        return;   // the tune tail is still radiating; finishTxTail() applies it
+    m_rfDriveOwed = false;
     applyDrive(m_rfPowerPercent);
 }
 
@@ -5573,6 +6086,13 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     put("forwardPowerPeakW",
         QStringLiteral("Forward (W, approx — peak HOLD, display only)"),
         t.forwardPowerRaw ? QVariant(m_fwdPeakWatts) : QVariant());
+    // Responses the peak window skipped (isNonMeasurementRaddr1). A few per
+    // key-on is what gateware 74.2 does; a count rising all the time means the
+    // temperature word reads 0 and the peak hold runs on the last value only.
+    // Absent until a RADDR-1 response arrived, so 0 is a reading.
+    put("forwardPowerSkippedTotal",
+        QStringLiteral("Forward responses skipped, not measurements (since connect)"),
+        m_fwdTotalResponses > 0 ? QVariant(m_fwdTotalSkipped) : QVariant());
     put("reversePowerRaw", QStringLiteral("Reverse (raw counts)"),
         opt(t.reversePowerRaw));
     put("reversePowerW", QStringLiteral("Reverse (W, approx)"),
@@ -5870,7 +6390,23 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // "Link", where the last section marker left them, put the two at opposite
     // ends of the dialog. (PR #5650 review round 3.)
     section("adcPeakDbfs", QStringLiteral("Converter"));
-    const bool haveBlock = m_bandscopeBlock.samples > 0;
+    // TWO QUESTIONS, NOT ONE (upstream 3eacdabb). `haveObservation` is "has a
+    // block ever arrived"; `haveBlock` is "is the newest one still describing
+    // now". Closing the wideband bandscope stops the EP4 stream with the link
+    // up, and these rows went on publishing the last block indefinitely:
+    // upstream measured 31 dB of commanded LNA gain moving them 0.00 dB. They
+    // now expire after three bandscope gate periods (the producer samples every
+    // 1000 ms), so a live gate may miss two blocks before a row goes absent.
+    // They also go absent during transmit, on purpose: the gate is held off
+    // while keyed, and the last pre-key number shown as current would be the
+    // fabrication this fixes. adcObservedAgoMs is not expired and says which
+    // silence it is.
+    constexpr qint64 kAdcRowMaxAgeMs = 3000;
+    const qint64 blockAgeMs =
+        m_bandscopeBlockClock.isValid() ? m_bandscopeBlockClock.elapsed() : -1;
+    const bool haveObservation = m_bandscopeBlock.samples > 0;
+    const bool haveBlock = haveObservation && blockAgeMs >= 0
+                           && blockAgeMs <= kAdcRowMaxAgeMs;
     const double peak = haveBlock ? m_bandscopeBlock.peakDbfs() : 0.0;
     const double rms  = haveBlock ? m_bandscopeBlock.rmsDbfs()  : 0.0;
     auto dbfs = [haveBlock](double v) {
@@ -5927,8 +6463,8 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // How old the reading is. A gated sensor's number is a snapshot, and a
     // snapshot with no age on it invites being read as current.
     put("adcObservedAgoMs", QStringLiteral("ADC level observed (ms ago)"),
-        (haveBlock && m_bandscopeBlockClock.isValid())
-            ? QVariant(static_cast<qulonglong>(m_bandscopeBlockClock.elapsed()))
+        (haveObservation && blockAgeMs >= 0)
+            ? QVariant(static_cast<qulonglong>(blockAgeMs))
             : QVariant());
     return h;
 }
@@ -5954,7 +6490,13 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_haveRestoredState = false;
     m_lnaDbByBand.clear();
     m_driveByBand.clear();
+    m_tuneByBand.clear();
+    m_tuneDefaultPercent = -1;
+    m_tunePowerPercent = -1;
     m_lnaGainDb = hl2::kLnaDefaultGainDb;
+    // The forward-response totals are per session, like the peak window itself.
+    m_fwdTotalResponses = 0;
+    m_fwdTotalSkipped = 0;
     m_lnaSessionPin = false;
     m_driveDefaultPercent = -1;
     m_rfPowerPercent = 100;       // TransmitModel's session default
@@ -6116,6 +6658,13 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
         txSetpoints.value(QStringLiteral("driveByBand")).toObject();
     for (auto it = driveByBand.constBegin(); it != driveByBand.constEnd(); ++it)
         m_driveByBand.insert(it.key(), qBound(0, it.value().toInt(), 100));
+    if (txSetpoints.contains(QStringLiteral("tuneDefaultPercent")))
+        m_tuneDefaultPercent = qBound(
+            0, txSetpoints.value(QStringLiteral("tuneDefaultPercent")).toInt(), 100);
+    const QJsonObject tuneByBand =
+        txSetpoints.value(QStringLiteral("tuneByBand")).toObject();
+    for (auto it = tuneByBand.constBegin(); it != tuneByBand.constEnd(); ++it)
+        m_tuneByBand.insert(it.key(), qBound(0, it.value().toInt(), 100));
 
     // The mic level, DROPPED rather than clamped when it is out of range —
     // the same rule as the AGC threshold above, and for a sharper reason. This
@@ -6191,7 +6740,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
                   << valid.filterHighHz << "rate" << valid.sampleRateHz
                   << "agc" << valid.agcMode << valid.agcThreshold
                   << "lna bands" << m_lnaDbByBand.size() << "drive bands"
-                  << m_driveByBand.size();
+                  << m_driveByBand.size() << "tune bands" << m_tuneByBand.size();
 }
 
 // Every receiver's AGC pair set to what this session should come up with.
@@ -6234,17 +6783,24 @@ void Hl2Backend::seedReceiverAgc()
         m_haveRestoredState && !m_restoredState.agcMode.isEmpty();
     const bool haveThreshold =
         m_haveRestoredState && m_restoredState.agcThreshold >= 0;
-    for (Receiver& r : m_rx) {
+    for (std::size_t i = 0; i < m_rx.size(); ++i) {
+        Receiver& r = m_rx[i];
         r.agcMode = haveMode ? m_restoredState.agcMode : defaults.agcMode;
         r.agcThresholdDb = haveThreshold ? m_restoredState.agcThreshold
                                          : defaults.agcThresholdDb;
+        r.agcModeBeforeDigital.clear();
+        // A receiver already in DIGU/DIGL runs AGC off over the seeded mode.
+        followModeAgc(r, QString());
     }
     // Prime the remembered pair from what was just seeded, so a capture taken
     // before the operator touches the control records the restored value rather
-    // than falling back through an empty member.
+    // than falling back through an empty member. The seeded mode, not a data
+    // mode's off.
     if (!m_rx.empty()) {
-        m_agcMode = m_rx.front().agcMode;
-        m_agcThresholdDb = m_rx.front().agcThresholdDb;
+        const Receiver& first = m_rx.front();
+        m_agcMode = first.agcModeBeforeDigital.isEmpty()
+                        ? first.agcMode : first.agcModeBeforeDigital;
+        m_agcThresholdDb = first.agcThresholdDb;
     }
 }
 
@@ -6269,7 +6825,8 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
         state.agcMode = m_agcMode;
         state.agcThreshold = m_agcThresholdDb;
     } else if (const Receiver* txRx = rx(m_txDdc)) {
-        state.agcMode = txRx->agcMode;
+        state.agcMode = txRx->agcModeBeforeDigital.isEmpty()
+                            ? txRx->agcMode : txRx->agcModeBeforeDigital;
         state.agcThreshold = txRx->agcThresholdDb;
     }
     state.sampleRateHz = m_sampleRateHz;
@@ -6322,6 +6879,13 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
     QJsonObject txSetpoints{{QStringLiteral("driveByBand"), driveByBand}};
     if (m_driveDefaultPercent >= 0)
         txSetpoints.insert(QStringLiteral("defaultPercent"), m_driveDefaultPercent);
+    QJsonObject tuneByBand;
+    for (auto it = m_tuneByBand.constBegin(); it != m_tuneByBand.constEnd(); ++it)
+        tuneByBand.insert(it.key(), it.value());
+    if (!tuneByBand.isEmpty())
+        txSetpoints.insert(QStringLiteral("tuneByBand"), tuneByBand);
+    if (m_tuneDefaultPercent >= 0)
+        txSetpoints.insert(QStringLiteral("tuneDefaultPercent"), m_tuneDefaultPercent);
 
     // The operator's TX passband — the Phone applet's low-cut / high-cut.
     //
@@ -6498,10 +7062,11 @@ void Hl2Backend::applyPerBandStateFor(double freqHz, const char* reason)
         delta.rfPower = drive;
         emit transmitChanged(delta);
     }
+    applyTuneMemoryFor(newBand);
 
     qCInfo(lcHl2) << "HL2 band memory (" << reason << "):" << oldBand << "->"
                   << newBand << "lna" << m_lnaGainDb << "dB drive"
-                  << m_rfPowerPercent << '%';
+                  << m_rfPowerPercent << "% tune" << m_tunePowerPercent << '%';
     notifyOperatingStateChanged();
 }
 
@@ -6582,7 +7147,11 @@ void Hl2Backend::pushInitialState()
         if (m_haveRestoredState) {
             if (Receiver* txRx = rx(m_txDdc)) {
                 if (!m_restoredState.mode.isEmpty()) {
+                    // A restore into DIGU/DIGL runs AGC off, as a mode click
+                    // does; the loop below pushes it to the DSP.
+                    const QString previousMode = txRx->mode;
                     txRx->mode = m_restoredState.mode;
+                    followModeAgc(*txRx, previousMode);
                     const auto [pbLowHz, pbHighHz] =
                         defaultPassbandForMode(txRx->mode);
                     txRx->filterLowHz = pbLowHz;
@@ -6742,10 +7311,24 @@ void Hl2Backend::pushInitialState()
     }
 
     // Keying state is ours, not the radio's: a reconnect must never come up
-    // keyed because the previous session ended mid-transmission.
+    // keyed because the previous session ended mid-transmission. The radio's own
+    // PTT is re-read from the first EP6 frame after this.
     m_keyed = false;
+    m_radioPtt = false;
+    publishTransmitState();
     m_tuning = false;
+    cancelTxTail();
+    m_rfDriveOwed = false;
     setKeying(false);
+    // AND THE RECEIVE-AUDIO HOLD WITH IT, after the unkey above, never before
+    // it. The mixer gates on m_rxAudioMuted, which clearing m_keyed does not
+    // touch, so a session that ended mid-transmission would hand the new one a
+    // closed gate. Cleared rather than deferred: the turnaround the hold covers
+    // belonged to a transport that no longer exists.
+    if (m_unkeyUnmuteTimer) {
+        m_unkeyUnmuteTimer->stop();
+    }
+    applyRxAudioMute(false);
 }
 
 void Hl2Backend::defineMeters()
@@ -6863,22 +7446,18 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
         if (const auto swr = swrFromRaw(*t.forwardPowerRaw, *t.reversePowerRaw))
             emit meterUpdate(QStringLiteral("TX:SWR"), *swr);
     }
-    // Forward and reverse power, through the reference curve in
-    // directionalWatts(). UNCALIBRATED — see that function for exactly what
-    // that means and why publishing an approximate value still beats publishing
-    // none. The raw counts continue to be logged alongside, because they are
-    // what a per-unit calibration will be built from and they are the only way
-    // to tell "the radio reports no power" from "we never asked".
-    //
-    // Arrives at the 10 Hz MetisClient already paces telemetry at
-    // (kTelemetryMinIntervalMs), so no further rate gate is needed here;
-    // MeterModel applies its own forward-power ballistics on top.
-    //
-    // Published through the peak hold, not raw. See kFwdPeakReleaseAlpha for
-    // why a 10 Hz instantaneous sample of a speech envelope reads ~10 dB low
-    // and what the hold does and does not recover.
+    // Forward/reverse power through directionalWatts()'s uncalibrated reference
+    // curve; raw counts are logged too, for future per-unit calibration.
+    // MetisClient paces telemetry at kTelemetryMinIntervalMs. Forward power is
+    // published through the peak hold; see kFwdPeakReleaseAlpha.
     if (t.forwardPowerRaw) {
-        const double instantW = directionalWatts(*t.forwardPowerRaw);
+        // Keyed: the window's loudest RADDR-1 sample, since the radio reports
+        // ~190 a second and the last one misses speech peaks. Unkeyed: the
+        // last value, because a maximum of noise samples would sit above the
+        // no-carrier floor MeterModel snaps to zero on.
+        const int fwdRaw = (m_keyed && t.forwardPowerPeakRaw)
+            ? *t.forwardPowerPeakRaw : *t.forwardPowerRaw;
+        const double instantW = directionalWatts(fwdRaw);
         // The hold applies only while keyed. Unkeyed, the reading must fall to
         // zero on the same schedule REFPWR does — MeterModel snaps its own
         // forward-power filter to zero the moment a no-carrier sample arrives,
@@ -6893,11 +7472,19 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
                          wattsToDbm(directionalWatts(*t.reversePowerRaw)));
     if (t.forwardPowerRaw && (*t.forwardPowerRaw != m_lastFwdRaw)) {
         m_lastFwdRaw = *t.forwardPowerRaw;
+        // The sample count shows whether the RADDR-1 stream itself is thin
+        // (~19 per 100 ms is healthy at 48 kHz).
         qCDebug(lcHl2Tx) << "HL2 directional: fwd" << *t.forwardPowerRaw
                          << "rev" << t.reversePowerRaw.value_or(-1)
                          << "-> fwd" << directionalWatts(*t.forwardPowerRaw) << "W"
-                         << "(uncalibrated reference curve)";
+                         << "(uncalibrated reference curve);"
+                         << "window peak" << t.forwardPowerPeakRaw.value_or(-1)
+                         << "of" << t.forwardPowerSamples << "RADDR-1 samples ("
+                         << t.forwardPowerSkipped << "skipped)";
     }
+    m_fwdTotalResponses += static_cast<quint64>(t.forwardPowerSamples)
+                           + static_cast<quint64>(t.forwardPowerSkipped);
+    m_fwdTotalSkipped += static_cast<quint64>(t.forwardPowerSkipped);
     // TX IQ FIFO — a queue-fed transmission can starve the radio's buffer in a
     // way a per-packet generated tone never can, so this is what distinguishes
     // "the audio is wrong" from "the audio never arrived". `fill` is the top 7
@@ -7156,7 +7743,7 @@ void Hl2Backend::applyBandFilter(const char* reason)
         // through a bypassed filter bank because a second receiver happened to
         // be parked on another band would put harmonics on the air, and no
         // receive-side convenience justifies that.
-        if (m_keyed || m_tuning) {
+        if (m_keyed || m_tuning || m_txTailPending) {
             const Receiver* txRx = rx(m_txDdc);
             oc = txRx ? static_cast<int>(ocByteFor(txRx->sliceFreqHz, hl2::FilterDirection::Transmit))
                       : static_cast<int>(kOcNone);
@@ -7184,7 +7771,7 @@ void Hl2Backend::applyBandFilter(const char* reason)
             mhz << QString::number(r.sliceFreqHz / 1.0e6, 'f', 3);
         forWhat = QStringLiteral("receivers spanning bands (%1 MHz)%2")
                       .arg(mhz.join(QStringLiteral(", ")),
-                           (m_keyed || m_tuning)
+                           (m_keyed || m_tuning || m_txTailPending)
                                ? QStringLiteral(" — TX receiver's filter forced")
                                : QStringLiteral(" — BYPASSED, AM-broadcast HPF is out"));
     } else {
@@ -7238,6 +7825,13 @@ void Hl2Backend::emitSliceState(int ddc)
     // as a command (Principle II).
     d.agcMode = r->agcMode;
     d.agcThreshold = r->agcThresholdDb;
+    // The RIT/XIT the receiver holds, so the readout shows what it applies (a
+    // clamped offset, or a fresh connect at zero). applyChanges() emits only
+    // ritChanged/xitChanged, never the command signals, so this cannot loop.
+    d.ritOn = r->ritOn;
+    d.ritFreq = r->ritHz;
+    d.xitOn = r->xitOn;
+    d.xitFreq = r->xitHz;
     // The HL2 has one transmitter however many receivers it runs, so EXACTLY ONE
     // slice is the transmit slice — the one on m_txDdc.
     //

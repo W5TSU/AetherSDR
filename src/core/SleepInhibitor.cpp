@@ -1,7 +1,7 @@
 #include "SleepInhibitor.h"
 #include <QDebug>
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #endif
 
@@ -26,7 +26,7 @@ void SleepInhibitor::acquire(const QString& reason)
     if (m_held)
         return;
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     CFStringRef cfReason = reason.toCFString();
     IOReturn ret = IOPMAssertionCreateWithName(
         kIOPMAssertionTypeNoIdleSleep,
@@ -77,7 +77,7 @@ void SleepInhibitor::release()
     if (!m_held)
         return;
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     IOPMAssertionRelease(m_assertionId);
     m_assertionId = 0;
     qDebug() << "SleepInhibitor: released (macOS)";

@@ -1,0 +1,43 @@
+{
+  "mode": "AM",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "signal",
+      "passed": true,
+      "measured": 68.5,
+      "limit": ">= 20 dB over the noise",
+      "unit": "dB"
+    },
+    {
+      "name": "symmetry",
+      "passed": true,
+      "measured": -0.0,
+      "limit": "sidebands within 2 dB",
+      "unit": "dB"
+    },
+    {
+      "name": "depth",
+      "passed": true,
+      "measured": 0.486,
+      "limit": "0.3..1",
+      "unit": ""
+    },
+    {
+      "name": "harmonics",
+      "passed": true,
+      "measured": 42.4,
+      "limit": "2nd-harmonic sidebands >= 25 dB down",
+      "unit": "dB"
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -54.5,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [],
+  "dial_offset_hz": -1254.7
+}

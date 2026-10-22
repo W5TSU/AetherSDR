@@ -13,13 +13,14 @@
 #include "core/AutomationBridgeSettings.h"
 #include "core/DisplayPresence.h"
 #include "core/GpuSelector.h"
+#include "core/QtAudioBackendGuard.h"
 #include "core/LogManager.h"
 #include "core/ShutdownTrace.h"
 #include "core/SystemInventory.h"
 #include "core/MacMicPermission.h"
 #include "core/AutomationServer.h"
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 #include "MacStartupAbortGuard.h"
 #endif
 
@@ -449,6 +450,13 @@ int main(int argc, char* argv[])
     // reads the platform we actually chose (see the ORDER note above).
     AetherSDR::GpuSelector::applyAtStartup();
 
+    // Qt 6.12's QtMultimedia defaults to its PipeWire audio backend and
+    // segfaults enumerating devices when it cannot create a PipeWire context
+    // (libpipewire installed, client configuration missing). Must run before
+    // anything touches QMediaDevices; QApplication is the safe bound. Never
+    // overrides a QT_AUDIO_BACKEND the user set.
+    AetherSDR::QtAudioBackendGuard::applyAtStartup();
+
 #ifdef __linux__
     // Install a tolerant X11 error handler before QApplication and before any
     // library (FFmpeg, VA-API, VDPAU) can open an X11 connection.  Xlib's
@@ -488,7 +496,7 @@ int main(int argc, char* argv[])
             qputenv("QT_SCALE_FACTOR", QByteArray::number(pct / 100.0, 'f', 2));
     }
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     // SpectrumWidget and WaveformWidget require native Metal child views, but
     // their surrounding raster-widget trees must not become native siblings.
     // Together with WA_DontCreateNativeAncestors on those leaves, this avoids
@@ -520,7 +528,7 @@ int main(int argc, char* argv[])
     // for ps and pgrep (ThreadName.cpp).
     AetherSDR::SystemInfo::setCurrentThreadName("AetherSDR-GUI");
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     if (!startupAbortGuard.disarm()) {
         std::fputs("AetherSDR startup error: could not restore the SIGABRT "
                    "handler after GUI initialization; refusing to continue.\n",
@@ -779,6 +787,8 @@ int main(int argc, char* argv[])
         // (GpuSelector::applyAtStartup() ran before logging was available).
         qInfo().noquote() << "GpuSelector: render GPU ->"
                           << AetherSDR::GpuSelector::appliedSummary();
+        qInfo().noquote() << "QtAudioBackendGuard:"
+                          << AetherSDR::QtAudioBackendGuard::appliedSummary();
 
         // Likewise the Wayland platform choice (decided before logging existed).
         if (g_qpaPlatformChoice) {

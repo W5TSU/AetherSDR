@@ -4,6 +4,7 @@
 #include <limits>
 
 #include <QThread>
+#include <QVersionNumber>
 
 #include "core/LogManager.h"
 #include "core/RadioConnection.h"
@@ -118,6 +119,67 @@ void FlexBackend::setCommandSink(std::function<void(const QString&)> sink)
     m_sink = std::move(sink);
 }
 
+void FlexBackend::setFirmwareVersionProvider(std::function<QString()> provider)
+{
+    m_firmwareVersionProvider = std::move(provider);
+}
+
+bool FlexBackend::firmwareAtLeast(const QVersionNumber& minimum) const
+{
+    const QString text = m_firmwareVersionProvider ? m_firmwareVersionProvider() : QString();
+    qsizetype suffixIndex = 0;
+    const QVersionNumber version = QVersionNumber::fromString(text, &suffixIndex);
+    return suffixIndex == text.size() && version >= minimum;
+}
+
+int FlexBackend::nrsLevelMaximum() const
+{
+    // Published FlexLib 4.3.16 Slice.NRSLevel reduces the maximum from 100 to 50.
+    return firmwareAtLeast(QVersionNumber(4, 3, 16)) ? 50 : 100;
+}
+
+void FlexBackend::refreshFirmwareCapabilities()
+{
+    const int maximum = nrsLevelMaximum();
+    if (maximum == m_announcedNrsLevelMaximum) {
+        return;
+    }
+    m_announcedNrsLevelMaximum = maximum;
+    emit capabilitiesChanged();
+}
+
+ReceiveDispatch FlexBackend::requestRadioNickname(const QString& nickname)
+{
+    if (!m_sink) {
+        return ReceiveDispatch::Unsupported;
+    }
+    // FlexLib Nickname uses StringHelper.Sanitize: drop unsupported characters,
+    // including spaces; sanitized-empty input selects the clear operation.
+    QString sanitized;
+    sanitized.reserve(nickname.size());
+    for (const QChar ch : nickname) {
+        if ((ch >= QLatin1Char('a') && ch <= QLatin1Char('z'))
+            || (ch >= QLatin1Char('A') && ch <= QLatin1Char('Z'))
+            || (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))
+            || ch == QLatin1Char('.') || ch == QLatin1Char(',')
+            || ch == QLatin1Char('/') || ch == QLatin1Char('-')) {
+            sanitized.append(ch);
+        }
+    }
+    if (sanitized.isEmpty()) {
+        // Older firmware interprets an empty name argument as a query, not a clear.
+        if (!firmwareAtLeast(QVersionNumber(4, 3))) {
+            qCWarning(lcProtocol) << "FlexBackend: nickname clear refused:"
+                                 << "firmware 4.3 or later is required";
+            return ReceiveDispatch::Unsupported;
+        }
+        send(QStringLiteral("radio clear_name"));
+    } else {
+        send(QStringLiteral("radio name ") + sanitized);
+    }
+    return ReceiveDispatch::Dispatched;
+}
+
 void FlexBackend::setSliceCommandSink(std::function<void(const QString&)> sink)
 {
     m_sliceSink = std::move(sink);
@@ -183,6 +245,8 @@ RadioCapabilities FlexBackend::capabilities() const
     caps.maxPanadapters =
         m_reportedMaxPanadapters > 0 ? m_reportedMaxPanadapters : mc.maxSlices;
     caps.hasExtendedDsp = mc.hasExtendedDsp();
+    caps.daxIqSampleRates = mc.daxIqSampleRates();
+    caps.nrsLevelControl = RadioCapabilities::NrsLevelControl{nrsLevelMaximum()};
     // The LMS/FFT family is base Flex firmware, not an 8000-series extra —
     // every radio with hasRadioSideDsp below also has NRL/ANFL/ANFT.
     caps.hasLmsNoiseFilters = true;
@@ -193,6 +257,15 @@ RadioCapabilities FlexBackend::capabilities() const
     caps.hasManualNotch = false;
     caps.hasTransmitFrequencyCheck = false;
     caps.hasDdcPanEdgeRolloff = false;  // superhet/direct-sampling, no DDC decimation edge
+    // Per-pan band/segment zoom. `display pan set <pan> band_zoom=|segment_zoom=`
+    // is FlexLib's own wire text and the radio owns the resulting flags, which is
+    // why this is the only backend that engages the record. The string is the
+    // declaration naming what it grants; the gate reads only that the record is
+    // engaged (gui/PanZoomModeGate.h).
+    caps.panZoomModes = RadioCapabilities::PanZoomModes{
+        QStringLiteral("display pan set")};
+    // The radio stores a pan's FFT frame rate and reports it on connect.
+    caps.panFrameRateShaping = std::nullopt;
     // A Flex blanks impulses in its OWN DDC, so NB is already the radio's under
     // hasRadioSideDsp above and the host has nothing to add. This flag says
     // where the blanker runs, not whether the radio has one.
@@ -207,8 +280,9 @@ RadioCapabilities FlexBackend::capabilities() const
     // `transmit rfpower=` is parsed off radio status, so the value the model
     // carries is confirmed radio state rather than this client's request
     // (#5518, Principle II).
+    // Tune power reaches a Flex as command-plane text, not setTunePower().
     caps.transmitDriveControl = RadioCapabilities::TransmitDriveControl{
-        SliceFrequencyControl::Authority::Radio};
+        SliceFrequencyControl::Authority::Radio, /*tunePowerAppliesLive=*/false};
     // A Flex transmits in every mode it demodulates, so there is nothing for the
     // receive-only mode guard to refuse. Stated rather than defaulted, per the
     // "adding a field" rule in RadioCapabilities.h.
@@ -242,7 +316,8 @@ RadioCapabilities FlexBackend::capabilities() const
     caps.hasDownwardExpander = true;
     caps.hasAgcThreshold = true;
     caps.hasAmCarrierLevel = true;
-    caps.hasVoxDelay = true;
+    caps.voxControl = RadioCapabilities::VoxControl{/*hasDelay*/ true};
+    caps.txMonitorControl = RadioCapabilities::TxMonitorControl{};
 
     // FALSE, and stated rather than left to the default. A Flex modulates on
     // the radio AND takes its transmit audio over DAX/VITA-49, so it is the one
@@ -254,6 +329,7 @@ RadioCapabilities FlexBackend::capabilities() const
     // The keyed edge is decoded from `interlock` status inside RadioModel, not
     // published through this seam — see RadioCapabilities::hasRadioPttReadback.
     caps.hasRadioPttReadback = false;
+    caps.radioPttObservation = std::nullopt;   // same reason: interlock, not this seam
 
     // EMPTY = continuous or unknown, so the RX applet keeps the operator's own
     // configurable width list. A Flex's filters are continuous.
@@ -345,8 +421,8 @@ RadioCapabilities FlexBackend::capabilities() const
     // FLEX PACURRENT is known to clip below real full-power draw, so it is not
     // an honest substitute for the calibrated PA-temperature instrument.
     caps.hasPaCurrentTelemetry = false;
-    caps.speechProcessorLevelMaximum = 2;
-    caps.speechProcessorLabel = QStringLiteral("PROC");
+    caps.speechProcessorControl = RadioCapabilities::SpeechProcessorControl{
+        2, QStringLiteral("PROC")};
     caps.hasMainFanTelemetry = true;
 
     // Advertise the "flex" extension namespace: the amp/tuner operate/bypass/
@@ -1250,6 +1326,21 @@ void FlexBackend::decodeGpsStatus(const QString& rawBody)
 
     GpsDelta d;
     carry(kvs, "status", d.status);
+    if (kvs.contains(QStringLiteral("fix"))) {
+        // Published FlexLib 4.3.16: exact tokens, ignoring case only. A
+        // reported unknown value clears the fix; an absent key preserves it.
+        const QString fix = kvs.value(QStringLiteral("fix")).toUpper();
+        d.fixState = GpsFixState::Unknown;
+        if (fix == QLatin1String("3D")) {
+            d.fixState = GpsFixState::ThreeD;
+        } else if (fix == QLatin1String("2D")) {
+            d.fixState = GpsFixState::TwoD;
+        } else if (fix == QLatin1String("TIME_ONLY")) {
+            d.fixState = GpsFixState::TimeOnly;
+        } else if (fix == QLatin1String("NO_FIX")) {
+            d.fixState = GpsFixState::NoFix;
+        }
+    }
     if (kvs.contains(QStringLiteral("status"))) {
         const QString status = kvs.value(QStringLiteral("status")).trimmed().toLower();
         const bool saysLock = status.contains(QLatin1String("lock"));
@@ -1258,9 +1349,8 @@ void FlexBackend::decodeGpsStatus(const QString& rawBody)
             || status.contains(QLatin1String("not lock"))
             || status.contains(QLatin1String("lost"))
             || status.contains(QLatin1String("loss"));
-        // Lock alone decides validity; the coordinates are carried by their
-        // own keys and consumers parse the persisted lat/lon, so a status
-        // line without them must not invalidate a fix the radio still has.
+        // Preserve legacy validity for firmware without fix=. RadioModel
+        // additionally vetoes it when a reported fix cannot supply position.
         d.positionValid = saysLock && !saysNoLock;
         d.source = QStringLiteral("GPSDO");
     }

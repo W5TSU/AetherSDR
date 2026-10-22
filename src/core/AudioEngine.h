@@ -11,6 +11,8 @@
 #include <QUdpSocket>
 #include <QTimer>
 #include <QVector>
+#include "AudioDevicePreferencePolicy.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -31,6 +33,7 @@
 #include "OpusTxPacer.h"
 
 class QMediaDevices;
+class QThread;
 
 #include <functional>
 #include <algorithm>
@@ -603,10 +606,21 @@ public:
         SpectralNR::WisdomProgressCb progress = nullptr,
         SpectralNR::WisdomCancelCb shouldCancel = nullptr);
 
-    // Device selection (restarts the stream if currently running)
-    void setOutputDevice(const QAudioDevice& dev);
-    void setInputDevice(const QAudioDevice& dev);
-#ifdef Q_OS_MAC
+    // Shutdown join for the audio thread (#6287). Teardown on that thread
+    // (NNR, NR2, NR4) waits for the FFTW planner locks, and a plan held by
+    // another thread can't be interrupted. So this keeps waiting while either
+    // planner lock is held, logging under `phase` every 5 s, and gives up only
+    // after `idleBudgetMs` of consecutive waiting with both locks free.
+    static bool joinThreadWhilePlannerBusy(QThread& thread, int idleBudgetMs,
+                                           const char* phase);
+
+    // Device selection (restarts the stream if currently running). Only an
+    // operator's choice is written to AudioOutputDeviceId / AudioInputDeviceId.
+    void setOutputDevice(const QAudioDevice& dev,
+                         AudioDeviceSelection selection = AudioDeviceSelection::OperatorChoice);
+    void setInputDevice(const QAudioDevice& dev,
+                        AudioDeviceSelection selection = AudioDeviceSelection::OperatorChoice);
+#ifdef Q_OS_MACOS
     void setAllowBluetoothTelephonyOutput(bool on);
 #endif
     QAudioDevice outputDevice() const { return m_outputDevice; }
@@ -1000,7 +1014,7 @@ private:
     QUdpSocket    m_txSocket;
     QAudioSource* m_audioSource{nullptr};
     QPointer<QIODevice> m_micDevice;
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     QTimer*       m_txPollTimer{nullptr};
     QBuffer*      m_micBuffer{nullptr};
 #endif
@@ -1048,7 +1062,7 @@ private:
     // Channel count of the stage-0 open, so the ladder stays stable across
     // reopens even though fmt.channelCount() changes underneath it.
     int                m_txSilentOpenInitialChannels{2};
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     std::atomic<bool>  m_allowBluetoothTelephonyOutput{false};
 #endif
     std::atomic<bool>  m_daxTxUseRadioRoute{false}; // false = low-latency route (dax=0)

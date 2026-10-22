@@ -703,7 +703,7 @@ void MainWindow::buildMenuBar()
     // CAT / TCI / DAX enable moved to Radio Setup ▸ EXTERNAL CONTROL
     // (issue #17). The old "Autostart … with AetherSDR" menu items are gone;
     // the "CAT && TCI..." entry above deep-links to those pages.
-#if !defined(Q_OS_MAC) && !defined(HAVE_PIPEWIRE)
+#if !defined(Q_OS_MACOS) && !defined(HAVE_PIPEWIRE)
     // DAX audio bridge requires macOS CoreAudio or Linux with PipeWire; keep
     // the setting forced off on platforms without a bridge (#1556).
     if (DaxSettings::audioEnabled()) {
@@ -1100,6 +1100,7 @@ void MainWindow::buildMenuBar()
     connect(kbAct, &QAction::toggled, this, [this](bool on) {
         m_keyboardShortcutsEnabled = on;
         s_keyboardShortcutsEnabled = on;
+        syncOperatingShortcutsEnabled();
         AppSettings::instance().setValue("KeyboardShortcutsEnabled", on ? "True" : "False");
         AppSettings::instance().save();
     });

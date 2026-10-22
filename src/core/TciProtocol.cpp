@@ -4,6 +4,7 @@
 #include "LogManager.h"
 #include "TciRoutingState.h"
 #include "TciTrxMap.h"
+#include "core/backends/RadioCapabilities.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/PanadapterModel.h"
@@ -27,6 +28,14 @@ int TciProtocol::tciTrxForSlice(RadioModel* model, const SliceModel* slice)
     const auto slices = model->slices();
     const int index = slices.indexOf(const_cast<SliceModel*>(slice));
     return index >= 0 ? index : slice->sliceId();
+}
+
+bool TciProtocol::transmitPermitted(const RadioModel* model, const SliceModel* slice)
+{
+    return model && slice && model->isConnected() && model->backendCanTransmit()
+        && model->sliceOwnedByUs(slice->sliceId())
+        && !modeIsReceiveOnly(model->backendCapabilities(), slice->mode())
+        && model->panTransmitInhibitReason(slice->panId()).isEmpty();
 }
 
 QString TciProtocol::sanitizeSliceLetter(const QString& letter)
@@ -452,7 +461,7 @@ QString TciProtocol::generateInitBurst()
 
             // TX
             burst += QStringLiteral("tx_enable:%1,%2;")
-                         .arg(trx).arg(s->isTxSlice() ? "true" : "false");
+                         .arg(trx).arg(transmitPermitted(m_model, s) ? "true" : "false");
         }
 
         // Global TX state
@@ -465,6 +474,7 @@ QString TciProtocol::generateInitBurst()
         burst += QStringLiteral("tune_drive:%1,%2;").arg(txTrxIndex).arg(tx.tunePower());
         burst += QStringLiteral("mic_level:%1;").arg(tx.micLevel());
         burst += QStringLiteral("trx:%1,%2;").arg(txTrxIndex).arg(isTx ? "true" : "false");
+        burst += QStringLiteral("tune:%1,%2;").arg(txTrxIndex).arg(tx.isTuning() ? "true" : "false");
 
         // Master AF volume — whole-radio (no trx prefix), same saved value
         // cmdVolume's GET returns, reported in dB per the TCI spec
@@ -665,6 +675,13 @@ std::optional<TciProtocol::TrxRequest> TciProtocol::takeTrxRequest()
     return request;
 }
 
+std::optional<TciProtocol::TuneRequest> TciProtocol::takeTuneRequest()
+{
+    std::optional<TuneRequest> request = std::move(m_tuneRequest);
+    m_tuneRequest.reset();
+    return request;
+}
+
 // ── Command implementations ────────────────────────────────────────────────
 
 QString TciProtocol::cmdStart()
@@ -802,13 +819,17 @@ QString TciProtocol::cmdTune(const QStringList& args, bool isSet)
     // so "anything that is not the word true" has to keep meaning STOP.
     // Fail closed, not silent — Constitution VI. (#4867 review)
     const bool tune = (args[1].trimmed().toLower() == QLatin1String("true"));
-    QMetaObject::invokeMethod(m_model, [model = m_model, tune]() {
-        if (tune)
-            model->transmitModel().startTune(TransmitModel::PttSource::Dax);
-        else
-            model->transmitModel().stopTune();
-    }, Qt::QueuedConnection);
-
+    if (trx < 0 && tune) {
+        // A malformed start keys nothing; it is answered with the real state.
+        const bool tuning = m_model && m_model->transmitModel().isTuning();
+        return QStringLiteral("tune:%1,%2;").arg(txTrx()).arg(tuning ? "true" : "false");
+    }
+    if (trx < 0) {
+        trx = txTrx();
+    }
+    // TciServer applies it, so the requester is answered with the state the
+    // model reached — a refused start included.
+    m_tuneRequest = TuneRequest{trx, tune};
     return {};
 }
 
@@ -1206,9 +1227,9 @@ QString TciProtocol::cmdSqlEnable(const QStringList& args, bool isSet)
     if (args.size() < 2) return {};
     bool on = false;
     if (!argToBool(args, 1, on)) return {};
-    int level = s->receiveSquelchLevel();
-    QMetaObject::invokeMethod(s, [s, on, level]() { s->setSquelch(on, level); },
-                              Qt::QueuedConnection);
+    auto& pending = (*m_pendingSquelch)[trx];
+    pending.on = on;
+    queueSquelch(s, trx, on, pending.level.value_or(s->receiveSquelchLevel()));
 
     m_pendingNotification = QStringLiteral("sql_enable:%1,%2;")
                                 .arg(trx).arg(on ? "true" : "false");
@@ -1231,13 +1252,21 @@ QString TciProtocol::cmdSqlLevel(const QStringList& args, bool isSet)
     if (args.size() < 2) return {};
     int level = 0;
     if (!argToInt(args, 1, level)) return {};
-    bool on = s->receiveSquelchOn();
-    QMetaObject::invokeMethod(s, [s, on, level]() { s->setSquelch(on, level); },
-                              Qt::QueuedConnection);
+    auto& pending = (*m_pendingSquelch)[trx];
+    pending.level = level;
+    queueSquelch(s, trx, pending.on.value_or(s->receiveSquelchOn()), level);
 
     m_pendingNotification = QStringLiteral("sql_level:%1,%2;")
                                 .arg(trx).arg(level);
     return {};
+}
+
+void TciProtocol::queueSquelch(SliceModel* s, int trx, bool on, int level)
+{
+    QMetaObject::invokeMethod(s, [s, on, level, trx, pending = m_pendingSquelch]() {
+        pending->erase(trx);
+        s->setSquelch(on, level);
+    }, Qt::QueuedConnection);
 }
 
 // ── Volume / Mute ──────────────────────────────────────────────────────────
@@ -1454,6 +1483,12 @@ QString TciProtocol::cmdRxNrEnable(const QStringList& args, bool isSet)
     if (args.size() < 2) return {};
     bool on = false;
     if (!argToBool(args, 1, on)) return {};
+    // A radio with no radio-side NR (HL2, ANAN) cannot turn it on. TCI has no
+    // error reply, so the refusal is the truth broadcast back: NR is off.
+    if (on && m_model && !m_model->radioSideNoiseReductionAvailable()) {
+        m_pendingNotification = QStringLiteral("rx_nr_enable:%1,false;").arg(trx);
+        return {};
+    }
     QMetaObject::invokeMethod(s, [s, on]() { s->setNr(on); },
                               Qt::QueuedConnection);
 
@@ -1478,6 +1513,11 @@ QString TciProtocol::cmdRxAnfEnable(const QStringList& args, bool isSet)
     if (args.size() < 2) return {};
     bool on = false;
     if (!argToBool(args, 1, on)) return {};
+    // Same refusal as rx_nr_enable, where the radio has no auto notch.
+    if (on && m_model && !m_model->radioSideAutoNotchAvailable()) {
+        m_pendingNotification = QStringLiteral("rx_anf_enable:%1,false;").arg(trx);
+        return {};
+    }
     QMetaObject::invokeMethod(s, [s, on]() { s->setAnf(on); },
                               Qt::QueuedConnection);
 
@@ -1510,7 +1550,7 @@ QString TciProtocol::cmdRxApfEnable(const QStringList& args, bool isSet)
     return {};
 }
 
-// ── AetherSDR extensions (DVK record/play) ─────────────────────────────────
+// ── AetherSDR extensions (slice quick-record record/play) ──────────────────
 
 QString TciProtocol::cmdRxRecord(const QStringList& args, bool isSet)
 {

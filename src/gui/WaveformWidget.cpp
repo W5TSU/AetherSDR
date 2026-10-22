@@ -107,7 +107,7 @@ WaveformWidget::WaveformWidget(Profile profile, QWidget* parent)
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setAutoFillBackground(false);
-#if defined(AETHER_GPU_SPECTRUM) && defined(Q_OS_MAC)
+#if defined(AETHER_GPU_SPECTRUM) && defined(Q_OS_MACOS)
     // Unlike the panadapter, every waveform scope lives inside a QScrollArea.
     // Making that child a native NSView while deliberately keeping its
     // ancestors non-native disconnects the native surface from QWidget

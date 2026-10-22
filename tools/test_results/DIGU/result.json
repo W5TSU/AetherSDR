@@ -1,0 +1,36 @@
+{
+  "mode": "DIGU",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "signal",
+      "passed": true,
+      "measured": 62.0,
+      "limit": ">= 20 dB over the noise",
+      "unit": "dB"
+    },
+    {
+      "name": "opposite_sideband",
+      "passed": true,
+      "measured": 43.0,
+      "limit": ">= 25 dB below the tone",
+      "unit": "dB"
+    },
+    {
+      "name": "carrier_suppression",
+      "passed": true,
+      "measured": 27.5,
+      "limit": ">= 20 dB below the tone",
+      "unit": "dB"
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -45.7,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [],
+  "dial_offset_hz": -1281.0
+}

@@ -384,6 +384,10 @@ On a distribution whose Qt is older than the required 6.8 (notably Ubuntu 24.04 
 sudo cmake --install build
 ```
 
+Source installs depend on the Qt location used at build time. If that Qt
+generation is replaced, rebuild and reinstall AetherSDR before pruning the old
+Qt generation.
+
 ---
 
 ## Roadmap

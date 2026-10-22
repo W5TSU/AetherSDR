@@ -42,6 +42,7 @@
 #include <QPointer>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QMap>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QImage>
@@ -1191,6 +1192,17 @@ ResolvedAction matchMenuActionUnconditional(QMenu* menu, const QString& target)
     return {};
 }
 
+// QMainWindow::menuBar() creates a replacement when its original menu bar has
+// been moved into the title-bar layout. Query the existing widget tree instead
+// so automation never alters the native menu ownership while looking it up.
+QList<QMenuBar*> existingMenuBars(QMainWindow* window)
+{
+    if (!window) {
+        return {};
+    }
+    return window->findChildren<QMenuBar*>(QString(), Qt::FindChildrenRecursively);
+}
+
 // Resolve a QAction anywhere in any top-level window's menu bar, regardless of
 // whether the menu is currently open. This is what lets `invoke` drive
 // menu-launched dialogs (AetherControl…/Network…/MQTT…/Radio Setup…/Connect…)
@@ -1198,30 +1210,28 @@ ResolvedAction matchMenuActionUnconditional(QMenu* menu, const QString& target)
 ResolvedAction resolveMenuBarAction(const QString& target)
 {
     const QWidgetList tops = QApplication::topLevelWidgets();
-    // 1. Any QMainWindow's menu bar (Windows/Linux, and macOS when the actions
-    //    remain on the bar). Searched unconditionally so a CLOSED menu resolves.
+    // 1. Existing bars, including the bar embedded in TitleBar on all platforms.
+    //    Searched unconditionally so a CLOSED menu resolves.
     for (QWidget* tlw : tops) {
         auto* mw = qobject_cast<QMainWindow*>(tlw);
-        if (!mw)
-            continue;
-        QMenuBar* mb = mw->menuBar();
-        if (!mb)
-            continue;
-        for (QAction* topAction : mb->actions()) {
-            // A top-level menu title (e.g. "Settings") matches but has no owning
-            // QMenu to route through; its submenu is what carries the leaves.
-            if (actionMatchesTarget(topAction, target))
-                return {topAction, nullptr};
-            if (QMenu* submenu = topAction->menu()) {
-                const ResolvedAction match = matchMenuActionUnconditional(submenu, target);
-                if (match.action)
-                    return match;
+        for (QMenuBar* mb : existingMenuBars(mw)) {
+            for (QAction* topAction : mb->actions()) {
+                // A top-level menu title (e.g. "Settings") matches but has no owning
+                // QMenu to route through; its submenu is what carries the leaves.
+                if (actionMatchesTarget(topAction, target)) {
+                    return {topAction, nullptr};
+                }
+                if (QMenu* submenu = topAction->menu()) {
+                    const ResolvedAction match = matchMenuActionUnconditional(submenu, target);
+                    if (match.action) {
+                        return match;
+                    }
+                }
             }
         }
     }
-    // 2. macOS NATIVE menu bar: Qt reparents each top menu to a TOP-LEVEL QMenu
-    //    that is NOT under a queryable QMenuBar, so the menu-bar walk above finds
-    //    nothing. Walk every top-level QMenu unconditionally to reach those. A
+    // 2. Retain the fallback for menus exposed as top-level QMenu widgets,
+    //    including native menus. Walk them unconditionally to reach closed menus. A
     //    transient context-menu/combo-popup QMenu won't carry our dialog/zoom
     //    labels, so the exact-text match stays unambiguous.
     for (QWidget* tlw : tops) {
@@ -1479,46 +1489,6 @@ bool parseBool(const QString& v)
         || s == QLatin1String("checked");
 }
 
-// Tokenize an identifier or label into lowercased words, splitting on
-// non-alphanumeric separators AND camelCase humps (tuneButton -> [tune, button],
-// aprsSvcWXBOT -> [aprs, svc, wxbot], "Auto-Tune" -> [auto, tune]). The TX-guard
-// fallback matches a deny-word against a WHOLE token, so a cross-token trigram
-// like "cwx" formed by the c in "svc" + "wx" in "wxbot" no longer false-positives
-// as the CWX keyer, while genuine keyers (moxButton, pttSend, "Auto-Tune") still
-// match. This is the anchored replacement for the old bare contains() blocklist
-// that flagged the RX-only APRS weather entry (#3646).
-QStringList identifierTokens(const QString& s)
-{
-    QString spaced;
-    spaced.reserve(s.size() * 2);
-    for (int i = 0; i < s.size(); ++i) {
-        const QChar c = s.at(i);
-        // Break at a lower/digit -> Upper hump (tuneButton -> "tune Button") and
-        // at an acronym -> word hump (WXBot -> "WX Bot"); runs of caps stay whole
-        // (WXBOT -> "wxbot").
-        if (i > 0 && c.isUpper()
-            && (s.at(i - 1).isLower() || s.at(i - 1).isDigit()
-                || (i + 1 < s.size() && s.at(i + 1).isLower())))
-            spaced.append(QLatin1Char(' '));
-        spaced.append(c);
-    }
-    return spaced.toLower().split(QRegularExpression(QStringLiteral("[^a-z0-9]+")),
-                                  Qt::SkipEmptyParts);
-}
-
-// True if any haystack contributes a whole token equal to a deny-word — the
-// anchored TX-guard fallback match.
-bool matchesTxDenyToken(const QStringList& haystacks, const QStringList& deny)
-{
-    for (const QString& h : haystacks) {
-        const QStringList tokens = identifierTokens(h);
-        for (const QString& d : deny)
-            if (tokens.contains(d))
-                return true;
-    }
-    return false;
-}
-
 // TX-safety guard for invoke(): refuse to drive a control that keys the
 // transmitter unless the operator sets AETHER_AUTOMATION_ALLOW_TX. A test bridge
 // must never key a live radio by accident.
@@ -1538,38 +1508,14 @@ bool matchesTxDenyToken(const QStringList& haystacks, const QStringList& deny)
 // fires we log a warning: that control should get an explicit markTxKeying().
 bool isTransmitControl(const QWidget* w)
 {
-    if (w->property(kTxKeyingProperty).toBool())
-        return true;  // authoritative positive marker
-
-    const auto* btn = qobject_cast<const QAbstractButton*>(w);
-    if (!btn)
-        return false;  // sliders / combos / spinboxes can't trigger TX
-
-    if (w->objectName().startsWith(QStringLiteral("panOverlayMessageClose_"))) {
-        return false;  // closes an overlay notification, never keys TX.
-    }
-
-    // Keep the fallback deny-list narrow and aligned with isTransmitAction():
-    // only words that unambiguously mean "keys TX". "tune"/"atu"/"vox" were
-    // dropped because they false-positive on RX-only controls — the "Tune Now"
-    // button (net/spot retune) and "Tune to <spot>" only move the VFO, and a VOX
-    // toggle arms TX rather than keying it. The genuine keying TUNE/ATU buttons
-    // (TxApplet, AtuPreTuneDialog) all carry the authoritative markTxKeying()
-    // marker, which the positive check above already honors, so removing them
-    // here loses no real protection — it just stops blocking RX-only buttons
-    // that happen to contain "tune". (#3918 — "Tune Now" false-positive)
-    static const QStringList kDeny = {
-        QStringLiteral("mox"), QStringLiteral("ptt"),
-        QStringLiteral("transmit"), QStringLiteral("cwx"),
-    };
-    const QStringList hay{w->objectName(), w->accessibleName(), btn->text()};
-    if (matchesTxDenyToken(hay, kDeny)) {
+    // Shared with the keyboard TX activation guard.
+    const TransmitControlMatch match = transmitControlMatch(w);
+    if (match == TransmitControlMatch::NameFallback) {
         qCWarning(lcAutomation).noquote()
-            << "TX guard fell back to name match on" << btn->text()
+            << "TX guard fell back to name match on" << w->property("text").toString()
             << "— add markTxKeying() at its creation site if it keys TX";
-        return true;
     }
-    return false;
+    return match != TransmitControlMatch::None;
 }
 
 bool hasTransmitControlInChain(const QWidget* widget)
@@ -1594,17 +1540,12 @@ bool isTransmitAction(const QAction* action, const QMenu* owner)
         return true;
     }
 
-    static const QStringList kDeny = {
-        QStringLiteral("mox"), QStringLiteral("ptt"),
-        QStringLiteral("transmit"), QStringLiteral("cwx"),
-    };
-
     // QAction labels such as "Tune to <spot>" and tooltips like "Next Tune
     // press transmits..." describe RX tuning or future behavior, not this
     // action keying TX. Keep the fallback narrow (whole-token match only); real
     // keying actions should be marked explicitly with kTxKeyingProperty.
     const QStringList hay{action->objectName(), actionDisplayText(action)};
-    if (matchesTxDenyToken(hay, kDeny)) {
+    if (matchesTxDenyToken(hay, txDenyTokens())) {
         qCWarning(lcAutomation).noquote()
             << "TX guard fell back to QAction name match on"
             << actionDisplayText(action)
@@ -1950,16 +1891,30 @@ QJsonObject radioSnapshot(const RadioModel* r)
     };
 }
 
+QString gpsFixStateName(GpsFixState state)
+{
+    switch (state) {
+    case GpsFixState::ThreeD: return QStringLiteral("3D");
+    case GpsFixState::TwoD: return QStringLiteral("2D");
+    case GpsFixState::TimeOnly: return QStringLiteral("TIME_ONLY");
+    case GpsFixState::NoFix: return QStringLiteral("NO_FIX");
+    case GpsFixState::Unknown: return QStringLiteral("Unknown");
+    }
+    return QStringLiteral("Unknown");
+}
+
 QJsonObject gpsSnapshot(const RadioModel* r)
 {
     return QJsonObject{
         {QStringLiteral("available"), r->hasGpsHardware()
-             || !r->gpsStatus().isEmpty()},
+             || !r->gpsStatus().isEmpty() || r->gpsFixState() != GpsFixState::Unknown},
         {QStringLiteral("status"), r->gpsStatus()},
+        {QStringLiteral("fixState"), gpsFixStateName(r->gpsFixState())},
         // Backend-normalized validity and source (GpsDelta::positionValid /
         // source), so a scenario can assert "usable fix" without parsing
         // family-specific status prose.
         {QStringLiteral("positionValid"), r->gpsPositionValid()},
+        {QStringLiteral("timeValid"), r->gpsTimeValid()},
         {QStringLiteral("source"), r->gpsSource()},
         {QStringLiteral("tracked"), r->gpsTracked()},
         {QStringLiteral("visible"), r->gpsVisible()},
@@ -2167,7 +2122,7 @@ QJsonObject dspEngineSnapshot(const AudioEngine* a)
                                    false},
 #endif
         {"MNR",  a->mnrEnabled(),
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
                                    true},
 #else
                                    false},
@@ -2899,6 +2854,10 @@ bool isReadOnlyRequest(const QString& name, const QString& action)
     }
 
     const QString normalizedAction = action.trimmed().toLower();
+    // The probe constructs only an isolated TransmitModel and touches no session.
+    if (name == QLatin1String("interlock") && action == QLatin1String("probe")) {
+        return true;
+    }
     if (name == QLatin1String("radiocert") && normalizedAction == QLatin1String("persist")) {
         return true;  // snapshot only; the external supervisor owns transitions
     }
@@ -3422,13 +3381,20 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
                 return s.doNotch(a.action, a.value);
             });
 
+        add("interlock", {},
+            "interlock probe source=<tokens> [vox=0|1] [owner=local|other] — isolated production TX-state reconciliation; no radio or device access",
+            parseActionRest,
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doInterlock(a.action, a.value);
+            });
+
         add("gps", {},
-            "gps <fixture|clearfixture> [6000|8000] — disconnected GPS test data",
+            "gps <fixture|fixfixture|clearfixture> [profile|fix] — disconnected GPS test data",
             parseActionRest,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 if (a.action.isEmpty()) {
                     return err(QStringLiteral(
-                        "gps requires an action (fixture|clearfixture)"));
+                        "gps requires an action (fixture|fixfixture|clearfixture)"));
                 }
                 return s.doGps(a.action, a.value);
             });
@@ -7890,6 +7856,13 @@ QJsonObject AutomationServer::doSlice(const QString& action, const QString& arg)
         // LEVEL BEFORE ENABLE, for the reason the AGC branch above gives: the
         // enable setter emits an intent carrying both values, so setting the
         // level first makes one request reach the backend as a coherent pair.
+        // A radio with no radio-side NR / ANF (HL2, ANAN) cannot turn them
+        // on; the setter would only mark the model on.
+        if (on && which == QLatin1String("nr")
+            && !radio->radioSideNoiseReductionAvailable())
+            return err(QStringLiteral("refused: this radio has no radio-side noise reduction"));
+        if (on && which == QLatin1String("anf") && !radio->radioSideAutoNotchAvailable())
+            return err(QStringLiteral("refused: this radio has no auto notch"));
         if (which == QLatin1String("nr")) {
             if (level >= 0) s->setNrLevel(level);
             s->setNr(on);
@@ -8112,6 +8085,41 @@ QJsonObject AutomationServer::doSlice(const QString& action, const QString& arg)
                + QStringLiteral(" (") + sliceActionList() + QStringLiteral(")"));
 }
 
+QJsonObject AutomationServer::doInterlock(const QString& action, const QString& arguments)
+{
+    if (action != QLatin1String("probe")) {
+        return err(QStringLiteral("interlock requires probe source=<tokens> [vox=0|1] [owner=local|other]"));
+    }
+    if (arguments.size() > 192) {
+        return err(QStringLiteral("interlock probe arguments too long"));
+    }
+    QMap<QString, QString> options;
+    const QStringList fields = arguments.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    for (const QString& field : fields) {
+        const qsizetype equals = field.indexOf(QLatin1Char('='));
+        if (equals < 0) {
+            return err(QStringLiteral("interlock probe requires key=value options"));
+        }
+        const QString key = field.left(equals);
+        if ((key != QLatin1String("source") && key != QLatin1String("vox")
+             && key != QLatin1String("owner")) || options.contains(key)) {
+            return err(QStringLiteral("unknown or duplicate interlock probe option"));
+        }
+        options.insert(key, field.mid(equals + 1));
+    }
+    static const QRegularExpression sourcePattern(QStringLiteral("\\A[A-Z0-9_,]{0,128}\\z"));
+    const QString source = options.value(QStringLiteral("source"));
+    const QString vox = options.value(QStringLiteral("vox"), QStringLiteral("0"));
+    const QString owner = options.value(QStringLiteral("owner"), QStringLiteral("local"));
+    if (!options.contains(QStringLiteral("source")) || !sourcePattern.match(source).hasMatch()
+        || (vox != QLatin1String("0") && vox != QLatin1String("1"))
+        || (owner != QLatin1String("local") && owner != QLatin1String("other"))) {
+        return err(QStringLiteral("invalid source, vox or owner for interlock probe"));
+    }
+    return RadioModel::automationInterlockProbe(source, vox == QLatin1String("1"),
+                                               owner == QLatin1String("local"));
+}
+
 QJsonObject AutomationServer::doGps(const QString& action, const QString& format)
 {
     if (!m_radioModel) {
@@ -8125,6 +8133,10 @@ QJsonObject AutomationServer::doGps(const QString& action, const QString& format
     GpsDelta delta;
     if (action == QLatin1String("clearfixture")) {
         delta.status = QString();
+        delta.fixState = GpsFixState::Unknown;
+        delta.positionValid = false;
+        delta.source = QString();
+        delta.date = QString();
         delta.tracked = 0;
         delta.visible = 0;
         delta.grid = QString();
@@ -8144,10 +8156,35 @@ QJsonObject AutomationServer::doGps(const QString& action, const QString& format
         return QJsonObject{{QStringLiteral("ok"), true},
                            {QStringLiteral("gps"), QStringLiteral("clearfixture")}};
     }
+    if (action == QLatin1String("fixfixture")) {
+        const QString state = format.toUpper();
+        if (state == QLatin1String("3D")) {
+            delta.fixState = GpsFixState::ThreeD;
+        } else if (state == QLatin1String("2D")) {
+            delta.fixState = GpsFixState::TwoD;
+        } else if (state == QLatin1String("TIME_ONLY")) {
+            delta.fixState = GpsFixState::TimeOnly;
+        } else if (state == QLatin1String("NO_FIX")) {
+            delta.fixState = GpsFixState::NoFix;
+        } else if (state == QLatin1String("UNKNOWN")) {
+            delta.fixState = GpsFixState::Unknown;
+        } else {
+            return err(QStringLiteral("gps fixfixture requires 3D, 2D, TIME_ONLY, NO_FIX or UNKNOWN"));
+        }
+        QString error;
+        if (!m_radioModel->automationApplyGpsFixture(
+                delta, m_radioModel->oscState(), m_radioModel->oscSetting(),
+                m_radioModel->oscLocked(), m_radioModel->gpsNtpServerAddress(), &error)) {
+            return err(error);
+        }
+        return QJsonObject{{QStringLiteral("ok"), true},
+                           {QStringLiteral("gps"), QStringLiteral("fixfixture")},
+                           {QStringLiteral("snapshot"), gpsSnapshot(m_radioModel)}};
+    }
     if (action != QLatin1String("fixture")) {
         return err(QStringLiteral(
             "unknown gps action: ") + action
-            + QStringLiteral(" (fixture|clearfixture)"));
+            + QStringLiteral(" (fixture|fixfixture|clearfixture)"));
     }
 
     const QString profile = format.trimmed().toLower();
@@ -8157,6 +8194,7 @@ QJsonObject AutomationServer::doGps(const QString& action, const QString& format
     }
 
     delta.status = QStringLiteral("Locked");
+    delta.fixState = GpsFixState::Unknown;
     // The dashboard, APRS beacon and clock agreement gate on the normalized
     // validity flag, not on the "Locked" prose, so the fixture must carry it.
     delta.positionValid = true;
@@ -9715,10 +9753,9 @@ QJsonArray describeMenuActions(QMenu* menu)
     return arr;
 }
 
-// The app's top-level menus, coping with BOTH a regular QMenuBar and the macOS
-// NATIVE menu bar (where each menu is reparented to a top-level QMenu widget,
-// invisible to QMainWindow::menuBar()->actions()). De-duplicated, in discovery
-// order. On macOS this also surfaces submenus as their own entries — harmless.
+// The app's menus from existing bars (including TitleBar's nested bar), with a
+// fallback for named top-level QMenu widgets. De-duplicated, in discovery order.
+// The fallback can also surface submenus as their own entries.
 QList<QPair<QString, QMenu*>> collectTopMenus()
 {
     QList<QPair<QString, QMenu*>> out;
@@ -9726,12 +9763,12 @@ QList<QPair<QString, QMenu*>> collectTopMenus()
     const QWidgetList tops = QApplication::topLevelWidgets();
     for (QWidget* tlw : tops) {
         auto* mw = qobject_cast<QMainWindow*>(tlw);
-        if (!mw || !mw->menuBar())
-            continue;
-        for (QAction* a : mw->menuBar()->actions()) {
-            if (QMenu* sub = a->menu(); sub && !seen.contains(sub)) {
-                seen.insert(sub);
-                out.append({actionDisplayText(a), sub});
+        for (QMenuBar* menuBar : existingMenuBars(mw)) {
+            for (QAction* a : menuBar->actions()) {
+                if (QMenu* sub = a->menu(); sub && !seen.contains(sub)) {
+                    seen.insert(sub);
+                    out.append({actionDisplayText(a), sub});
+                }
             }
         }
     }

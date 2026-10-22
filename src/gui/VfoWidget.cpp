@@ -1,4 +1,5 @@
 #include "VfoWidget.h"
+#include "AntennaChoiceGate.h"
 #include "ScopedChildWidget.h"
 #include "AgcModeAvailability.h"
 #include "FmTonePresentation.h"
@@ -790,6 +791,20 @@ void VfoWidget::buildUI()
             return;
         }
         QPointer<SliceModel> slice = m_slice;
+        // Nothing real to choose -- the radio published no port and no Kiwi
+        // receiver is on offer: refuse visibly instead of opening a menu of
+        // invented ANT1/ANT2 whose pick moves the label and nothing else.
+        {
+            const bool connected = m_radioModel && m_radioModel->isConnected();
+            const bool published = !slice->rxAntennaList().isEmpty()
+                || (m_radioModel && !m_radioModel->antennaList().isEmpty());
+            const bool virtualAntennas = m_kiwiSdrManager
+                && !m_kiwiSdrManager->virtualAntennaTokens().isEmpty();
+            if (rxAntennaChoiceRefused(connected, published, virtualAntennas)) {
+                emit antennaChoiceRefused(false);
+                return;
+            }
+        }
         QStringList menuOptions = rxAntennaOptions();
         if (m_kiwiSdrManager) {
             for (const QString& ant : m_kiwiSdrManager->virtualAntennaTokens()) {
@@ -848,6 +863,17 @@ void VfoWidget::buildUI()
         // event loop, so widget teardown or a slice change while the popup is
         // open cannot strand a suspended frame (#5566).
         QPointer<SliceModel> slice = m_slice;
+        // Same rule for TX, without the Kiwi escape: a virtual receiver is
+        // never a transmit destination (AntennaChoiceGate.h).
+        {
+            const bool connected = m_radioModel && m_radioModel->isConnected();
+            const bool published = !m_slice->txAntennaList().isEmpty()
+                || (m_radioModel && !m_radioModel->antennaList().isEmpty());
+            if (txAntennaChoiceRefused(connected, published)) {
+                emit antennaChoiceRefused(true);
+                return;
+            }
+        }
         QMenu* menu = new QMenu(m_txAntBtn);
         connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
         const QStringList options = txAntennaOptions();
@@ -2015,6 +2041,7 @@ void VfoWidget::buildTabContent()
             lvlHb->addWidget(m_dspLevelLabel);
 
             m_dspLevelSlider = new GuardedSlider(Qt::Horizontal);
+            m_dspLevelSlider->setObjectName(QStringLiteral("dspLevelSlider"));
             m_dspLevelSlider->setRange(0, 100);
             applyPrimarySliderStyle(m_dspLevelSlider);
             lvlHb->addWidget(m_dspLevelSlider, 1);
@@ -2040,6 +2067,18 @@ void VfoWidget::buildTabContent()
                     case LvlNone: break;
                 }
             });
+
+            // A readback above the request ceiling leaves the thumb at the
+            // endpoint. Explicit activation must still request that endpoint.
+            const auto requestNrsEndpoint = [this] {
+                if (!m_updatingFromModel && m_slice && m_dspLevelTarget == LvlNrs
+                    && m_slice->nrsLevel() > m_slice->nrsLevelMaximum()
+                    && m_dspLevelSlider->sliderPosition() == m_slice->nrsLevelMaximum()) {
+                    m_slice->setNrsLevel(m_slice->nrsLevelMaximum());
+                }
+            };
+            connect(m_dspLevelSlider, &QSlider::actionTriggered, this, requestNrsEndpoint);
+            connect(m_dspLevelSlider, &QSlider::sliderReleased, this, requestNrsEndpoint);
 
             // Keep the panel compact when no leveled DSP is active. The row
             // appears only when it has a real target; setDspLevelTarget()
@@ -4476,6 +4515,11 @@ void VfoWidget::setSlice(SliceModel* slice)
     wireLevelEcho(&SliceModel::anfLevelChanged,  LvlAnf);
     wireLevelEcho(&SliceModel::nrlLevelChanged,  LvlNrl);
     wireLevelEcho(&SliceModel::nrsLevelChanged,  LvlNrs);
+    connect(m_slice, &SliceModel::nrsLevelMaximumChanged, this, [this](int) {
+        if (m_dspLevelTarget == LvlNrs) {
+            setDspLevelTarget(LvlNrs);
+        }
+    });
     wireLevelEcho(&SliceModel::nrfLevelChanged,  LvlNrf);
     wireLevelEcho(&SliceModel::anflLevelChanged, LvlAnfl);
     wireLevelEcho(&SliceModel::mnLevelChanged,   LvlMn);
@@ -5379,8 +5423,10 @@ void VfoWidget::setDspLevelTarget(DspLevelTarget t)
         case LvlNone: return;
     }
     m_dspLevelLabel->setText(name);
+    m_dspLevelSlider->setAccessibleName(tr("%1 level").arg(name));
     {
         QSignalBlocker b(m_dspLevelSlider);
+        m_dspLevelSlider->setRange(0, t == LvlNrs ? m_slice->nrsLevelMaximum() : 100);
         m_dspLevelSlider->setValue(level);
     }
     m_dspLevelValue->setText(QString::number(level));

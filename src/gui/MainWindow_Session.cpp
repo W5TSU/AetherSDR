@@ -29,6 +29,7 @@
 #include "ExperimentalRadioSupport.h"
 #include "FloatingRestorePolicy.h"
 #include "FramelessMessageBox.h"
+#include "MixerControlAvailability.h"
 #include "PhoneCwApplet.h"
 #include "SpectrumOverlayMenu.h"
 #include "RfGainPresentation.h"
@@ -42,7 +43,7 @@
 #include "core/CwxLocalKeyer.h"
 #include "core/IambicKeyer.h"
 #include "core/PerfTelemetry.h"
-#if defined(Q_OS_MAC)
+#if defined(Q_OS_MACOS)
 #include "core/UlanziDialMacOSManager.h"
 #include "core/VirtualAudioBridge.h"
 #elif defined(HAVE_PIPEWIRE)
@@ -1120,7 +1121,7 @@ void MainWindow::wireRadioModel()
     // Start/stop PC audio TX when mic_selection changes
     connect(&m_radioModel.transmitModel(), &TransmitModel::micStateChanged,
             this, [this]() {
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
         const bool allowBluetoothTelephonyOutput =
             m_radioModel.transmitModel().micSelection() == "PC";
         QMetaObject::invokeMethod(m_audio, [this, allowBluetoothTelephonyOutput]() {
@@ -1171,7 +1172,7 @@ void MainWindow::wireRadioModel()
             }
         }
     });
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     const bool allowBluetoothTelephonyOutput =
         m_radioModel.transmitModel().micSelection() == "PC";
     QMetaObject::invokeMethod(m_audio, [this, allowBluetoothTelephonyOutput]() {
@@ -1393,7 +1394,7 @@ void MainWindow::wireRadioModel()
             m_audio->setTransmitting(tx);
 #endif
         }
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
         if (m_daxBridge)
             m_daxBridge->setTransmitting(tx);
 #endif
@@ -1423,7 +1424,7 @@ void MainWindow::wireRadioModel()
                 m_audio->setTransmitting(false);
 #endif
             }
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
             if (m_daxBridge)
                 m_daxBridge->setTransmitting(false);
 #endif
@@ -1546,7 +1547,8 @@ void MainWindow::wirePanLifecycle()
     connect(&m_radioModel, &RadioModel::panFeedSpectrumReady,
             this, [this, profileLoadFrameReady](quint32 streamId,
                                                 const QVector<float>& bins,
-                                                qint64 emittedNs) {
+                                                qint64 emittedNs,
+                                                const SpectrumDecodeScale& decodeScale) {
         if (m_shuttingDown || !m_panStack) {
             return;
         }
@@ -1558,7 +1560,7 @@ void MainWindow::wirePanLifecycle()
         deferReceivePresentation(
             ReceivePresentationSource::Flex,
             ReceivePresentationSurface::Spectrum,
-            [this, profileLoadFrameReady, streamId, bins]() {
+            [this, profileLoadFrameReady, streamId, bins, decodeScale]() {
                 if (m_shuttingDown || !m_panStack) {
                     return;
                 }
@@ -1569,7 +1571,7 @@ void MainWindow::wirePanLifecycle()
                                                        bins.size())) {
                                 return;
                             }
-                            sw->updateSpectrum(bins);
+                            sw->updateSpectrum(bins, decodeScale);
                             finishPanadapterConnectionAnimation();
                         }
                         return;
@@ -1583,7 +1585,7 @@ void MainWindow::wirePanLifecycle()
                 if (m_radioModel.panadapters().isEmpty()
                     && !profileLoadRadioStateWritesHeld()) {
                     if (auto* sw = spectrum()) {
-                        sw->updateSpectrum(bins);
+                        sw->updateSpectrum(bins, decodeScale);
                         finishPanadapterConnectionAnimation();
                     }
                 } else {
@@ -1907,6 +1909,9 @@ void MainWindow::wirePanLifecycle()
                 // Prime the spectrum widget with the pan's current dBm range on
                 // reconnect so the noise-floor auto-adjust starts from the correct
                 // position. (#3034)
+                // A radio that stores no range hands back a model at its
+                // built-in -130..-40 here; the remembered one goes in first.
+                restoreClientOwnedDbmRange(pan, sw->panIndex());
                 sw->setDbmRange(pan->minDbm(), pan->maxDbm());
             }
             for (SliceModel* slice : m_radioModel.slices()) {
@@ -2156,10 +2161,11 @@ void MainWindow::wirePanLifecycle()
         markProfileLoadPanDimensionsReady(panId, yPixels);
         if (auto* sw = m_panStack->spectrum(panId)) {
             sw->prepareForFftPixelScaleChange();
+            sw->setEncoderYPixels(yPixels);
         }
     });
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     auto repushPanDimensions = [this]() {
         QTimer::singleShot(200, this, [this]() {
             if (m_shuttingDown || !m_panStack) {
@@ -2615,7 +2621,7 @@ void MainWindow::wireDaxIq()
                 &m_radioModel.daxIqModel(), &DaxIqModel::setSampleRate);
     }
 
-#if defined(Q_OS_MAC) || defined(HAVE_PIPEWIRE)
+#if defined(Q_OS_MACOS) || defined(HAVE_PIPEWIRE)
     // DAX enable moved to Radio Setup ▸ EXTERNAL CONTROL ▸ DAX; the tile's
     // "DAX settings…" button opens it. Start/stop is driven from
     // wireRadioSetupDialogSignals() on externalControlChanged().
@@ -2780,7 +2786,7 @@ bool MainWindow::startAutomationBridge(const QString& sockName)
         QThread* backendThread = m_dialBackend->thread();
         bool queued = false;
         if (lifecycle) {
-#if !defined(Q_OS_LINUX) && !defined(Q_OS_MAC) && !(defined(Q_OS_WIN) && defined(HAVE_HIDAPI))
+#if !defined(Q_OS_LINUX) && !defined(Q_OS_MACOS) && !(defined(Q_OS_WIN) && defined(HAVE_HIDAPI))
             return QJsonObject{
                 {QStringLiteral("ok"), false},
                 {QStringLiteral("supported"), false},
@@ -2820,7 +2826,7 @@ bool MainWindow::startAutomationBridge(const QString& sockName)
         // queued means accepted for delivery, not completed. A later thread
         // shutdown can still prevent delivery; do not report device state from
         // before an asynchronous lifecycle request as its outcome.
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
         QJsonObject snapshot = m_dialBackend->diagnostics();
         snapshot[QStringLiteral("operation")] = diagnostic;
         snapshot[QStringLiteral("enabled")] = dialEnabled();
@@ -3006,6 +3012,13 @@ void MainWindow::applyTxAudioCapabilities(bool connected, const RadioCapabilitie
     if (connected) {
         // Observation only: never restore a client setting into DATA OFF MOD.
         m_radioModel.notePcAudioEnabled(pcAudioEnabled);
+    }
+    // A radio with no command plane has no headphone output: dim the title
+    // bar's headphone pair with its reason (MixerControlAvailability.h).
+    // Availability only -- neither edge writes the slider or the mute.
+    if (m_titleBar) {
+        m_titleBar->setHeadphoneAvailable(
+            headphoneControlsAvailable(connected, m_radioModel.hasCommandPlane()));
     }
 }
 

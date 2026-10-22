@@ -316,6 +316,11 @@ RadioCapabilities SimBackend::capabilities() const
     caps.hasManualNotch = false;
     caps.hasTransmitFrequencyCheck = false;
     caps.hasDdcPanEdgeRolloff = false;   // synthetic scene, no real receive chain
+    // The demo vends a RadioConnection (RFC #4288 Route A) but understands no
+    // `band_zoom=`/`segment_zoom=`, so it declares absence explicitly -- the
+    // case a bare hasCommandPlane() test would have got wrong.
+    caps.panZoomModes = std::nullopt;
+    caps.panFrameRateShaping = std::nullopt;  // demo; no client owner is declared for FFT FPS
     // The synthesised stream has no impulse noise in it, and the demo has no IQ
     // path this host demodulates — there is nothing to blank.
     caps.hasHostNoiseBlanker = false;
@@ -332,6 +337,7 @@ RadioCapabilities SimBackend::capabilities() const
     // The demo has no transmitter and no radio to ship audio to.
     caps.takesTxAudioOverSeam = false;
     caps.hasRadioPttReadback = false;
+    caps.radioPttObservation = std::nullopt;
     // Continuous/unknown — the operator keeps their own width list.
     caps.rxFilterWidthsHz = {};
     caps.hasTxFilterControls = false;   // RX-only; no transmit passband exists
@@ -365,8 +371,9 @@ RadioCapabilities SimBackend::capabilities() const
     caps.hasSupplyVoltageTelemetry = false;   // synthetic scene; no PA rail
     caps.hasPaTemperatureTelemetry = false;   // synthetic scene; no PA temperature
     caps.hasPaCurrentTelemetry = false;       // synthetic scene; no PA current
-    caps.speechProcessorLevelMaximum = 2;
-    caps.speechProcessorLabel = QStringLiteral("PROC");
+    caps.speechProcessorControl = std::nullopt;
+    caps.voxControl = std::nullopt;
+    caps.txMonitorControl = std::nullopt;
     caps.hasMainFanTelemetry = false;         // synthetic scene; no hardware fan
     // The demo radio regenerates its synthetic scene on every connect; there
     // is no operating state worth resurrecting across sessions.

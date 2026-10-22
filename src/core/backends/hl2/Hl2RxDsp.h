@@ -66,6 +66,11 @@ public:
                   "RX filter taps no longer allow a 50 Hz notch; the width "
                   "presets in the TNF menu assume one.");
 
+    // RXA panel gain, applied after the AGC: unity removes WDSP's x4, which put
+    // every HL2 mode 12.04 dB past the AGC's level (#5942). Bandpass, speak and
+    // mpeak still run between the AGC and the panel, so this bounds no peak.
+    static constexpr double kRxPanelGain = 1.0;
+
     struct Config {
         int inputSampleRateHz = 48000;   // HL2 IQ sample rate
         // Demodulated-audio rate. 24 kHz because that is AudioEngine's native
@@ -90,7 +95,9 @@ public:
         double maximumAgcGainDb = 39.0;   // = slice default 65 * 0.6
         // false (live): processIq is non-blocking — real-time input paces WDSP's
         // async worker and audio flows with ~1 block latency. true: processIq
-        // waits for each output block (deterministic for a burst/offline feed).
+        // waits for each output block. That does not make a burst feed
+        // reproducible: flush_iobuffs() drains with a 1 ms timed wait, so the
+        // r1/r2 phase is fixed per channel open, not per run (#5629).
         bool blockForOutput = false;
     };
 
@@ -345,6 +352,7 @@ public:
     // therefore stays running at constant latency and contains nothing but
     // silence when transmit ends.
     Q_INVOKABLE void setAudioMuted(bool muted);
+    [[nodiscard]] bool isAudioMuted() const noexcept { return m_audioMuted; }
     [[nodiscard]] bool isConfigured() const noexcept { return m_channel != nullptr; }
 
     [[nodiscard]] std::size_t channelOutputBlockSize() const noexcept

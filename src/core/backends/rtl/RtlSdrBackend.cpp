@@ -4,6 +4,7 @@
 #include "core/backends/RadioDelta.h"
 #include "core/backends/SliceDelta.h"
 
+#include <QPointer>
 #include <QDebug>
 
 #include <rtl-sdr.h>
@@ -115,11 +116,15 @@ RadioCapabilities RtlSdrBackend::capabilities() const
     c.hostModulates = false;  // CRITICAL: must not open mic on connect (#4449)
     // transmitDriveControl absent: no transmitter, so no drive to own (#5518).
     c.hasRadioPttReadback = false;  // receive-only: nothing to key, nothing to read back
+    c.radioPttObservation = std::nullopt;
     c.hasFmRepeaterOffset = false;
     c.hasCwTune = false;
     c.twoToneGenerator = std::nullopt;  // receive only; there is no transmitter.
+    c.panZoomModes = std::nullopt;      // no command plane, no per-pan zoom flags.
     c.hasAmCarrierLevel = false;
-    c.hasVoxDelay = false;
+    c.voxControl = std::nullopt;  // receive only
+    c.speechProcessorControl = std::nullopt;
+    c.txMonitorControl = std::nullopt;
     c.hasAgcThreshold = false;
     c.hasModeIndependentSquelch = false;
     c.agcModes = {QStringLiteral("off"), QStringLiteral("slow"),
@@ -163,6 +168,15 @@ RadioCapabilities RtlSdrBackend::capabilities() const
                             | RadioCapabilities::ClientSettingsDomain::SpanRate
                             | RadioCapabilities::ClientSettingsDomain::RfGain
                             | RadioCapabilities::ClientSettingsDomain::Memories;
+
+    // Bins are absolute: 20*log10(mag/kFftSize) on raw ADC magnitudes, emitted
+    // directly. The axis is dBFS relabelled, so not calibrated dBm.
+    PanAmplitudeModel amplitude;
+    amplitude.calibratedDbm = false;
+    amplitude.binsAbsolute = true;
+    amplitude.clientPersistsDbmRange = false;  // no client owner is declared
+    c.panAmplitude = amplitude;
+    c.panFrameRateShaping = std::nullopt;  // no client owner is declared for FFT FPS
 
     // Vendor extensions
     c.extensions["rtl"] = QVariantMap{{"serial", m_serial}};
@@ -377,25 +391,7 @@ void RtlSdrBackend::connectRadio(const RadioConnectRequest& request)
         ddcEngine->setSliceFilter(m_sliceFilterLow, m_sliceFilterHigh);
     }
 
-    // Relay worker/DDC signals to IRadioBackend outputs via cross-thread queued connection
-    connect(m_worker.get(), &RtlSdrWorker::spectrumFrameReady,
-            this, &IRadioBackend::spectrumFrameReady);
-    connect(m_worker.get(), &RtlSdrWorker::waterfallRowReady,
-            this, &IRadioBackend::waterfallRowReady);
-    connect(m_worker.get(), &RtlSdrWorker::audioFrameReady,
-            this, [this](const QByteArray& pcm) {
-                emit audioFrameReady(pcm);
-                emit sliceAudioFrameReady(0, pcm);
-            });
-    connect(m_worker.get(), &RtlSdrWorker::readError,
-            this, [this](const QString& err) {
-                emit connectionError(err);
-                disconnectRadio();
-            });
-    connect(m_worker.get(), &RtlSdrWorker::controlApplied,
-            this, &RtlSdrBackend::handleControlApplied);
-    connect(m_worker.get(), &RtlSdrWorker::controlFailed,
-            this, &RtlSdrBackend::handleControlFailed);
+    wireWorker();
 
     m_worker->startReading();
 
@@ -403,6 +399,48 @@ void RtlSdrBackend::connectRadio(const RadioConnectRequest& request)
     m_connected = true;
     emit connected();
     emitInitialState();
+}
+
+void RtlSdrBackend::wireWorker()
+{
+    // A worker left running by disconnectRadio() (stopReading() failed) stays
+    // connected here, so spectrum and waterfall carry a producer check:
+    // nothing from a stranded worker reaches the seam after disconnected().
+    connect(m_worker.get(), &RtlSdrWorker::spectrumFrameReady,
+            this, [this, producer = QPointer<RtlSdrWorker>(m_worker.get())](int panId,
+                                                                          const QByteArray& frame) {
+                if (!m_connected || !producer || producer.data() != m_worker.get()) {
+                    return;
+                }
+                emit spectrumFrameReady(panId, frame);
+            });
+    connect(m_worker.get(), &RtlSdrWorker::waterfallRowReady,
+            this, [this, producer = QPointer<RtlSdrWorker>(m_worker.get())](int panId,
+                                                                          const QByteArray& row) {
+                if (!m_connected || !producer || producer.data() != m_worker.get()) {
+                    return;
+                }
+                emit waterfallRowReady(panId, row);
+            });
+    connect(m_worker.get(), &RtlSdrWorker::audioFrameReady,
+            this, [this](const QByteArray& pcm) {
+                emit audioFrameReady(pcm);
+                emit sliceAudioFrameReady(0, pcm);
+            });
+    // readError is queued to this object, so deleting the worker does not drop
+    // one posted just before a disconnect; gate it like spectrum.
+    connect(m_worker.get(), &RtlSdrWorker::readError,
+            this, [this, producer = QPointer<RtlSdrWorker>(m_worker.get())](const QString& err) {
+                if (!m_connected || !producer || producer.data() != m_worker.get()) {
+                    return;
+                }
+                emit connectionError(err);
+                disconnectRadio();
+            });
+    connect(m_worker.get(), &RtlSdrWorker::controlApplied,
+            this, &RtlSdrBackend::handleControlApplied);
+    connect(m_worker.get(), &RtlSdrWorker::controlFailed,
+            this, &RtlSdrBackend::handleControlFailed);
 }
 
 void RtlSdrBackend::disconnectRadio()

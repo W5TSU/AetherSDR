@@ -28,6 +28,14 @@
 #include <array>
 #include <cstdio>
 
+namespace AetherSDR::hl2 {
+// Socket-free access to the one-shot queue and the running flag (#4579 / #6014).
+struct MetisClientTestAccess {
+    static std::size_t oneShotQueued(const MetisClient& c) { return c.m_oneShot.size(); }
+    static void setStreaming(MetisClient& c) { c.m_running = true; }
+};
+}  // namespace AetherSDR::hl2
+
 using namespace AetherSDR::hl2;
 
 static int g_failures = 0;
@@ -50,6 +58,16 @@ static bool isConfigBank(const std::uint8_t* cc)
     return static_cast<std::uint8_t>(cc[0] & ~kC0MoxBit) == kC0Config;
 }
 static int rateCodeOf(const std::uint8_t* cc) { return cc[1] & 0x03; }
+static std::uint8_t addrOf(const std::uint8_t* cc)
+{
+    return static_cast<std::uint8_t>(cc[0] & ~kC0MoxBit);
+}
+static std::uint32_t payloadOf(const std::uint8_t* cc)
+{
+    return (std::uint32_t(cc[1]) << 24) | (std::uint32_t(cc[2]) << 16)
+         | (std::uint32_t(cc[3]) << 8) | std::uint32_t(cc[4]);
+}
+static bool paEnabledIn(const std::uint8_t* cc) { return (cc[2] & 0x08) != 0; }
 // Open-collector outputs are C2[7:1] -- the one-bit shift ccConfig() applies.
 static std::uint8_t ocByteOf(const std::uint8_t* cc)
 {
@@ -130,6 +148,126 @@ int main(int argc, char** argv)
             survived = survived || isConfigBank(bank(pkt, 1));
         }
         check(!survived, "nothing a disconnected band change queued survives into the next session");
+    }
+
+    // ---- 2. no one-shot bank is queued while stopped (upstream #6014) ----
+    //
+    // m_oneShot survives stop() and start(), so a bank queued while stopped
+    // would go out in the next session's priming burst. The values are kept
+    // (the next session restates them); only the wire write is withheld.
+    {
+        constexpr std::uint32_t kRxHz = 14'074'000;
+        constexpr std::uint32_t kTxHz = 14'076'000;
+        constexpr int kDrive = 200;
+
+        MetisClient c;                          // never started: m_running is false
+        c.enableTransmit(true);                 // so the drive is not clamped to 0
+        c.setRxFrequencyHz(kRxHz);
+        c.setTxFrequencyHz(kTxHz);
+        c.setTxDriveLevel(kDrive);
+        check(MetisClientTestAccess::oneShotQueued(c) == 0,
+              "stopped: the live-control setters queue no one-shot bank");
+
+        MetisClientTestAccess::setStreaming(c);
+        const Ep2 first = c.buildNextControlPacket();
+        check(addrOf(bank(first, 1)) == kC0Rx1Freq && payloadOf(bank(first, 1)) == kRxHz,
+              "the first frame of the next session carries the new RX1 frequency, "
+              "from the rotation");
+        bool sawTxFreq = false, sawDrive = false, sawPa = false;
+        const auto scan = [&](const Ep2& pkt) {
+            for (int w = 0; w < 2; ++w) {
+                const std::uint8_t* cc = bank(pkt, w);
+                sawTxFreq = sawTxFreq || addrOf(cc) == kC0TxFreq;
+                if (addrOf(cc) == kC0TxDrive) {
+                    sawDrive = true;
+                    sawPa = sawPa || paEnabledIn(cc);
+                }
+            }
+        };
+        scan(first);
+        for (int i = 0; i < 16; ++i)            // several rotations past the priming burst
+            scan(c.buildNextControlPacket());
+        check(!sawTxFreq, "no TX frequency bank set while stopped reaches the next session");
+        check(!sawDrive, "no drive bank set while stopped reaches the next session");
+        check(!sawPa, "the PA enable asked for while stopped is not on the wire");
+    }
+
+    // ---- 3. while running, each setter is on the next frame ----
+    {
+        constexpr std::uint32_t kRxHz = 7'074'000;
+        constexpr std::uint32_t kTxHz = 7'076'000;
+        constexpr int kDrive = 120;
+
+        MetisClient c;
+        c.enableTransmit(true);
+        MetisClientTestAccess::setStreaming(c);
+
+        c.setTxFrequencyHz(kTxHz);
+        const Ep2 tx = c.buildNextControlPacket();
+        check(addrOf(bank(tx, 1)) == kC0TxFreq && payloadOf(bank(tx, 1)) == kTxHz,
+              "running: a TX frequency change is on the next frame");
+
+        c.setTxDriveLevel(kDrive);
+        const Ep2 drive = c.buildNextControlPacket();
+        check(addrOf(bank(drive, 1)) == kC0TxDrive && bank(drive, 1)[1] == kDrive
+                  && paEnabledIn(bank(drive, 1)),
+              "running: a drive change is on the next frame, PA enabled");
+
+        check(MetisClientTestAccess::oneShotQueued(c) == 0, "running: nothing else was queued");
+        c.setRxFrequencyHz(kRxHz);
+        check(MetisClientTestAccess::oneShotQueued(c) == 1,
+              "running: an RX frequency change queues exactly one bank");
+    }
+
+    // ---- 4. stop() mid-queue drops the drive and IO-board banks ----
+    {
+        constexpr std::uint32_t kRxHz = 10'136'000;
+        constexpr std::uint32_t kTxHz = 10'138'000;
+        constexpr int kDrive = 180;
+
+        MetisClient c;
+        c.enableTransmit(true);
+        MetisClientTestAccess::setStreaming(c);
+        c.setTxFrequencyHz(kTxHz);
+        c.setRxFrequencyHz(kRxHz);
+        c.setTxDriveLevel(kDrive);              // 0x09, PA enabled
+        c.setIoBoardTxFrequencyHz(kTxHz);       // five I2C banks
+        check(MetisClientTestAccess::oneShotQueued(c) == 8,
+              "running: TX NCO, RX NCO, a drive bank and five I2C banks queued");
+
+        c.stop();                               // before a single frame drained
+        check(MetisClientTestAccess::oneShotQueued(c) == 2,
+              "stopped mid-queue: only the TX and RX NCO banks survive stop()");
+        MetisClientTestAccess::setStreaming(c);
+
+        bool sawDrive = false, sawPa = false, sawI2c = false;
+        for (int i = 0; i < 8; ++i) {
+            const Ep2 pkt = c.buildNextControlPacket();
+            for (int w = 0; w < 2; ++w) {
+                const std::uint8_t* cc = bank(pkt, w);
+                if (addrOf(cc) == kC0TxDrive) {
+                    sawDrive = true;
+                    sawPa = sawPa || paEnabledIn(cc);
+                }
+                sawI2c = sawI2c || addrOf(cc) == kC0I2c2;
+            }
+        }
+        check(!sawDrive, "stopped mid-queue: no drive bank of the ended session reaches the next");
+        check(!sawPa, "stopped mid-queue: the ended session's PA enable is not on the wire");
+        check(!sawI2c, "stopped mid-queue: the IO board write does not finish in the next session");
+    }
+
+    // ---- 5. ADC dither / random queue no CONFIG snapshot (#4579) ----
+    {
+        MetisClient c;
+        MetisClientTestAccess::setStreaming(c);
+        c.setAdcDither(true);
+        c.setAdcRandom(true);
+        check(MetisClientTestAccess::oneShotQueued(c) == 0,
+              "dither and random ride live bank A: no CONFIG copy is queued");
+        const Ep2 pkt = c.buildNextControlPacket();
+        check(isConfigBank(bank(pkt, 0)), "bank A carries the config register");
+        check(!isConfigBank(bank(pkt, 1)), "bank B carries no stale CONFIG snapshot");
     }
 
     if (g_failures == 0)

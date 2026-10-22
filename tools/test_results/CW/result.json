@@ -1,0 +1,52 @@
+{
+  "mode": "CW",
+  "status": "pass",
+  "checks": [
+    {
+      "name": "signal",
+      "passed": true,
+      "measured": 69.3,
+      "limit": ">= 20 dB over the noise",
+      "unit": "dB"
+    },
+    {
+      "name": "decode",
+      "passed": true,
+      "measured": null,
+      "limit": "decodes to 'TEST'",
+      "unit": ""
+    },
+    {
+      "name": "carrier_offset",
+      "passed": true,
+      "measured": 4.6,
+      "limit": "within 50 Hz of the dial",
+      "unit": "Hz"
+    },
+    {
+      "name": "dit_length",
+      "passed": true,
+      "measured": 84.4,
+      "limit": "80 ms +/- 15 %",
+      "unit": "ms"
+    },
+    {
+      "name": "width",
+      "passed": true,
+      "measured": 290.0,
+      "limit": "<= 400 Hz at -40 dB (key clicks)",
+      "unit": "Hz"
+    },
+    {
+      "name": "spurious",
+      "passed": true,
+      "measured": -55.7,
+      "limit": "report-only (flagged above -40 dBc)",
+      "unit": "dBc"
+    }
+  ],
+  "notes": [
+    "decoded 'TEST'"
+  ],
+  "dial_offset_hz": -1262.1
+}

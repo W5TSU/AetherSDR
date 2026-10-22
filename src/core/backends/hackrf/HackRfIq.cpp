@@ -20,9 +20,13 @@ void unpackRxIq(const std::uint8_t* raw, std::size_t byteCount,
 
 void packTxIq(const std::vector<std::complex<float>>& in, std::uint8_t* raw)
 {
+    // Non-finite first: a NaN passes std::clamp (both comparisons are false)
+    // and lround() of it is unspecified, so a NaN out of the modulator would
+    // put an arbitrary byte on the air. Zero is silence.
+    const auto finite = [](float v) { return std::isfinite(v) ? v : 0.0f; };
     for (std::size_t i = 0; i < in.size(); ++i) {
-        const float re = std::clamp(in[i].real(), -1.0f, 1.0f);
-        const float im = std::clamp(in[i].imag(), -1.0f, 1.0f);
+        const float re = std::clamp(finite(in[i].real()), -1.0f, 1.0f);
+        const float im = std::clamp(finite(in[i].imag()), -1.0f, 1.0f);
         raw[2 * i]     = static_cast<std::uint8_t>(static_cast<std::int8_t>(std::lround(re * 127.0f)));
         raw[2 * i + 1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(std::lround(im * 127.0f)));
     }

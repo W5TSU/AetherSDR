@@ -1,0 +1,640 @@
+{
+  "meta": {
+    "freq_mhz": 915.5,
+    "freq_tol_ppm": 25.0,
+    "callsign": "W5TSU",
+    "git_commit": "v26.10.5-17-gae7dd902",
+    "max_power": 80,
+    "power_ramp": "10 %: 71.5 dB",
+    "ppm": -1.433,
+    "drift_hz": 74.2,
+    "power": {
+      "TUNE": 10,
+      "USB": 10,
+      "LSB": 10,
+      "DIGU": 10,
+      "DIGL": 10,
+      "RTTY": 10,
+      "CW": 10,
+      "CWR": 10,
+      "AM": 10,
+      "SAM": 10,
+      "DSB": 10,
+      "FM": 10,
+      "FMN": 10,
+      "DFM": 10
+    },
+    "rtl_gain_db": {
+      "TUNE": 20.7,
+      "USB": 20.7,
+      "LSB": 20.7,
+      "DIGU": 20.7,
+      "DIGL": 20.7,
+      "RTTY": 20.7,
+      "CW": 20.7,
+      "CWR": 20.7,
+      "AM": 20.7,
+      "SAM": 20.7,
+      "DSB": 20.7,
+      "FM": 20.7,
+      "FMN": 20.7,
+      "DFM": 20.7
+    }
+  },
+  "results": [
+    {
+      "mode": "TUNE",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "snr",
+          "passed": true,
+          "measured": 68.2,
+          "limit": ">= 20 dB (target 55)",
+          "unit": "dB"
+        },
+        {
+          "name": "frequency",
+          "passed": true,
+          "measured": -1.433,
+          "limit": "within +/-25 ppm",
+          "unit": "ppm"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -53.4,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "carrier -1312.3 Hz from 915.500000 MHz (both radios' crystal error)"
+      ],
+      "dial_offset_hz": -1312.3
+    },
+    {
+      "mode": "USB",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 68.7,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "opposite_sideband",
+          "passed": true,
+          "measured": 43.8,
+          "limit": ">= 25 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 33.5,
+          "limit": ">= 20 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -54.1,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1299.1
+    },
+    {
+      "mode": "LSB",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 68.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "opposite_sideband",
+          "passed": true,
+          "measured": 44.3,
+          "limit": ">= 25 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 33.3,
+          "limit": ">= 20 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -54.6,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1289.7
+    },
+    {
+      "mode": "DIGU",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 62.0,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "opposite_sideband",
+          "passed": true,
+          "measured": 43.0,
+          "limit": ">= 25 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 27.5,
+          "limit": ">= 20 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -45.7,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1281.0
+    },
+    {
+      "mode": "DIGL",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 65.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "opposite_sideband",
+          "passed": true,
+          "measured": 45.2,
+          "limit": ">= 25 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 27.3,
+          "limit": ">= 20 dB below the tone",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -50.2,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1273.9
+    },
+    {
+      "mode": "RTTY",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 62.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "shift",
+          "passed": true,
+          "measured": 168.5,
+          "limit": "170 +/- 10 Hz",
+          "unit": "Hz"
+        },
+        {
+          "name": "balance",
+          "passed": true,
+          "measured": 1.2,
+          "limit": "mark and space within 6 dB",
+          "unit": "dB"
+        },
+        {
+          "name": "opposite_sideband",
+          "passed": true,
+          "measured": 44.0,
+          "limit": ">= 25 dB below the tones",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 24.2,
+          "limit": ">= 20 dB below the tones",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -47.2,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1266.7
+    },
+    {
+      "mode": "CW",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 69.3,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "decode",
+          "passed": true,
+          "measured": null,
+          "limit": "decodes to 'TEST'",
+          "unit": ""
+        },
+        {
+          "name": "carrier_offset",
+          "passed": true,
+          "measured": 4.6,
+          "limit": "within 50 Hz of the dial",
+          "unit": "Hz"
+        },
+        {
+          "name": "dit_length",
+          "passed": true,
+          "measured": 84.4,
+          "limit": "80 ms +/- 15 %",
+          "unit": "ms"
+        },
+        {
+          "name": "width",
+          "passed": true,
+          "measured": 290.0,
+          "limit": "<= 400 Hz at -40 dB (key clicks)",
+          "unit": "Hz"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -55.7,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "decoded 'TEST'"
+      ],
+      "dial_offset_hz": -1262.1
+    },
+    {
+      "mode": "CWR",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 69.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "decode",
+          "passed": true,
+          "measured": null,
+          "limit": "decodes to 'TEST'",
+          "unit": ""
+        },
+        {
+          "name": "carrier_offset",
+          "passed": true,
+          "measured": 4.2,
+          "limit": "within 50 Hz of the dial",
+          "unit": "Hz"
+        },
+        {
+          "name": "dit_length",
+          "passed": true,
+          "measured": 84.4,
+          "limit": "80 ms +/- 15 %",
+          "unit": "ms"
+        },
+        {
+          "name": "width",
+          "passed": true,
+          "measured": 290.0,
+          "limit": "<= 400 Hz at -40 dB (key clicks)",
+          "unit": "Hz"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -55.8,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "decoded 'TEST'"
+      ],
+      "dial_offset_hz": -1257.9
+    },
+    {
+      "mode": "AM",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 68.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "symmetry",
+          "passed": true,
+          "measured": -0.0,
+          "limit": "sidebands within 2 dB",
+          "unit": "dB"
+        },
+        {
+          "name": "depth",
+          "passed": true,
+          "measured": 0.486,
+          "limit": "0.3..1",
+          "unit": ""
+        },
+        {
+          "name": "harmonics",
+          "passed": true,
+          "measured": 42.4,
+          "limit": "2nd-harmonic sidebands >= 25 dB down",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -54.5,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1254.7
+    },
+    {
+      "mode": "SAM",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 68.5,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "symmetry",
+          "passed": true,
+          "measured": 0.0,
+          "limit": "sidebands within 2 dB",
+          "unit": "dB"
+        },
+        {
+          "name": "depth",
+          "passed": true,
+          "measured": 0.489,
+          "limit": "0.3..1",
+          "unit": ""
+        },
+        {
+          "name": "harmonics",
+          "passed": true,
+          "measured": 42.6,
+          "limit": "2nd-harmonic sidebands >= 25 dB down",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -54.4,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1252.1
+    },
+    {
+      "mode": "DSB",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 63.3,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "symmetry",
+          "passed": true,
+          "measured": -0.0,
+          "limit": "sidebands within 2 dB",
+          "unit": "dB"
+        },
+        {
+          "name": "carrier_suppression",
+          "passed": true,
+          "measured": 27.4,
+          "limit": ">= 20 dB below the sidebands",
+          "unit": "dB"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -47.9,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [],
+      "dial_offset_hz": -1249.9
+    },
+    {
+      "mode": "FM",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 73.4,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "modulated",
+          "passed": true,
+          "measured": 2.515,
+          "limit": "beta >= 0.1 (audio reached the modulator)",
+          "unit": ""
+        },
+        {
+          "name": "tone_frequency",
+          "passed": true,
+          "measured": 1000.0,
+          "limit": "1000 Hz +/- 2 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "deviation",
+          "passed": true,
+          "measured": 2515.0,
+          "limit": "<= 5000 Hz + 10 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -62.5,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "Bessel fit: beta 2.515, residual 7.37e-06"
+      ],
+      "dial_offset_hz": -1249.2
+    },
+    {
+      "mode": "FMN",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 73.0,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "modulated",
+          "passed": true,
+          "measured": 1.25,
+          "limit": "beta >= 0.1 (audio reached the modulator)",
+          "unit": ""
+        },
+        {
+          "name": "tone_frequency",
+          "passed": true,
+          "measured": 1000.0,
+          "limit": "1000 Hz +/- 2 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "deviation",
+          "passed": true,
+          "measured": 1250.0,
+          "limit": "<= 2500 Hz + 10 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "fmn_ratio",
+          "passed": true,
+          "measured": 0.497,
+          "limit": "0.4..0.6 of FM",
+          "unit": ""
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -61.6,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "Bessel fit: beta 1.250, residual 1.26e-06"
+      ],
+      "dial_offset_hz": -1241.6
+    },
+    {
+      "mode": "DFM",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "signal",
+          "passed": true,
+          "measured": 73.3,
+          "limit": ">= 20 dB over the noise",
+          "unit": "dB"
+        },
+        {
+          "name": "modulated",
+          "passed": true,
+          "measured": 1.26,
+          "limit": "beta >= 0.1 (audio reached the modulator)",
+          "unit": ""
+        },
+        {
+          "name": "tone_frequency",
+          "passed": true,
+          "measured": 1000.0,
+          "limit": "1000 Hz +/- 2 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "deviation",
+          "passed": true,
+          "measured": 1260.0,
+          "limit": "<= 5000 Hz + 10 %",
+          "unit": "Hz"
+        },
+        {
+          "name": "spurious",
+          "passed": true,
+          "measured": -60.8,
+          "limit": "report-only (flagged above -40 dBc)",
+          "unit": "dBc"
+        }
+      ],
+      "notes": [
+        "Bessel fit: beta 1.260, residual 1.57e-06"
+      ],
+      "dial_offset_hz": -1238.1
+    }
+  ],
+  "exit_code": 0
+}

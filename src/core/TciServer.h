@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
+#include <QPair>
 #include <QSet>
 #include <QString>
 #include <QVector>
@@ -180,6 +181,8 @@ private:
     void broadcastSpotClicked(const QString& callsign, long long frequencyHz,
                               int trx, int channel);
     void broadcastSliceFrequencies(SliceModel* slice);
+    void broadcastTxPermission(SliceModel* slice);
+    void broadcastTxPermissions();
     void publishActiveTrx();
     SliceModel* sliceForPanId(const QString& panId) const;
     void broadcast(const QString& msg);
@@ -235,12 +238,18 @@ private:
     void onRadioTransmittingChanged(bool transmitting);
     void onRadioTransmitConfirmed(bool transmitting);
     void broadcastActualTxState(bool transmitting);
+    void handleTuneRequest(QWebSocket* client, const TciProtocol::TuneRequest& request);
+    void scheduleTuneBroadcast();
+    void broadcastTuneState();
+    void stopTciOwnedTune();
     void teardownTciRoute();
     void sendTxChronoFrame(QWebSocket* client);
     void logTxAudioSummary(const char* reason);
     ClientState* clientStateFor(QWebSocket* socket);
     void noteClientTextTx(QWebSocket* socket, const QString& message);
     void sendClientText(QWebSocket* socket, const QString& message);
+    // Test seam: when set, outbound client text goes here instead of the socket.
+    std::function<void(QWebSocket*, const QString&)> m_clientTextSinkForTest;
     void noteClientSocketError(QWebSocket* socket, int error);
     QJsonObject disconnectSnapshot(const ClientState& client,
                                    const QWebSocket* socket) const;
@@ -315,6 +324,8 @@ private:
     void releaseAllIqStreams();
     void resetIqStreamBookkeeping();
     int  achievedIqSampleRate() const;
+    int  effectiveIqSampleRate() const;
+    void announceEffectiveIqSampleRate();
 
     // Minimum frames to accumulate before flushing to r8brain.
     // ~21ms at 24kHz — large enough for clean resampling, small enough
@@ -348,6 +359,7 @@ private:
     QSet<int>          m_iqCreateInFlight;   // create issued, status not yet seen
     QSet<int>          m_pendingIqRemovals;  // awaiting a create status to reap
     QHash<QString,int> m_iqPanChannel;       // panId → TCI-owned DAX IQ channel
+    int                m_announcedIqSampleRate{48000};
     int                m_iqSampleRate{48000};// shared requested rate, all TCI receivers
     QHash<QString, long long> m_lastDdsCenterHz; // panId → last broadcast dds center, gates zoom-only re-emits (#3910)
     TciRoutingState m_routingState;
@@ -355,6 +367,9 @@ private:
     // released 500 ms after a genuine slice close (recreates reclaim their
     // number), cleared on disconnect. Injected into every TciProtocol.
     TciTrxMap m_trxMap;
+    // #6352: the newest removal per slice id. A close timer that finds a newer
+    // removal of the same id belongs to an earlier absence and stands down.
+    QHash<int, quint64> m_closeGeneration;
     struct PendingVfoBCreate
     {
         QPointer<QWebSocket> client;
@@ -461,6 +476,11 @@ private:
     qint64            m_rxAudioPackets{0};
     qint64            m_rxAudioFramesSent{0};
     bool m_lastRadioTx { false };
+    bool m_lastTuneSent { false };   // tune state as last broadcast (#3327)
+    QPointer<QWebSocket> m_tuneClient;  // the TCI client whose request started the tune
+    int m_tuneClientTrx { 0 };
+    bool m_tuneBroadcastQueued { false };
+    QList<QPair<QPointer<QWebSocket>, int>> m_tuneRequesters;  // owed an answer
     float             m_cachedSLevel[8]{-130,-130,-130,-130,-130,-130,-130,-130};
     float             m_cachedFwdPower{0};
     float             m_cachedSwr{1.0f};

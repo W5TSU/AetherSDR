@@ -168,26 +168,11 @@ inline constexpr int kMicLevelCurve = 2;
 
 // ---- Forward-power peak hold -----------------------------------------------
 
-// One step of the transmit forward-power peak hold, in watts.
-//
-// The HL2's forward power is a single 12-bit conversion from an I2C
-// instrumentation ADC with no peak detector and no averaging in the gateware
-// (rtl/slow_adc.v), reaching us at 10 Hz. Speech peaks last tens of
-// milliseconds, so sampling that envelope at 10 Hz lands on a peak essentially
-// never: an SSB reading sat 8-12 dB below PEP while constant-envelope FT8 —
-// where every instant IS the peak — read full scale. Both were making the same
-// power.
-//
-// Instant attack, exponential release. What this recovers is NOT an
-// instantaneous PEP reading; no filter can recover a peak that was never
-// sampled. What it does is accumulate the maximum ACROSS a transmission, so the
-// displayed value climbs toward PEP as the over goes on and settles within a
-// few dB of it.
-//
-// `keyed` is a real term, not a guard: unkeyed, the reading must follow the
-// instantaneous sample straight down, or a hold outliving the transmission
-// keeps re-arming MeterModel's filter and the gauge claims power out of a radio
-// that has stopped.
+// One step of the TX forward-power peak hold, in watts. Forward power is one
+// unaveraged 12-bit I2C ADC sample (rtl/slow_adc.v), re-sampled every other EP6
+// response (control.v:261); the input is each publish window's maximum. Instant
+// attack and exponential release carry the max across an over. Unkeyed, the
+// reading follows the instant sample so the gauge drops when TX stops.
 [[nodiscard]] constexpr double fwdPeakHoldStep(double previousPeakW,
                                                double instantW,
                                                bool keyed,
