@@ -81,16 +81,19 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/aethersdr/aethersdr-ci:latest
     env:
-      # Dependencies bring in the app libraries and waveform helper. Retain
-      # the two small tests whose first-party inputs are absent from the
-      # default production graph: the opt-in DeepFist asset downloader and
-      # the CTR2 firmware reference codec. The coverage check guards this list.
+      # Dependencies bring in the app libraries and waveform helper. Upstream
+      # also retains deepfist_model_assets_test and ctr2_hid_reference_test;
+      # this fork has neither DeepFist nor the CTR2 firmware reference, so
+      # those targets do not exist here. The CI image has no libhackrf, so
+      # the app compiles the HackRF backend out; retain the three small tests
+      # that are the only consumers of its pure-DSP sources (HackRfDdc,
+      # HackRfIq, HackRfTxRxArbiter). The coverage check guards this list.
       # This Linux configuration uses ENABLE_RADE=ON and the current vendored
       # snapshot, which defines rade_demod_wav. If coverage fails after a
       # merge, add the target owning the named input here and dispatch a run.
       CODEQL_BUILD_TARGETS: >-
         AetherSDR aetherd kiwi_directory_poc rade_demod_wav
-        deepfist_model_assets_test ctr2_hid_reference_test
+        hackrf_ddc_test hackrf_iq_test hackrf_arbiter_test
 
     strategy:
       matrix:
