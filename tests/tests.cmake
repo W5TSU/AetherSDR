@@ -839,6 +839,14 @@ target_link_libraries(icom_ptt_authority_test PRIVATE
     aethercore Qt6::Core)
 add_test(NAME icom_ptt_authority_test COMMAND icom_ptt_authority_test)
 
+# Upstream 18d220b1 (#6680): a connected Icom session ends through the normal
+# disconnect/reconnect path when the radio reports its current media released,
+# and only then. Socket-free: unstarted session and control stream, no peer.
+add_executable(icom_session_release_test tests/icom_session_release_test.cpp)
+target_include_directories(icom_session_release_test PRIVATE src)
+target_link_libraries(icom_session_release_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME icom_session_release_test COMMAND icom_session_release_test)
+
 # Retired fake-radio fixtures. Positive session and backend convergence is
 # certified against real firmware through the automation bridge and radiocert;
 # deterministic protocol/model policy stays in socket-free tests. Keep these

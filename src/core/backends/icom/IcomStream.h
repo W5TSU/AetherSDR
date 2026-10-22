@@ -161,6 +161,8 @@ public:
     }
 
 private:
+    friend struct IcomStreamTestAccess;   // socket-free session tests set the SIDs
+
     // isPayload false for keepalives: they are tracked (they consume a sequence
     // number and can be asked for) but must not reset the quiet clock, or the
     // idle cadence never relaxes.
