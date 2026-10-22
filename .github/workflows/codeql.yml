@@ -84,12 +84,16 @@ jobs:
       # Dependencies bring in the app libraries and waveform helper. Upstream
       # also retains deepfist_model_assets_test and ctr2_hid_reference_test;
       # this fork has neither DeepFist nor the CTR2 firmware reference, so
-      # those targets do not exist here. The coverage check guards this list.
+      # those targets do not exist here. The CI image has no libhackrf, so
+      # the app compiles the HackRF backend out; retain the three small tests
+      # that are the only consumers of its pure-DSP sources (HackRfDdc,
+      # HackRfIq, HackRfTxRxArbiter). The coverage check guards this list.
       # This Linux configuration uses ENABLE_RADE=ON and the current vendored
       # snapshot, which defines rade_demod_wav. If coverage fails after a
       # merge, add the target owning the named input here and dispatch a run.
       CODEQL_BUILD_TARGETS: >-
         AetherSDR aetherd kiwi_directory_poc rade_demod_wav
+        hackrf_ddc_test hackrf_iq_test hackrf_arbiter_test
 
     strategy:
       matrix:
