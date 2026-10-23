@@ -7,6 +7,7 @@
 #include "PerfTelemetry.h"
 #include "RadioConnection.h"
 #include "VitaTileFrequency.h"
+#include "core/backends/flex/LanBindAddress.h"
 
 #include <QNetworkDatagram>
 #include <QHostAddress>
@@ -44,25 +45,17 @@ QHostAddress chooseLanBindAddress(RadioConnection* conn,
     const QHostAddress sessionAddr = conn ? conn->sessionLocalBindAddress() : QHostAddress();
     const QHostAddress tcpAddr = conn ? conn->localAddress() : QHostAddress();
 
-    QHostAddress selectedAddress;
-    QString selectedReason;
-    if (!explicitAddr.isNull() && explicitAddr.protocol() == QAbstractSocket::IPv4Protocol) {
-        selectedAddress = explicitAddr;
-        selectedReason = QStringLiteral("explicit");
-    } else if (!sessionAddr.isNull() && sessionAddr.protocol() == QAbstractSocket::IPv4Protocol) {
-        selectedAddress = sessionAddr;
-        selectedReason = QStringLiteral("probe-session");
-    } else if (!tcpAddr.isNull() && tcpAddr.protocol() == QAbstractSocket::IPv4Protocol) {
-        selectedAddress = tcpAddr;
-        selectedReason = QStringLiteral("tcp-local");
+    const LanBindAddress selected = selectLanBindAddress(
+        conn ? conn->radioAddress() : QHostAddress(), explicitAddr, sessionAddr, tcpAddr);
+
+    if (chosenReason) {
+        *chosenReason = selected.reason;
+    }
+    if (chosenAddress) {
+        *chosenAddress = selected.reason.isEmpty() ? QHostAddress() : selected.address;
     }
 
-    if (chosenReason)
-        *chosenReason = selectedReason;
-    if (chosenAddress)
-        *chosenAddress = selectedAddress;
-
-    return selectedAddress.isNull() ? QHostAddress(QHostAddress::AnyIPv4) : selectedAddress;
+    return selected.address;
 }
 
 } // namespace

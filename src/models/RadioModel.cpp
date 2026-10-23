@@ -9637,6 +9637,16 @@ void RadioModel::requestLocalPtt()
 
 void RadioModel::createRxAudioStream()
 {
+    // A pre-connect PC Audio toggle must not leave a request pending when no
+    // registered GUI session can send it. The connect handshake retries it.
+    if (!hasCommandPlane() || !isConnected()
+        || m_guiClientRegistrationState.phase() != GuiClientRegistrationState::Phase::Registered) {
+        logRemoteAudioRxSummary(hasCommandPlane()
+            ? QStringLiteral("create deferred: GUI session not ready")
+            : QStringLiteral("create skipped: backend has no command plane"));
+        return;
+    }
+
     if (m_rxAudio.streamId != 0) {
         logRemoteAudioRxSummary(QStringLiteral("create skipped: stream already known"));
         return;
