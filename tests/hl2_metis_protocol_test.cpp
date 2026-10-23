@@ -1221,6 +1221,20 @@ int main()
         check(!s.input(0) && !s.input(6), "there is no In0 and no In6");
         check(!decodeIoBoardStatus(0x07'00'00'2Au).receiving(),
               "EXTTR low is transmit");
+
+        // A reply read from a real board on firmware 2.11. Its bytes are not
+        // symmetric, so it pins the order the synthetic vector above assumes.
+        const IoBoardStatus board = decodeIoBoardStatus(0x02'00'00'01u);
+        check(board.inputPins == 0x01 && board.receiving(), "a board's EXTTR is in DATA[7:0]");
+        check(board.firmwareMajor == 2, "and its firmware major in DATA[31:24]");
+
+        // An empty bus reads as 0xFF; bits 6..7 of REG_INPUT_PINS are never set
+        // by a board.
+        check(s.fromBoard() && board.fromBoard(), "a board's reply is from a board");
+        check(!decodeIoBoardStatus(0xFF'FF'FF'FFu).fromBoard(), "an all-ones reply is not");
+        check(!decodeIoBoardStatus(0x02'00'00'41u).fromBoard()
+                  && !decodeIoBoardStatus(0x02'00'00'81u).fromBoard(),
+              "nor is any reply with bit 6 or 7 of REG_INPUT_PINS set");
     }
 
     // ---- adcClipRatePercent: NULL AND ZERO ARE DIFFERENT FACTS ------------

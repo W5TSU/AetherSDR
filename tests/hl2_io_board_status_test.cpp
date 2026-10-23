@@ -5,7 +5,8 @@
 //
 // The wire encoding is hl2_metis_protocol_test's; the client's request rules
 // are hl2_rqst_ack_client_test's. This pins the wiring between them: one
-// answer per call, the registers decoded, and a refusal reported as one.
+// answer per call, the registers decoded, and a refusal or an empty bus
+// reported as an error.
 
 #include "core/backends/IRadioBackend.h"
 #include "core/backends/hl2/Hl2Backend.h"
@@ -146,6 +147,36 @@ static void testAnsweredWithTheRegistersDecoded()
     check(r.errors == 2 && r.lastId == 13 && !r.lastError.isEmpty(),
           "a refusal is reported as an error, with a reason");
     check(r.results == 1, "and not as a reading");
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 14, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    });
+    check(r.results == 2 && r.lastId == 14, "the read after a refusal is answered");
+}
+
+static void testAnEmptyBusIsNotAReading()
+{
+    // With no board fitted the read is expected to complete as 0xFF bytes
+    // (docs/HERMES.md). Passed through, that would read as an ATU failure code.
+    Hl2Backend backend;
+    Replies r;
+    watch(backend, r);
+    Hl2IoBoardStatusTestAccess::setConnected(backend);
+    onClientThread(backend, [](MetisClient& c) { MetisClientTestAccess::setStreaming(c); });
+
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 21, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0xFF'FF'FF'FFu));
+    });
+    check(r.errors == 1 && r.results == 0 && r.lastId == 21,
+          "an all-ones reply is an error, not a reading");
+    check(r.lastError.contains(QStringLiteral("No IO board")), "and says no board answered");
+
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 22, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    });
+    check(r.results == 1 && r.lastId == 22, "and the next read is answered");
 }
 
 int main(int argc, char** argv)
@@ -154,6 +185,7 @@ int main(int argc, char** argv)
 
     testRefusedWhileDisconnected();
     testAnsweredWithTheRegistersDecoded();
+    testAnEmptyBusIsNotAReading();
 
     if (g_failures == 0) {
         std::printf("hl2_io_board_status_test: all checks passed\n");

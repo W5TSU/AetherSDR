@@ -492,8 +492,10 @@ static void testIoBoardStatusAnswersExactlyOnce()
     MetisClientTestAccess::feedResponse(c, ack(kRespAddrError, 0));
     check(spy.failed == 2 && spy.ready == 1, "a 0x3F reply is a failure, not a reading");
 
-    // --- unanswered ---
+    // --- unanswered. A refusal leaves nothing owed, so this read is armed at once ---
     c.requestIoBoardStatus();
+    check(spy.failed == 2 && c.controlRequest().state() == Hl2ControlRequest::State::Queued,
+          "a read straight after a refusal is accepted: only a timeout quarantines");
     while (c.controlRequest().state() == Hl2ControlRequest::State::Queued) {
         (void)sendPacket(c);
     }

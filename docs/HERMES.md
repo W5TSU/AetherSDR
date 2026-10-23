@@ -422,12 +422,14 @@ to the companion bus. The C&C data is `0x079D0600`: cookie `0x07`, stop | chip
             state_next = cmd_data[24] ? STATE_READ_CMDADDR : STATE_CMDADDR;
 ```
 
-`STATE_READ_CMDADDR` writes only the register pointer; `STATE_READ_DATA1..4` then
-read four bytes, the first into `resp_data[7:0]`, and `RESP_READ` returns them as
-the reply's C1..C4. On the board (HL2IOBoard `n2adr_lib/i2c_slave_handler.c`,
-commit `bbf0a2c`), the first byte a write delivers is stored as the register
-number and nothing is written; each requested byte returns one register and
-advances. So one read returns registers 6..9:
+It takes the chip from `cmd_data[22:16]` and never reads the stop bit, which is
+set only to match the write path. `STATE_READ_CMDADDR` and `STATE_READ_DATA0`
+write only the register pointer, then stop; `STATE_READ_DATA1..4` read four
+bytes, the first into `resp_data[7:0]`, and `RESP_READ` returns them as the
+reply's C1..C4. On the board (HL2IOBoard `n2adr_lib/i2c_slave_handler.c`, commit
+`bbf0a2c`), the first byte a write delivers is stored as the register number and
+nothing is written; each requested byte returns one register and advances. So
+one read returns registers 6..9:
 
 | Reply DATA | Register | Meaning (HL2IOBoard README) | Reply key |
 |---|---|---|---|
@@ -449,9 +451,14 @@ Missed`), and `ioboard.status` reports it as an error rather than retrying. The
 bus runs at 312.5 kHz (`clk_ctrl` 2.5 MHz, `prescale` 2), so the read holds it
 for about 0.2 ms, against 2.6 ms between EP2 packets.
 
-Unverified: with no board fitted the read should still complete, because
-`i2c_bus2.v` never consults `missed_ack`, and return `0xFF` bytes off the idle
-bus rather than a refusal.
+With no board fitted the read should still complete, not be refused:
+`i2c_master.v` strobes `missed_ack` when no chip acknowledges and carries on, and
+`i2c_bus2.v` never consults it. The bytes are then whatever the idle bus reads,
+`0xFF` with pull-ups; the gateware sets none on `io_scl2`/`io_sda2`. The board
+never sets bits 6..7 of register 6 (the README gives them to `REG_IN_PINS`, 168,
+only), so `ioboard.status` answers a reply with either set with the error "No IO
+board answered", not a reading; a read that never completes times out.
+Unverified on hardware: no run yet has had the board unplugged.
 
 **On hardware** (2026-10-23; HL2 gateware 74.2, N2ADR IO board firmware major
 1, host on Wi-Fi, 48 kHz, one receiver, receive only): two runs, polling every
@@ -461,6 +468,12 @@ bus rather than a refusal.
   value read, not an echo: an echo of `0x079D0600` would decode as pins `0x00`,
   firmware 7. With the link healthy, the run that timed it saw round trips of
   4–36 ms, median 9 ms.
+- **Byte order, from a second board.** The reply above, `01 00 00 01`, reads
+  the same either way round, so it cannot show the order. ON8ST's board
+  (firmware 2.11, on #6703), read through the port-1025 command path into the
+  same `i2c_bus2.v` read states, can: `0x02000001` from register 6 (firmware 2
+  in `[31:24]`), and bytes `00 00 02 0B` in `[7:0]..[31:24]` from register 7,
+  which also confirms the auto-increment.
 - **No bus-busy refusals**, including through a six-band sweep whose IO board
   frequency pushes shared the bus.
 - **Timeouts followed Wi-Fi delay or loss past the 42 ms deadline.** Of 65

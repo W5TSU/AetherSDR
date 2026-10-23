@@ -699,6 +699,10 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
             return;
         }
         const AetherSDR::hl2::IoBoardStatus s = AetherSDR::hl2::decodeIoBoardStatus(registers);
+        if (!s.fromBoard()) {
+            emit extensionError(id, QStringLiteral("No IO board answered."));
+            return;
+        }
         emit extensionResult(id, QVariantMap{
             {QStringLiteral("inputPins"), s.inputPins},
             {QStringLiteral("receiving"), s.receiving()},

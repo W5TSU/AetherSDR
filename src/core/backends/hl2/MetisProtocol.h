@@ -387,6 +387,10 @@ struct IoBoardStatus {
     {
         return n >= 1 && n <= 5 && ((inputPins >> n) & 0x01) != 0;
     }
+    // The board leaves bits 6..7 of REG_INPUT_PINS clear (they exist only in
+    // REG_IN_PINS, 168), so a reply with either set is not from a board: most
+    // likely an empty bus read as 0xFF.
+    [[nodiscard]] constexpr bool fromBoard() const noexcept { return (inputPins & 0xC0) == 0; }
 };
 
 [[nodiscard]] constexpr IoBoardStatus decodeIoBoardStatus(std::uint32_t replyData) noexcept
