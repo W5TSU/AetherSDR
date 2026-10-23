@@ -3425,6 +3425,28 @@ if (ENABLE_ASR)
     set_tests_properties(copy_assist_panel_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Real controller failure signals; no sockets, downloads, inference or radio.
+    add_executable(copy_assist_failure_test
+        tests/copy_assist_failure_test.cpp
+        src/gui/CopyAssistController.cpp
+        src/gui/CopyAssistPanel.cpp
+        src/gui/CopyAssistSettings.cpp
+        src/gui/CopyAssistSettingsDialog.cpp
+        src/gui/AsrAudioTap.cpp
+        src/gui/ControlAvailabilityRegistry.cpp
+        src/gui/PersistentDialog.cpp
+        src/gui/FramelessResizer.cpp
+        src/gui/FramelessWindowTitleBar.cpp
+    )
+    add_dependencies(copy_assist_failure_test aether_build_identity)
+    target_include_directories(copy_assist_failure_test PRIVATE src "${AETHER_BUILD_ID_DIR}")
+    target_link_libraries(copy_assist_failure_test PRIVATE
+        aetherdesktop_support aetherasr Qt6::Concurrent Qt6::Test)
+    set_target_properties(copy_assist_failure_test PROPERTIES AUTOMOC ON)
+    add_test(NAME copy_assist_failure_test COMMAND copy_assist_failure_test)
+    set_tests_properties(copy_assist_failure_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Copy Assist settings dialog: offscreen UI test of the model + GPU pickers.
     add_executable(copy_assist_settings_dialog_test
         tests/copy_assist_settings_dialog_test.cpp
@@ -6776,6 +6798,7 @@ set(AETHER_SETTINGS_CONSUMERS
     dstar_model_test
     ole_compound_file_test
     copy_assist_settings_dialog_test
+    copy_assist_failure_test
     s_meter_geometry_test
     qrz_callsign_test
     shortcut_manager_test
