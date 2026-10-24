@@ -2069,6 +2069,86 @@ if(ENABLE_NVIDIA_AFX AND ((UNIX AND NOT APPLE) OR WIN32) AND CMAKE_SYSTEM_PROCES
     add_test(NAME nvidia_afx_filter_test COMMAND nvidia_afx_filter_test)
 endif()
 
+# Exact qWAVE DSCP request/rollback, with injected native operations; no sockets.
+add_executable(vita_dscp_flow_test tests/vita_dscp_flow_test.cpp)
+target_include_directories(vita_dscp_flow_test PRIVATE src)
+add_test(NAME vita_dscp_flow_test COMMAND vita_dscp_flow_test)
+
+# Socket-free: unbound native IPv4/IPv6 UDP descriptors (no bind, send or connect);
+# checks the marker sets the option that marks each family. Exit 77 without IPv6.
+add_executable(vita_dscp_family_test tests/vita_dscp_family_test.cpp
+    src/core/backends/flex/VitaDscpMarker.cpp)
+target_include_directories(vita_dscp_family_test PRIVATE src)
+target_link_libraries(vita_dscp_family_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME vita_dscp_family_test COMMAND vita_dscp_family_test)
+set_tests_properties(vita_dscp_family_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+# SOCKETS: two ephemeral IPv4 UDP sockets on 127.0.0.1, our own sender/sink.
+# Tests the native marker across close/rebind; no firmware peer or RF.
+add_executable(vita_dscp_socket_test tests/vita_dscp_socket_test.cpp
+    src/core/backends/flex/VitaDscpMarker.cpp)
+target_include_directories(vita_dscp_socket_test PRIVATE src)
+target_link_libraries(vita_dscp_socket_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME vita_dscp_socket_test COMMAND vita_dscp_socket_test)
+set_tests_properties(vita_dscp_socket_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+# SOCKETS: production ephemeral IPv4 VITA socket (LAN uses AnyIPv4, WAN too)
+# plus our own ephemeral loopback sink. Cold RadioConnection never dials;
+# no radio/firmware peer. Injected QoS denial must leave all bind paths usable.
+add_executable(vita_dscp_stream_test tests/vita_dscp_stream_test.cpp)
+target_include_directories(vita_dscp_stream_test PRIVATE src tests)
+target_link_libraries(vita_dscp_stream_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME vita_dscp_stream_test COMMAND vita_dscp_stream_test)
+set_tests_properties(vita_dscp_stream_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+# Socket-free production WAN cadence, encoding, qualification and lifecycle.
+# Only terminal bind/write operations are injected; QTimer delivery stays real.
+add_executable(wan_udp_keepalive_test tests/wan_udp_keepalive_test.cpp)
+target_include_directories(wan_udp_keepalive_test PRIVATE src tests)
+target_link_libraries(wan_udp_keepalive_test PRIVATE aethercore Qt6::Core)
+add_test(NAME wan_udp_keepalive_test COMMAND wan_udp_keepalive_test)
+set_tests_properties(wan_udp_keepalive_test PROPERTIES TIMEOUT 25)
+
+# Socket-free: injected LAN bind/write; drives start(), rebind, receive and the keepalive timer.
+add_executable(lan_udp_keepalive_test tests/lan_udp_keepalive_test.cpp)
+target_include_directories(lan_udp_keepalive_test PRIVATE src tests)
+target_link_libraries(lan_udp_keepalive_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME lan_udp_keepalive_test COMMAND lan_udp_keepalive_test)
+set_tests_properties(lan_udp_keepalive_test PROPERTIES TIMEOUT 25)
+
+# SOCKETS: manual check of the production ephemeral IPv4 VITA socket and two
+# own loopback UDP sinks. No firmware peer or RF. Build/run explicitly.
+# not registered: opt-in real socket wiring; default coverage above is socket-free.
+add_executable(wan_udp_keepalive_socket_test EXCLUDE_FROM_ALL tests/wan_udp_keepalive_socket_test.cpp)
+target_include_directories(wan_udp_keepalive_socket_test PRIVATE src tests)
+target_link_libraries(wan_udp_keepalive_socket_test PRIVATE aethercore Qt6::Core Qt6::Network)
+
+# PanadapterStream's rate-limited VITA-49 sequence-error line and its text, which
+# the docs Log Analyzer matches (#6285). Socket-free: meter packets are fed to
+# processDatagram() on a stream that never binds.
+add_executable(vita_sequence_loss_log_test tests/vita_sequence_loss_log_test.cpp)
+target_include_directories(vita_sequence_loss_log_test PRIVATE src)
+target_link_libraries(vita_sequence_loss_log_test PRIVATE aethercore Qt6::Core)
+add_test(NAME vita_sequence_loss_log_test COMMAND vita_sequence_loss_log_test)
+
+# RadioModel restarts remote_audio_rx's VITA-49 sequence tracking when the radio
+# reports the stream adopted or removed (#6285). Socket-free: status lines go to
+# the model's router and packets straight to processDatagram().
+add_executable(remote_audio_rx_sequence_restart_test tests/remote_audio_rx_sequence_restart_test.cpp)
+target_include_directories(remote_audio_rx_sequence_restart_test PRIVATE src tests)
+target_link_libraries(remote_audio_rx_sequence_restart_test PRIVATE aethercore Qt6::Core)
+add_test(NAME remote_audio_rx_sequence_restart_test COMMAND remote_audio_rx_sequence_restart_test)
+
+# The start-up "Platform: Qt platform plugin" line and its fallback line (#6285).
+# Pure: no QGuiApplication.
+add_executable(qt_platform_choice_test
+    tests/qt_platform_choice_test.cpp
+    src/QtPlatformChoice.cpp
+)
+target_include_directories(qt_platform_choice_test PRIVATE src)
+target_link_libraries(qt_platform_choice_test PRIVATE Qt6::Core)
+add_test(NAME qt_platform_choice_test COMMAND qt_platform_choice_test)
+
 # Pure, headless, hardware-free golden matrix for the consolidated audio
 # format/rate negotiation policy (#3306). TargetOs is data, so this one binary
 # exercises the Windows/macOS/Linux ladders regardless of the CI host.

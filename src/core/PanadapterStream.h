@@ -20,6 +20,8 @@
 #include <functional>
 #include <initializer_list>
 
+class QNetworkDatagram;
+
 namespace AetherSDR {
 
 class RadioConnection;
@@ -46,6 +48,7 @@ class PanadapterStream : public QObject {
     friend class VitaDscpStreamTestAccess;
     friend class WanUdpKeepaliveTestAccess;
     friend class WanUdpKeepaliveSocketTestAccess;
+    friend class LanUdpKeepaliveTestAccess;
 
 public:
     static constexpr int VITA49_HEADER_BYTES = 28;
@@ -238,10 +241,14 @@ signals:
 private slots:
     void onDatagramReady();
     void sendWanUdpRegister();
+    void sendLanKeepalive();
 
 private:
     friend struct PanadapterDbmRangeTestAccess;
     void processDatagram(const QByteArray& data);
+    void handleReceivedDatagram(const QNetworkDatagram& dg);
+    void startLanKeepalive();
+    qint64 writeLanDatagram(const QByteArray& data, const QHostAddress& to, quint16 port);
     void confirmWanRegistration(const QByteArray& data);
     // Raise the kernel receive buffer (SO_RCVBUF) on the bound VITA-49 socket so
     // bursts / brief drain stalls don't overflow it and surface as false
@@ -477,10 +484,16 @@ private:
     std::function<bool()> m_wanBindForTest;
     std::function<qint64(const QByteArray&, const QHostAddress&, quint16)> m_wanWriteForTest;
     bool m_wanBoundForTest{false};
+    // Inject only the terminal LAN bind/write in socket-free lifecycle tests.
+    std::function<bool()> m_lanBindForTest;
+    std::function<qint64(const QByteArray&, const QHostAddress&, quint16)> m_lanWriteForTest;
+    bool m_lanBoundForTest{false};
 
     // WAN UDP registration and keepalive
     QTimer*  m_wanRegisterTimer{nullptr};   // udp_register: 50 ms until VITA, then 5 s
     QTimer*  m_routedPrimeTimer{nullptr};   // 250ms: non-WAN UDP prime retry until first packet
+    QTimer*  m_lanKeepaliveTimer{nullptr};  // 5 s: non-WAN keepalive for the whole session
+    bool     m_lanKeepaliveFailed{false};   // warn once per session, not every 5 s
     bool     m_isWanMode{false};
     bool     m_wanRegistered{false};
     quint32  m_wanClientHandle{0};
