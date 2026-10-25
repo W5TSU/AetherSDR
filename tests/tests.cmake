@@ -2262,6 +2262,18 @@ add_test(NAME dvk_panel_admission_test COMMAND dvk_panel_admission_test)
 set_tests_properties(dvk_panel_admission_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
+# Upstream 2e02f0d7 (#6599) — a short DVK panel scrolls its slot rows instead
+# of squashing them; long names yield width; a tall panel needs no scroll bar.
+add_executable(dvk_panel_layout_test
+    tests/dvk_panel_layout_test.cpp
+    src/gui/DvkPanel.cpp
+)
+target_include_directories(dvk_panel_layout_test PRIVATE src tests)
+target_link_libraries(dvk_panel_layout_test PRIVATE aetherdesktop_support Qt6::Widgets)
+add_test(NAME dvk_panel_layout_test COMMAND dvk_panel_layout_test)
+set_tests_properties(dvk_panel_layout_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 
 # #5640 — QsoRecorder claims filename candidates atomically so a same-second
 # recording cannot truncate a populated WAV or a concurrently-created file.
