@@ -1,6 +1,5 @@
 // Real controller failure signals; no radio, model download or inference.
 #include "TestSettingsProfile.h"
-#include "AetherBuildIdentity.h"
 #include "asr/AsrCrashMarker.h"
 #include "asr/AsrEngine.h"
 #include "asr/AsrModelManager.h"
@@ -40,7 +39,9 @@ int main(int argc, char** argv)
     // A recorded discovery fault keeps this fixture out of GPU discovery.
     AsrAttempt fault;
     fault.stage = QString::fromLatin1(kAsrStageDiscovery);
-    fault.appVersion = QStringLiteral("test+") + QStringLiteral(AETHER_BUILD_SHA);
+    // asrAppVersionStamp() without AETHER_GIT_SHA (not defined for this target)
+    // is the bare application version.
+    fault.appVersion = QStringLiteral("test");
     CopyAssistSettings::setValue(QStringLiteral("AsrLastFault"), asrAttemptToJson(fault));
     CopyAssistPanel panel;
     CopyAssistController controller(nullptr, &panel);

@@ -3433,13 +3433,11 @@ if (ENABLE_ASR)
         src/gui/CopyAssistSettings.cpp
         src/gui/CopyAssistSettingsDialog.cpp
         src/gui/AsrAudioTap.cpp
-        src/gui/ControlAvailabilityRegistry.cpp
         src/gui/PersistentDialog.cpp
         src/gui/FramelessResizer.cpp
         src/gui/FramelessWindowTitleBar.cpp
     )
-    add_dependencies(copy_assist_failure_test aether_build_identity)
-    target_include_directories(copy_assist_failure_test PRIVATE src "${AETHER_BUILD_ID_DIR}")
+    target_include_directories(copy_assist_failure_test PRIVATE src)
     target_link_libraries(copy_assist_failure_test PRIVATE
         aetherdesktop_support aetherasr Qt6::Concurrent Qt6::Test)
     set_target_properties(copy_assist_failure_test PROPERTIES AUTOMOC ON)
