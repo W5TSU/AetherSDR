@@ -1,6 +1,7 @@
 #include "core/backends/hl2/Hl2Backend.h"
 #include "core/backends/hl2/Hl2Bands.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 
 #include <cmath>
@@ -290,6 +291,24 @@ QByteArray floatBytes(const std::vector<float>& v)
             static_cast<qsizetype>(v.size() * sizeof(float))};
 }
 
+// The tuning range capabilities() declares; a remembered frequency, pan centre
+// or notch outside it is dropped.
+constexpr double kTuningMinHz = 100'000.0;
+constexpr double kTuningMaxHz = 38'400'000.0;
+
+[[nodiscard]] bool restorableRfHz(double hz) noexcept
+{
+    return hz >= kTuningMinHz && hz <= kTuningMaxHz;
+}
+
+// A remembered passband is kept only as a sane pair inside the 12 kHz audio
+// ceiling; a CW pair must also contain the carrier (pre-#4914 pairs do not).
+[[nodiscard]] bool restorablePassband(double lowHz, double highHz, bool cw) noexcept
+{
+    return lowHz < highHz && lowHz >= -12'000.0 && highHz <= 12'000.0
+        && (!cw || (lowHz < 0.0 && highHz > 0.0));
+}
+
 }  // namespace
 
 Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
@@ -480,6 +499,9 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         pushInitialState();
         emitAllSliceState();
         defineMeters();
+        // Once per connect, after receiver A is published: the remembered
+        // notches and receivers B.. come back through the operator's own paths.
+        replayRestoredSession();
         // Tell the IO board where we came up. applyBandFilter() is NOT called on
         // this path — the connect-time filter byte is primed straight into
         // MetisClient::Params instead — so without this the board would hold
@@ -1034,6 +1056,26 @@ void Hl2Backend::announceReceiverCeilingRevision()
 
 bool Hl2Backend::createPanadapter()
 {
+    // The operator is reshaping the set; a tail the last replay kept is theirs
+    // to rebuild, not to have resurrected.
+    m_replayUnreopened.clear();
+    // Inherit the first receiver's settings, not construction defaults: a new
+    // pane opening on 10 MHz USB when the operator is working 40 m would look
+    // like the radio changed band on its own. Same reasoning as at connect.
+    Receiver seed;
+    if (!m_rx.empty()) {
+        const Receiver& first = m_rx.front();
+        seed.sliceFreqHz = first.sliceFreqHz;
+        seed.ncoHz = first.ncoHz;
+        seed.mode = first.mode;
+        seed.filterLowHz = first.filterLowHz;
+        seed.filterHighHz = first.filterHighHz;
+    }
+    return addReceiver(seed);
+}
+
+bool Hl2Backend::addReceiver(const Receiver& requested)
+{
     if (!m_connected) {
         qCWarning(lcHl2) << "HL2: cannot add a receiver before the radio is connected";
         return false;
@@ -1055,24 +1097,18 @@ bool Hl2Backend::createPanadapter()
 
     const int ddc = m_ids.append();
 
-    // Build the new receiver's state outside m_rx, then append it. Derived from
-    // the EXISTING receivers, which is why it is assembled before the push rather
-    // than patched up after it.
-    //
-    // Inherit the first receiver's settings, not construction defaults: a new
-    // pane opening on 10 MHz USB when the operator is working 40 m would look
-    // like the radio changed band on its own. Same reasoning as at connect.
-    Receiver seed;
+    // Build the new receiver's state outside m_rx, then append it. Its tuning
+    // is the caller's (createPanadapter() copies the first receiver's; the
+    // session replay gives the remembered one). AGC is flat: every receiver
+    // runs the first one's, which is why it is taken here rather than given.
+    Receiver seed = requested;
     if (!m_rx.empty()) {
         const Receiver& first = m_rx.front();
-        seed.sliceFreqHz = first.sliceFreqHz;
-        seed.ncoHz = first.ncoHz;
-        seed.mode = first.mode;
-        seed.filterLowHz = first.filterLowHz;
-        seed.filterHighHz = first.filterHighHz;
         seed.agcMode = first.agcMode;
         seed.agcModeBeforeDigital = first.agcModeBeforeDigital;
         seed.agcThresholdDb = first.agcThresholdDb;
+        // A data mode runs AGC off over the held mode, as a mode click does.
+        followModeAgc(seed, first.mode);
     }
     m_rx.push_back(seed);
 
@@ -1195,6 +1231,7 @@ bool Hl2Backend::createPanadapter()
     // A new receiver can change whether the set spans bands.
     applyBandFilter("add receiver");
     publishWideState();
+    notifyOperatingStateChanged();
     return true;
 }
 
@@ -1213,6 +1250,7 @@ bool Hl2Backend::removePanadapter(const QString& panId)
         qCWarning(lcHl2) << "HL2: refusing to close the last receiver";
         return false;
     }
+    m_replayUnreopened.clear();   // see createPanadapter()
     // ---- the two roles that point AT a DDC index have to survive the removal ----
     //
     // Both are stored as DDC indices, and removal RENUMBERS every index after
@@ -1364,6 +1402,7 @@ bool Hl2Backend::removePanadapter(const QString& panId)
     }
     // The TX slice may have moved; republish so the indicator follows.
     emitAllSliceState();
+    notifyOperatingStateChanged();
     return true;
 }
 
@@ -2026,7 +2065,11 @@ RadioCapabilities Hl2Backend::capabilities() const
                             // completeness, and Memories stays out of
                             // RadioStateMemory's ext gate (one domain, one
                             // document — RFC #4603 PR 6).
-                            | RadioCapabilities::ClientSettingsDomain::Memories;
+                            | RadioCapabilities::ClientSettingsDomain::Memories
+                            // Receiver B.. and every receiver's own setpoints,
+                            // and the notches: WDSP on this host holds them all.
+                            | RadioCapabilities::ClientSettingsDomain::Receivers
+                            | RadioCapabilities::ClientSettingsDomain::Notches;
     // Host-computed bins, passed through onBackendSpectrumFrame untouched, so
     // they are absolute. The axis is calibrated dBm only once the full-scale
     // reference has been measured on this unit.
@@ -2103,14 +2146,15 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
                       << "— effective clock"
                       << Hl2FreqCal::effectiveClockHz(m_freqCalPpb) << "Hz";
 
-    // Notches are SESSION state, and the same call is true on both sides of the
-    // seam: RadioModel::onDisconnected() calls m_tnfModel.clear(), and a
-    // same-family reconnect rebuilds no backend, so anything kept here would be
-    // replayed into WDSP by seedNotches() with nothing on screen naming it —
-    // audible nulls with no marker to right-click and no id to remove them by.
+    // RadioModel::onDisconnected() clears its notches (m_tnfModel.clear()), and
+    // a same-family reconnect rebuilds no backend, so none may survive here
+    // unannounced: they would be audible nulls with no marker to right-click and
+    // no id to remove them by. The remembered ones come back through
+    // replayRestoredSession(), which reports each with a new id.
     // m_nextNotchId deliberately keeps counting: an id is never reused.
     m_notches.clear();
     m_notchesEnabled = true;
+    m_sessionReplayPending = true;
 
     // The span the operator last chose, snapped to a rate we can actually run
     // and to the current low-bandwidth ceiling. Applied BEFORE the explicit
@@ -2371,6 +2415,12 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
     if (request.serial != m_agcSeededSerial || !m_rxCarriedState) {
         m_agcSeededSerial = request.serial;
         seedReceiverAgc();
+        // The same rule for each receiver's own remembered setpoints: a restore,
+        // so not over receivers an auto-reconnect carried across.
+        seedOpenReceiversFromMemory();
+        if (!m_rx.empty()) {
+            mp.rxFrequencyHz = ncoCommandHz(m_rx.front().ncoHz);
+        }
     }
 
     Hl2RxDsp::Config dc;
@@ -3285,6 +3335,7 @@ void Hl2Backend::setSliceNoiseBlanker(int sliceId, bool on, int level)
     if (r->dsp)
         QMetaObject::invokeMethod(r->dsp, "setNoiseBlanker", Qt::QueuedConnection,
             Q_ARG(bool, r->nbOn), Q_ARG(int, r->nbLevel));
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setSliceAudioMute(int sliceId, bool mute)
@@ -3396,6 +3447,7 @@ void Hl2Backend::setTxSlice(int sliceId)
     // whichever was selected.
     emitSliceState(previous);
     emitSliceState(ddc);
+    notifyOperatingStateChanged();
 }
 
 // ── Manual notch filters ────────────────────────────────────────────────────
@@ -3525,6 +3577,7 @@ void Hl2Backend::createNotch(double centerHz, double widthHz)
     delta.widthHz = notch.widthHz;
     delta.active = notch.active;
     emit notchChanged(notch.id, delta);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setNotch(int notchId, const AetherSDR::NotchDelta& delta)
@@ -3567,6 +3620,7 @@ void Hl2Backend::setNotch(int notchId, const AetherSDR::NotchDelta& delta)
     applied.widthHz = notch.widthHz;
     applied.active = notch.active;
     emit notchChanged(notch.id, applied);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::removeNotch(int notchId)
@@ -3584,6 +3638,7 @@ void Hl2Backend::removeNotch(int notchId)
                 Q_ARG(int, index));
     }
     emit notchRemoved(notchId);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setNotchesEnabled(bool on)
@@ -3631,6 +3686,7 @@ void Hl2Backend::setPanCenter(const QString& panId, double hz, PanCenterIntent)
     applyBandFilter("pan");
     publishWideState();
     emitPanState(ddc);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setPanBandwidth(const QString& panId, double hz)
@@ -4466,6 +4522,7 @@ void Hl2Backend::setSliceRitEnabled(int sliceId, bool on)
     } else {
         emitSliceState(ddc);
     }
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setSliceRitOffset(int sliceId, int hz)
@@ -4487,6 +4544,7 @@ void Hl2Backend::setSliceRitOffset(int sliceId, int hz)
     } else {
         emitSliceState(ddc);
     }
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setSliceXitEnabled(int sliceId, bool on)
@@ -4502,6 +4560,7 @@ void Hl2Backend::setSliceXitEnabled(int sliceId, bool on)
         setTxFrequency(r->sliceFreqHz);
     }
     emitSliceState(ddc);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setSliceXitOffset(int sliceId, int hz)
@@ -4522,6 +4581,7 @@ void Hl2Backend::setSliceXitOffset(int sliceId, int hz)
         setTxFrequency(r->sliceFreqHz);
     }
     emitSliceState(ddc);
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setCwPitch(int hz)
@@ -6493,6 +6553,10 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_tuneByBand.clear();
     m_tuneDefaultPercent = -1;
     m_tunePowerPercent = -1;
+    m_restoredReceivers.clear();
+    m_replayUnreopened.clear();
+    m_restoredTxReceiver = 0;
+    m_restoredNotches.clear();
     m_lnaGainDb = hl2::kLnaDefaultGainDb;
     // The forward-response totals are per session, like the peak window itself.
     m_fwdTotalResponses = 0;
@@ -6537,7 +6601,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     // backend gets a fresh pair, re-asserted by RadioModel::setupBackend().
 
     RestoredRadioState valid;
-    if (state.rfFrequencyHz >= 100'000.0 && state.rfFrequencyHz <= 38'400'000.0)
+    if (restorableRfHz(state.rfFrequencyHz))
         valid.rfFrequencyHz = state.rfFrequencyHz;
     if (isKnownModeString(state.mode))
         valid.mode = state.mode.toUpper();   // canonical casing — a "cw" from a
@@ -6545,8 +6609,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
                                              // round-trip into the UI
     // A passband is kept only as a sane pair; mode+passband are applied
     // together in pushInitialState() (the #4484 reconciliation).
-    if (state.filterLowHz < state.filterHighHz
-        && state.filterLowHz >= -12'000.0 && state.filterHighHz <= 12'000.0)
+    if (restorablePassband(state.filterLowHz, state.filterHighHz, /*cw=*/false))
     {
         valid.filterLowHz = state.filterLowHz;
         valid.filterHighHz = state.filterHighHz;
@@ -6713,6 +6776,52 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
         }
     }
 
+    // Every receiver's own state, receiver A first (Receivers domain). Entries
+    // are validated one by one; a bad entry ends the list there, so the
+    // receivers after it do not move up into its slot.
+    const QJsonArray receivers =
+        state.extension.value(QStringLiteral("receivers")).toArray();
+    for (qsizetype i = 0; i < receivers.size() && i < kMaxReceivers; ++i) {
+        const std::optional<Receiver> r = receiverFromMemory(receivers.at(i).toObject());
+        if (!r) {
+            qCInfo(lcHl2) << "HL2 restore: dropping remembered receiver" << i
+                          << "and the ones after it";
+            break;
+        }
+        m_restoredReceivers.push_back(*r);
+        if (receivers.at(i).toObject().value(QStringLiteral("transmit")).toBool(false))
+            m_restoredTxReceiver = static_cast<int>(i);
+    }
+    // Receiver A's entry, not the flat fields: those follow the transmit
+    // receiver, and transmit comes back to its own receiver after the replay.
+    if (!m_restoredReceivers.empty()) {
+        const Receiver& first = m_restoredReceivers.front();
+        valid.rfFrequencyHz = first.sliceFreqHz;
+        valid.mode = first.mode;
+        valid.filterLowHz = first.filterLowHz;
+        valid.filterHighHz = first.filterHighHz;
+    }
+    // The manual notches (Notches domain), each validated alone.
+    const QJsonArray notches =
+        state.extension.value(QStringLiteral("notches")).toArray();
+    const int maxNotches = capabilities().maxNotchFilters;
+    for (const QJsonValue& value : notches) {
+        const QJsonObject o = value.toObject();
+        NotchRecord notch;
+        notch.centerHz = o.value(QStringLiteral("centerHz")).toDouble();
+        notch.widthHz = o.value(QStringLiteral("widthHz")).toDouble();
+        notch.active = o.value(QStringLiteral("active")).toBool(true);
+        if (!restorableRfHz(notch.centerHz)
+            || !(notch.widthHz > 0.0 && notch.widthHz <= 12'000.0)) {
+            qCInfo(lcHl2) << "HL2 restore: dropping invalid notch" << o;
+            continue;
+        }
+        if (static_cast<int>(m_restoredNotches.size()) >= maxNotches) {
+            break;
+        }
+        m_restoredNotches.push_back(notch);
+    }
+
     m_restoredState = valid;
     m_haveRestoredState = true;
     // THE CAPTURE SIDE ONLY. The remembered pair belongs to the radio whose
@@ -6740,7 +6849,9 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
                   << valid.filterHighHz << "rate" << valid.sampleRateHz
                   << "agc" << valid.agcMode << valid.agcThreshold
                   << "lna bands" << m_lnaDbByBand.size() << "drive bands"
-                  << m_driveByBand.size() << "tune bands" << m_tuneByBand.size();
+                  << m_driveByBand.size() << "tune bands" << m_tuneByBand.size()
+                  << "receivers" << m_restoredReceivers.size()
+                  << "notches" << m_restoredNotches.size();
 }
 
 // Every receiver's AGC pair set to what this session should come up with.
@@ -6801,6 +6912,159 @@ void Hl2Backend::seedReceiverAgc()
         m_agcMode = first.agcModeBeforeDigital.isEmpty()
                         ? first.agcMode : first.agcModeBeforeDigital;
         m_agcThresholdDb = first.agcThresholdDb;
+    }
+}
+
+QJsonObject Hl2Backend::receiverMemoryJson(const Receiver& r)
+{
+    // No AGC here: it is captured flat (seedReceiverAgc), not per receiver.
+    // Audio gain and pan are not here either: the slice echo does not publish
+    // them, so a restored value would run under a slider showing another one.
+    return QJsonObject{
+        {QStringLiteral("freqHz"), r.sliceFreqHz},
+        {QStringLiteral("ncoHz"), r.ncoHz},
+        {QStringLiteral("mode"), r.mode},
+        {QStringLiteral("filterLowHz"), r.filterLowHz},
+        {QStringLiteral("filterHighHz"), r.filterHighHz},
+        {QStringLiteral("nbOn"), r.nbOn},
+        {QStringLiteral("nbLevel"), r.nbLevel},
+        {QStringLiteral("ritOn"), r.ritOn},
+        {QStringLiteral("ritHz"), r.ritHz},
+        {QStringLiteral("xitOn"), r.xitOn},
+        {QStringLiteral("xitHz"), r.xitHz},
+    };
+}
+
+std::optional<Hl2Backend::Receiver> Hl2Backend::receiverFromMemory(const QJsonObject& o) const
+{
+    // Operator data from disk: each field is checked and a bad one is dropped
+    // to the default, never clamped into a value nobody chose.
+    const double freqHz = o.value(QStringLiteral("freqHz")).toDouble();
+    const QString mode = o.value(QStringLiteral("mode")).toString();
+    if (!restorableRfHz(freqHz) || !isKnownModeString(mode)) {
+        return std::nullopt;
+    }
+    Receiver r;
+    r.sliceFreqHz = freqHz;
+    r.ncoHz = freqHz;
+    r.mode = mode.toUpper();   // canonical casing, as the flat restore does
+    const auto [defaultLo, defaultHi] = defaultPassbandForMode(r.mode);
+    r.filterLowHz = defaultLo;
+    r.filterHighHz = defaultHi;
+    const int lo = o.value(QStringLiteral("filterLowHz")).toInt(defaultLo);
+    const int hi = o.value(QStringLiteral("filterHighHz")).toInt(defaultHi);
+    if (restorablePassband(lo, hi, cwBfoOffsetHz(r.mode, m_cwPitchHz) != 0.0)) {
+        r.filterLowHz = lo;
+        r.filterHighHz = hi;
+    }
+    const double ncoHz = o.value(QStringLiteral("ncoHz")).toDouble();
+    if (restorableRfHz(ncoHz)) {
+        r.ncoHz = ncoHz;
+    }
+    auto flag = [&o](const char* key, bool fallback) {
+        const QJsonValue v = o.value(QLatin1String(key));
+        return v.isBool() ? v.toBool() : fallback;
+    };
+    auto offset = [&o](const char* key) {
+        const int v = o.value(QLatin1String(key)).toInt(0);
+        return std::abs(v) <= kRitXitMaxHz ? v : 0;
+    };
+    r.nbOn = flag("nbOn", r.nbOn);
+    if (const int level = o.value(QStringLiteral("nbLevel")).toInt(-1);
+        level >= 0 && level <= 100) {
+        r.nbLevel = level;
+    }
+    r.ritOn = flag("ritOn", false);
+    r.ritHz = offset("ritHz");
+    r.xitOn = flag("xitOn", false);
+    r.xitHz = offset("xitHz");
+    r.nbEchoPending = true;
+    return r;
+}
+
+void Hl2Backend::seedOpenReceiversFromMemory()
+{
+    const std::size_t count = std::min(m_rx.size(), m_restoredReceivers.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        Receiver& r = m_rx[i];
+        const Receiver& memory = m_restoredReceivers[i];
+        // Receiver A's frequency, mode and passband came in through the flat
+        // fields, taken from this same entry; the others take their own.
+        if (i > 0) {
+            const QString previousMode = r.mode;
+            r.sliceFreqHz = memory.sliceFreqHz;
+            r.mode = memory.mode;
+            r.filterLowHz = memory.filterLowHz;
+            r.filterHighHz = memory.filterHighHz;
+            followModeAgc(r, previousMode);
+        }
+        seedReceiverExtras(r, memory);
+    }
+}
+
+void Hl2Backend::seedReceiverExtras(Receiver& r, const Receiver& memory) const
+{
+    r.nbOn = memory.nbOn;
+    r.nbLevel = memory.nbLevel;
+    r.ritOn = memory.ritOn;
+    r.ritHz = memory.ritHz;
+    r.xitOn = memory.xitOn;
+    r.xitHz = memory.xitHz;
+    r.nbEchoPending = true;
+    // The pan centre only where the receiver still listens inside it.
+    const double usableHz = m_sampleRateHz / 2.0 * kUsablePassbandFraction;
+    if (std::abs(rxTunedHz(r) - memory.ncoHz) <= usableHz) {
+        r.ncoHz = memory.ncoHz;
+    } else {
+        r.ncoHz = rxTunedHz(r);
+    }
+}
+
+void Hl2Backend::replayRestoredSession()
+{
+    if (!m_sessionReplayPending) {
+        return;
+    }
+    m_sessionReplayPending = false;
+    // Notches first: a receiver added below is seeded with them when it opens.
+    // createNotch() mints the ids and reports each one, which is what puts the
+    // markers back on the panadapter.
+    for (const NotchRecord& notch : m_restoredNotches) {
+        const int before = m_nextNotchId;
+        createNotch(notch.centerHz, notch.widthHz);
+        if (!notch.active && m_nextNotchId != before) {
+            AetherSDR::NotchDelta delta;
+            delta.active = false;
+            setNotch(before, delta);
+        }
+    }
+    // Receivers B..: each through the same add the operator uses, so the
+    // receiver ceiling at this span still decides how many come back. From the
+    // count already running: an explicit numRx connect param may have opened
+    // more than receiver A, and those took their slots in the list at connect.
+    const double usableHz = m_sampleRateHz / 2.0 * kUsablePassbandFraction;
+    m_replayUnreopened.clear();
+    for (std::size_t i = m_rx.size(); i < m_restoredReceivers.size(); ++i) {
+        Receiver seed = m_restoredReceivers[i];
+        if (std::abs(rxTunedHz(seed) - seed.ncoHz) > usableHz) {
+            seed.ncoHz = rxTunedHz(seed);
+        }
+        if (!addReceiver(seed)) {
+            // Kept, not dropped: the capture this replay triggers would
+            // otherwise erase them, and a later connect may have room.
+            m_replayUnreopened.assign(m_restoredReceivers.begin()
+                                          + static_cast<std::ptrdiff_t>(i),
+                                      m_restoredReceivers.end());
+            qCInfo(lcHl2) << "HL2 restore:" << m_replayUnreopened.size()
+                          << "remembered receiver(s) not reopened; kept for the next connect";
+            break;
+        }
+    }
+    // Transmit back on the receiver that held it. Ownership only, never a key;
+    // setTxSlice() moves the TX NCO and the band memory with it.
+    if (m_restoredTxReceiver > 0) {
+        if (const auto* ids = m_ids.byDdc(m_restoredTxReceiver))
+            setTxSlice(ids->uiNumber);
     }
 }
 
@@ -6949,8 +7213,38 @@ RestoredRadioState Hl2Backend::currentOperatingState() const
     // to end — and written as a NUMBER rather than a build string, so the next
     // change to the mapping is a comparison rather than a table of versions.
     txSetpoints.insert(QStringLiteral("micLevelCurve"), kMicLevelCurve);
+    // Receivers in DDC order, so A is first and a closed one leaves no gap.
+    QJsonArray receivers;
+    for (std::size_t i = 0; i < m_rx.size(); ++i) {
+        QJsonObject entry = receiverMemoryJson(m_rx[i]);
+        if (static_cast<int>(i) == m_txDdc)
+            entry.insert(QStringLiteral("transmit"), true);
+        receivers.append(entry);
+    }
+    for (const Receiver& r : m_replayUnreopened)
+        receivers.append(receiverMemoryJson(r));
+    // Until the replay has run, the remembered notches are still the truth;
+    // store() rebuilds the document, so leaving them out would erase them.
+    QJsonArray notches;
+    for (const NotchRecord& notch : m_sessionReplayPending ? m_restoredNotches : m_notches) {
+        notches.append(QJsonObject{{QStringLiteral("centerHz"), notch.centerHz},
+                                   {QStringLiteral("widthHz"), notch.widthHz},
+                                   {QStringLiteral("active"), notch.active}});
+    }
+    // Same for the receivers while none are running or B.. are not yet back.
+    if (m_rx.empty() || m_sessionReplayPending) {
+        receivers = QJsonArray{};
+        for (std::size_t i = 0; i < m_restoredReceivers.size(); ++i) {
+            QJsonObject entry = receiverMemoryJson(m_restoredReceivers[i]);
+            if (static_cast<int>(i) == m_restoredTxReceiver)
+                entry.insert(QStringLiteral("transmit"), true);
+            receivers.append(entry);
+        }
+    }
     state.extension = QJsonObject{{QStringLiteral("rfGain"), rfGain},
-                                  {QStringLiteral("txSetpoints"), txSetpoints}};
+                                  {QStringLiteral("txSetpoints"), txSetpoints},
+                                  {QStringLiteral("receivers"), receivers},
+                                  {QStringLiteral("notches"), notches}};
     state.extensionSchemaVersion = 1;
     return state;
 }
@@ -7795,7 +8089,7 @@ void Hl2Backend::applyBandFilter(const char* reason)
 
 void Hl2Backend::emitSliceState(int ddc)
 {
-    const Receiver* r = rx(ddc);
+    Receiver* r = rx(ddc);
     const auto* ids = m_ids.byDdc(ddc);
     if (!r || !ids)
         return;
@@ -7832,6 +8126,13 @@ void Hl2Backend::emitSliceState(int ddc)
     d.ritFreq = r->ritHz;
     d.xitOn = r->xitOn;
     d.xitFreq = r->xitHz;
+    // A restored blanker, once, so the NB control shows it. Not on every echo:
+    // SliceModel re-emits its NB signal for each one it receives.
+    if (r->nbEchoPending) {
+        d.nb = r->nbOn;
+        d.nbLevel = r->nbLevel;
+        r->nbEchoPending = false;
+    }
     // The HL2 has one transmitter however many receivers it runs, so EXACTLY ONE
     // slice is the transmit slice — the one on m_txDdc.
     //

@@ -5957,6 +5957,14 @@ target_link_libraries(automation_persist_diagnostics_test PRIVATE aethercore Qt6
 add_test(NAME automation_persist_diagnostics_test COMMAND automation_persist_diagnostics_test)
 # Socket-free HL2 gain persistence: boardMaxRx bypasses discovery; the test
 # never pumps events and cancels DSP setup before it can start Metis UDP.
+# HL2 session memory (upstream 4e547347, #5777): the receiver set, each
+# receiver's own setpoints and the manual notches are remembered per radio and
+# replayed once per connect through the production link edge. Socket-free:
+# receivers configured as connectRadio() leaves them, link edge injected.
+add_executable(hl2_session_memory_test tests/hl2_session_memory_test.cpp)
+target_include_directories(hl2_session_memory_test PRIVATE src tests)
+target_link_libraries(hl2_session_memory_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_session_memory_test COMMAND hl2_session_memory_test)
 add_executable(hl2_gain_restore_test tests/hl2_gain_restore_test.cpp)
 target_include_directories(hl2_gain_restore_test PRIVATE src tests)
 target_link_libraries(hl2_gain_restore_test PRIVATE aethercore Qt6::Core)
