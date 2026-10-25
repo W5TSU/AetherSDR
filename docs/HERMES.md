@@ -445,19 +445,49 @@ Matching on the address alone is sound here for a reason particular to `0x3d`:
 nothing else sets RQST there, so a reply at `0x3d` answers an IO board read. The
 residual is the one the paragraph above describes, a late reply to an abandoned
 read landing on the next, and that reply carries the same four registers, at
-most a deadline plus a quarantine old. A `0x3F` refusal is what `i2c_bus2.v`
-gives a command that arrives while the bus is busy (`cmd_ack_next = 1'b0; //
-Missed`), and `ioboard.status` reports it as an error rather than retrying. The
-bus runs at 312.5 kHz (`clk_ctrl` 2.5 MHz, `prescale` 2), so the read holds it
-for about 0.2 ms, against 2.6 ms between EP2 packets.
+most a deadline plus a quarantine old.
+
+The bus can be busy in three ways, and none gives a reading. `i2c_bus2.v` looks
+at a command only in `STATE_IDLE`:
+- In `STATE_IDLE` with the I2C master still busy, the command is refused with
+  `0x3F` (`cmd_ack_next = 1'b0; // Missed`).
+- During another read (`STATE_READ_*` holds `cmd_ack` low), `control.v`'s
+  `RESP_ACK` sees the low ack and also answers `0x3F`.
+- During a write (`STATE_CMDADDR`, `STATE_FCMDADDR` and their data states, where
+  `cmd_ack` stays high), the command is ignored outright, and `control.v` answers
+  at `0x3d` with the request's own DATA, `0x079D0600`. A board could in principle
+  read back those exact bytes (pins `0x00`, ATU 6, fault `0x9D`, firmware 7), but
+  only while transmitting with an undefined fault code.
+
+`ioboard.status` reports all three as "the radio's I2C bus was busy" rather than
+retrying.
+
+The bus runs at 312.5 kHz (`clk_ctrl` 2.5 MHz, `prescale` 2), so a read or a
+write holds it for about 0.1–0.2 ms. EP2 packets are 2.6 ms apart on average,
+but the 2 ms pacer catches up in bursts microseconds apart, and an IO board
+TX-frequency bank that reaches a busy bus is ignored with nothing to report it,
+because writes carry no RQST. So `MetisClient::buildNextControlPacket()` spaces
+bus 2 around the read:
+- a config bank whose filter, RX-antenna or AK4951 speaker bits changed since
+  the last packet sent counts as a bus-2 write, because frame A's change starts
+  one ahead of frame B, and the read never shares its packet;
+- the read waits until 2 ms (by the millisecond clock, so more than 1 ms) after
+  the last bus-2 write sent;
+- an I2C write waits until 2 ms after the read, keeping its place in the queue.
+
+A held bank costs at most one packet. Writes are not spaced from each other:
+back-to-back I2C writes in a burst, and an IO board bank in the same packet as
+a filter change, share the bus as they did before the read existed.
 
 With no board fitted the read should still complete, not be refused:
 `i2c_master.v` strobes `missed_ack` when no chip acknowledges and carries on, and
 `i2c_bus2.v` never consults it. The bytes are then whatever the idle bus reads,
 `0xFF` with pull-ups; the gateware sets none on `io_scl2`/`io_sda2`. The board
 never sets bits 6..7 of register 6 (the README gives them to `REG_IN_PINS`, 168,
-only), so `ioboard.status` answers a reply with either set with the error "No IO
-board answered", not a reading; a read that never completes times out.
+only), and every firmware build reports a major version of 1 or more, so
+`ioboard.status` answers a reply with either bit set, or with firmware 0, with
+the error "No IO board answered", not a reading; a read that never completes
+times out.
 Unverified on hardware: no run yet has had the board unplugged.
 
 **On hardware** (2026-10-23; HL2 gateware 74.2, N2ADR IO board firmware major

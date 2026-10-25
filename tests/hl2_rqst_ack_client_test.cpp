@@ -533,6 +533,107 @@ static void testIoBoardStatusLeavesTheAllowListShut()
           "and as a plain write");
 }
 
+
+// I2C bus 2 spacing. i2c_bus2.v ignores a command that reaches it while the bus
+// is mid-transaction, so the read and the bus-2 traffic around it are spaced.
+static Packet sendPacketAt(MetisClient& c, qint64 nowMs)
+{
+    const auto pkt = c.buildNextControlPacket(nowMs);
+    MetisClientTestAccess::confirmSent(c, static_cast<qint64>(kUsbPacketSize), nowMs);
+    return pkt;
+}
+
+static bool frameBIsRead(const Packet& p)
+{
+    return (c0(p, kFrameB) & kC0RespRqstBit) != 0
+        && (c0(p, kFrameB) & ~(kC0RespRqstBit | kC0MoxBit)) == kC0I2c2;
+}
+
+static bool frameBIsI2cWrite(const Packet& p)
+{
+    const std::uint8_t a = c0(p, kFrameB) & ~kC0MoxBit;
+    return a == kC0I2c1 || a == kC0I2c2;
+}
+
+static void testIoBoardStatusSkipsAPacketThatMovesTheFilter()
+{
+    MetisClient c;
+    MetisClientTestAccess::setStreaming(c);
+    (void)sendPacketAt(c, 100);
+    c.requestIoBoardStatus();
+    c.setBandFilter(0x01);
+    const auto withFilter = sendPacketAt(c, 103);
+    check(((dataOf(withFilter, kFrameA) >> 17) & 0x7F) == 0x01,
+          "frame A carries the new filter byte");
+    check(!anyFrameRequests(withFilter),
+          "and the read does not share its packet: the filter write holds bus 2");
+    check(!anyFrameRequests(sendPacketAt(c, 103)),
+          "nor the next packet of the same burst, while that filter write runs");
+    check(!anyFrameRequests(sendPacketAt(c, 104)), "nor 1 ms on");
+    check(frameBIsRead(sendPacketAt(c, 105)), "the read goes out 2 ms after the filter change");
+
+    // A filter change whose packet never reached the socket has not reached the
+    // radio either, so the packet that does carry it still holds the read back.
+    c.setBandFilter(0x02);
+    (void)c.buildNextControlPacket(109);
+    MetisClientTestAccess::confirmSent(c, -1, 109);
+    MetisClientTestAccess::feedResponse(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    c.requestIoBoardStatus();
+    check(!anyFrameRequests(sendPacketAt(c, 112)),
+          "a filter change that failed to send still holds the read on its retry");
+    check(frameBIsRead(sendPacketAt(c, 115)), "and the read follows it");
+
+    // A bit that starts no bus-2 write does not hold the read: random, DATA[12].
+    MetisClientTestAccess::feedResponse(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    c.setDitherRandomBits(false, true);
+    c.requestIoBoardStatus();
+    check(frameBIsRead(sendPacketAt(c, 120)), "a random-bit change does not hold the read");
+
+    // DATA[11] is the AK4951 speaker bit, which starts a bus-2 write on a codec
+    // build, so a dither change holds the read like a filter change.
+    MetisClientTestAccess::feedResponse(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    c.setDitherRandomBits(true, true);
+    c.requestIoBoardStatus();
+    check(!anyFrameRequests(sendPacketAt(c, 130)), "a dither change holds the read");
+    check(frameBIsRead(sendPacketAt(c, 132)), "for 2 ms");
+}
+
+static void testIoBoardWritesWaitForTheRead()
+{
+    MetisClient c;
+    MetisClientTestAccess::setStreaming(c);
+    (void)sendPacketAt(c, 100);
+    c.requestIoBoardStatus();
+    check(frameBIsRead(sendPacketAt(c, 103)), "the read goes out at 103 ms");
+    c.setIoBoardTxFrequencyHz(7'100'000);
+    check(!frameBIsI2cWrite(sendPacketAt(c, 103)),
+          "an IO board write in the same burst waits: the read holds bus 2");
+    check(!frameBIsI2cWrite(sendPacketAt(c, 104)), "and still waits 1 ms later");
+    int writes = 0;
+    for (int i = 0; i < 16; ++i) {
+        if (frameBIsI2cWrite(sendPacketAt(c, 105 + 3 * i)))
+            ++writes;
+    }
+    check(writes == kIoBoardTxFreqBanks, "then every bank goes out");
+}
+
+static void testIoBoardStatusWaitsForAWrite()
+{
+    MetisClient c;
+    MetisClientTestAccess::setStreaming(c);
+    (void)sendPacketAt(c, 100);
+    c.setIoBoardTxFrequencyHz(7'100'000);
+    qint64 t = 103;
+    for (int i = 0; i < kIoBoardTxFreqBanks; ++i, t += 3) {
+        check(frameBIsI2cWrite(sendPacketAt(c, t)), "each IO board bank goes out in turn");
+    }
+    const qint64 lastWrite = t - 3;
+    c.requestIoBoardStatus();
+    check(!anyFrameRequests(sendPacketAt(c, lastWrite + 1)),
+          "a read within 2 ms of the last bus-2 write waits");
+    check(frameBIsRead(sendPacketAt(c, lastWrite + 2)), "and goes out once it has passed");
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
@@ -550,6 +651,9 @@ int main(int argc, char** argv)
     testIoBoardStatusIsOneReadOnTheWire();
     testIoBoardStatusAnswersExactlyOnce();
     testIoBoardStatusLeavesTheAllowListShut();
+    testIoBoardStatusSkipsAPacketThatMovesTheFilter();
+    testIoBoardWritesWaitForTheRead();
+    testIoBoardStatusWaitsForAWrite();
 
     if (g_failures == 0)
         std::printf("hl2_rqst_ack_client_test: OK\n");

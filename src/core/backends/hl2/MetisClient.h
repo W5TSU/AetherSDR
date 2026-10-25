@@ -369,7 +369,9 @@ public:
 
     // Build the EP2 packet this client would send next, without sending it.
     // Exists so the gate can be tested on the exact bytes that would go out.
+    // `nowMs` is controlNowMs()'s clock; it only spaces I2C bus 2 traffic.
     std::array<std::uint8_t, kUsbPacketSize> buildNextControlPacket();
+    std::array<std::uint8_t, kUsbPacketSize> buildNextControlPacket(qint64 nowMs);
 
     // Queue transmit IQ. Samples are consumed kTxSamplesPerPacket at a time, one
     // packet per EP2 frame, so the queue drains at the 48 kHz EP2 rate.
@@ -473,7 +475,7 @@ signals:
     // a while. Consumers must not retry immediately in this handler.
     void controlRequestFailed(int addr, bool refused);
     // requestIoBoardStatus()'s answer: registers 6..9 as read (decodeIoBoardStatus),
-    // or why there is no reading.
+    // never the echo of an ignored read, or why there is no reading.
     void ioBoardStatusReady(quint32 registers);
     void ioBoardStatusFailed(const QString& reason);
 
@@ -835,6 +837,23 @@ private:
     // onControlPacketSent() runs, "is it still Queued" cannot distinguish a
     // request that went out from one that never did.
     bool m_requestOnBuiltPacket = false;
+    // I2C bus 2 spacing. i2c_bus2.v ignores any command that reaches it mid-
+    // transaction, so the IO board status read and the bus-2 writes either side
+    // of it go out at least kI2cBusSpacingMs apart. A config bank whose bus-2
+    // bits changed counts as a write (frame A's filter bits start one), and the
+    // read never shares its packet. Stamped on the packet built, committed when
+    // onControlPacketSent() sees it reach the socket. The ms clock rounds down,
+    // hence 2 for "over 1 ms".
+    static constexpr qint64 kI2cBusSpacingMs = 2;
+    qint64 m_builtAtMs = 0;
+    bool   m_busReadOnBuiltPacket = false;
+    bool   m_i2cWriteOnBuiltPacket = false;
+    // configBus2Bits() of the config bank; kConfigBus2Unknown before a session's first.
+    static constexpr std::uint32_t kConfigBus2Unknown = 0xFFFFFFFFu;
+    std::uint32_t m_configBus2OnBuiltPacket = kConfigBus2Unknown;
+    std::uint32_t m_lastConfigBus2Sent = kConfigBus2Unknown;
+    qint64 m_lastBusReadSentMs = -kI2cBusSpacingMs;
+    qint64 m_lastI2cWriteSentMs = -kI2cBusSpacingMs;
     // Last transmit frequency handed to the IO board, and whether one ever was.
     // A separate flag rather than a 0 sentinel: 0 Hz is not a plausible tuned
     // frequency, but "never sent" still has to survive a radio that legitimately

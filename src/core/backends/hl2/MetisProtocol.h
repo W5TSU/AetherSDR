@@ -274,7 +274,8 @@ Cc ccTxDrive(int level, bool paEnable = false, bool atuTune = false) noexcept;
 //   C2 = DATA[23] stop at end, DATA[22:16] 7-bit chip address
 //   C3 = DATA[15:8] register;  C4 = DATA[7:0] data byte
 // One two-byte I2C write per bank. Neither address is on
-// MetisClient::requestRegister's allow-list, so RQST stays clear.
+// MetisClient::requestRegister's allow-list, so RQST stays clear on both except
+// for the IO board status read (kIoBoardStatusReadData) at 0x3d.
 // addr 0x3b is a raw AD9866 SPI write (ad9866ctrl.v, cookie 8'h06) that can
 // hit any converter register, so it has no encoder and is not allow-listed.
 inline constexpr std::uint8_t kC0Ad9866Spi = 0x76;  // addr 0x3b << 1
@@ -285,9 +286,8 @@ inline constexpr std::uint8_t kI2cStopAtEnd   = 0x80;  // C2 bit 7
 // AND 0x07 IS THE READ COOKIE, on both buses. Its one use is the IO board
 // status read (kIoBoardStatusReadData); the distinction between "the protocol
 // cannot" and "this client does not" is worth keeping straight for the rest.
-// i2c_bus2.v accepts either address on
-// `cmd_data[31:25] == 7'h03` — i.e. C1 of 0x06 or 0x07 — and then branches on
-// the low bit:
+// i2c_bus2.v accepts either address on `cmd_data[31:25] == 7'h03` — i.e. C1 of
+// 0x06 or 0x07 — and then branches on the low bit:
 //
 //     state_next = cmd_data[24] ? STATE_READ_CMDADDR : STATE_CMDADDR;
 //
@@ -388,9 +388,13 @@ struct IoBoardStatus {
         return n >= 1 && n <= 5 && ((inputPins >> n) & 0x01) != 0;
     }
     // The board leaves bits 6..7 of REG_INPUT_PINS clear (they exist only in
-    // REG_IN_PINS, 168), so a reply with either set is not from a board: most
-    // likely an empty bus read as 0xFF.
-    [[nodiscard]] constexpr bool fromBoard() const noexcept { return (inputPins & 0xC0) == 0; }
+    // REG_IN_PINS, 168), and every HL2IOBoard firmware reports a major version
+    // of 1 or more, so a reply that breaks either is not from a board: most
+    // likely an empty bus read as 0xFF or 0x00.
+    [[nodiscard]] constexpr bool fromBoard() const noexcept
+    {
+        return (inputPins & 0xC0) == 0 && firmwareMajor != 0;
+    }
 };
 
 [[nodiscard]] constexpr IoBoardStatus decodeIoBoardStatus(std::uint32_t replyData) noexcept

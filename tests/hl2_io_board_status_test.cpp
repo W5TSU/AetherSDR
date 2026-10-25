@@ -177,6 +177,40 @@ static void testAnEmptyBusIsNotAReading()
         MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
     });
     check(r.results == 1 && r.lastId == 22, "and the next read is answered");
+
+    // An all-zeros bus reads as firmware 0, which no board reports.
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 23, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0x00'00'00'00u));
+    });
+    check(r.errors == 2 && r.results == 1 && r.lastId == 23
+              && r.lastError.contains(QStringLiteral("No IO board")),
+          "an all-zeros reply is not a reading either");
+}
+
+static void testAnIgnoredReadIsTheBusBeingBusy()
+{
+    // i2c_bus2.v ignores a read that arrives during a write, and control.v
+    // answers with the request's own DATA: not a reading.
+    Hl2Backend backend;
+    Replies r;
+    watch(backend, r);
+    Hl2IoBoardStatusTestAccess::setConnected(backend);
+    onClientThread(backend, [](MetisClient& c) { MetisClientTestAccess::setStreaming(c); });
+
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 31, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, kIoBoardStatusReadData));
+    });
+    check(r.errors == 1 && r.results == 0 && r.lastId == 31,
+          "an echo of the request is an error, not a reading");
+    check(r.lastError.contains(QStringLiteral("busy")), "and says the bus was busy");
+
+    backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("ioboard.status"), 32, {});
+    onClientThread(backend, [](MetisClient& c) {
+        MetisClientTestAccess::answer(c, ack(kC0I2c2 >> 1, 0x02'00'00'01u));
+    });
+    check(r.results == 1 && r.lastId == 32, "and the next read is answered");
 }
 
 int main(int argc, char** argv)
@@ -186,6 +220,7 @@ int main(int argc, char** argv)
     testRefusedWhileDisconnected();
     testAnsweredWithTheRegistersDecoded();
     testAnEmptyBusIsNotAReading();
+    testAnIgnoredReadIsTheBusBeingBusy();
 
     if (g_failures == 0) {
         std::printf("hl2_io_board_status_test: all checks passed\n");

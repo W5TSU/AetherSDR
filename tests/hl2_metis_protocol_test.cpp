@@ -1235,6 +1235,9 @@ int main()
         check(!decodeIoBoardStatus(0x02'00'00'41u).fromBoard()
                   && !decodeIoBoardStatus(0x02'00'00'81u).fromBoard(),
               "nor is any reply with bit 6 or 7 of REG_INPUT_PINS set");
+        check(!decodeIoBoardStatus(0x00'00'00'00u).fromBoard()
+                  && !decodeIoBoardStatus(0x00'00'00'01u).fromBoard(),
+              "nor one reporting firmware 0, which no board does");
     }
 
     // ---- adcClipRatePercent: NULL AND ZERO ARE DIFFERENT FACTS ------------
