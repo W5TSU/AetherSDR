@@ -1217,6 +1217,18 @@ add_executable(client_comp_test
 )
 target_include_directories(client_comp_test PRIVATE src)
 
+# Upstream bb2ba031 (#5921): the CW decoder's pitch/WPM ranges are one saved,
+# validated setting in the CwDecoder document. Isolated settings, no widgets.
+add_executable(cw_decode_settings_range_test
+    tests/cw_decode_settings_range_test.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(cw_decode_settings_range_test PRIVATE src tests)
+target_link_libraries(cw_decode_settings_range_test PRIVATE Qt6::Core Qt6::Gui)
+add_test(NAME cw_decode_settings_range_test COMMAND cw_decode_settings_range_test)
+
 add_executable(slice_label_test
     tests/slice_label_test.cpp
     src/gui/SliceLabel.cpp
@@ -6841,6 +6853,7 @@ set(AETHER_SETTINGS_CONSUMERS
     log_manager_filter_rules_test
     bandplan_voice_labels_test
     bandplan_usage_resource_test
+    cw_decode_settings_range_test
     vkamp_connection_test
     system_info_dialog_test
     spectrum_overlay_band_highlight_test
