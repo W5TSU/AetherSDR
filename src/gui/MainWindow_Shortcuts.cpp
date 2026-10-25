@@ -963,7 +963,7 @@ void MainWindow::registerShortcutActions()
             if (!m_radioModel.isConnected()) return;
             auto& tx = m_radioModel.transmitModel();
             tx.setVoxEnable(!tx.voxEnable());
-        });
+        }, /*autoRepeat=*/false, /*keysTx=*/true);  // arming VOX keys TX on audio (#6053)
     m_shortcutManager.registerAction("speech_proc_toggle", "Speech Processor Toggle", "TX",
         QKeySequence(), [this]() {
             if (!m_radioModel.isConnected()) return;

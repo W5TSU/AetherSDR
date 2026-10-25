@@ -12,6 +12,7 @@
 #include <QFrame>
 #include <QPainter>
 #include "core/ThemeManager.h"
+#include "core/TxKeyingMarker.h"
 
 namespace AetherSDR {
 
@@ -162,6 +163,11 @@ void PhoneApplet::buildUI()
         m_voxBtn->setAccessibleName("VOX voice-operated transmit");
         m_voxBtn->setAccessibleDescription("Toggle voice-activated transmit");
         m_voxBtn->setStyleSheet(kBtnBase + kGreenActive);
+        // Arming VOX lets audio key the radio: a TX control for the bridge and
+        // the keyboard guard. Without TX permission the bridge may only switch
+        // it off (#6053).
+        markTxKeying(m_voxBtn);
+        markTxDisarmAllowed(m_voxBtn);
         connect(m_voxBtn, &QPushButton::toggled, this, [this](bool on) {
             if (!m_updatingFromModel && m_model) m_model->setVoxEnable(on);
         });
