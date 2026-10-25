@@ -1944,9 +1944,9 @@ qt_add_resources(BANDPLAN_USAGE_RESOURCE_TEST_RESOURCES resources/resources.qrc)
 add_executable(bandplan_usage_resource_test
     tests/bandplan_usage_resource_test.cpp
     src/models/BandPlanManager.cpp
-    $<TARGET_OBJECTS:aether_test_log_manager>
-    $<TARGET_OBJECTS:aether_test_async_log_writer>
-    $<TARGET_OBJECTS:aether_test_settings>
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
     ${BANDPLAN_USAGE_RESOURCE_TEST_RESOURCES}
 )
 target_include_directories(bandplan_usage_resource_test PRIVATE src)
