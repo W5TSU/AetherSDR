@@ -78,26 +78,53 @@ void CwDecoder::stop()
 
 void CwDecoder::lockPitch(bool lock)
 {
+    bool cleared = false;
     {
         std::lock_guard guard(m_parametersMutex);
+        // Only a lock keeps a value across a stop; unlocking a stopped
+        // decoder leaves no estimate for Zero Beat to act on (#5745).
+        if (!lock && !m_running && m_pitch.load() != 0.0f) {
+            m_pitch = 0.0f;
+            cleared = true;
+        }
         m_pitchLocked = lock;
         m_pendingParameters.pitchHz = lock ? m_pitch.load() : -1.0f;
         m_parametersDirty = true;
     }
     qCDebug(lcDsp) << "CwDecoder: pitch" << (lock ? "locked at" : "unlocked from")
                    << m_pitch.load() << "Hz";
+    if (cleared) {
+        postClearedStats();
+    }
 }
 
 void CwDecoder::lockSpeed(bool lock)
 {
+    bool cleared = false;
     {
         std::lock_guard guard(m_parametersMutex);
+        if (!lock && !m_running && m_speed.load() != 0.0f) {
+            m_speed = 0.0f;
+            cleared = true;
+        }
         m_speedLocked = lock;
         m_pendingParameters.speedWpm = lock ? m_speed.load() : -1.0f;
         m_parametersDirty = true;
     }
     qCDebug(lcDsp) << "CwDecoder: speed" << (lock ? "locked at" : "unlocked from")
                    << m_speed.load() << "WPM";
+    if (cleared) {
+        postClearedStats();
+    }
+}
+
+void CwDecoder::postClearedStats()
+{
+    // Queued, as stop() posts its clear, so it lands behind any reading the
+    // worker queued before it stopped and the panel stops showing the value.
+    QMetaObject::invokeMethod(this, [this] {
+        emit statsUpdated(m_pitch, m_speed);
+    }, Qt::QueuedConnection);
 }
 
 void CwDecoder::setKnownParameters(float pitchHz, float speedWpm)

@@ -61,6 +61,7 @@ signals:
 
 private:
     void decodeLoop();
+    void postClearedStats();
     std::unique_ptr<QThread> m_workerThread;
 
     // One coherent pending configuration. Only setters and the decoder worker
