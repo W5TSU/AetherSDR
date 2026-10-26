@@ -54,16 +54,20 @@ bool SerialPortController::open(const QString& portName, int baudRate,
     QString devPath = portName.startsWith("COM", Qt::CaseInsensitive)
                     ? "\\\\.\\" + portName : portName;
 
-    // Non-overlapped: WaitCommEvent is called synchronously in the watcher thread,
-    // which blocks until a pin change occurs. SetCommMask(0) aborts it on close.
-    // Overlapped mode causes silent WaitCommEvent failures on some FTDI VCP drivers.
+    // Overlapped (#99). On a synchronous handle Windows runs one request at a
+    // time, so the watcher's pending WaitCommEvent held back every
+    // EscapeCommFunction (PTT/CW output) and SetCommMask (close) until the next
+    // input-pin edge. With no edge coming, the controller thread froze at the
+    // first TX change and shutdown waited on it forever, leaving the process
+    // and the port behind. Overlapped, the watcher waits on its own event while
+    // pin writes and close() go straight through.
     HANDLE hPort = ::CreateFileW(
         reinterpret_cast<LPCWSTR>(devPath.utf16()),
         GENERIC_READ | GENERIC_WRITE,
         0,               // no sharing — COM ports are exclusive
         nullptr,
         OPEN_EXISTING,
-        0,               // synchronous I/O
+        FILE_FLAG_OVERLAPPED,
         nullptr
     );
     if (hPort == INVALID_HANDLE_VALUE) {
@@ -129,7 +133,19 @@ bool SerialPortController::open(const QString& portName, int baudRate,
     m_lastDcdActive = m_dcdActiveHigh ? dcd : !dcd;
     m_debounceTimer.start();
 
+    // Manual-reset event close() signals to end the watcher's wait.
+    HANDLE stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!stopEvent) {
+        DWORD err = ::GetLastError();
+        qCWarning(lcDevices) << "SerialPortController: CreateEvent failed for" << portName
+                             << "Win32 error" << err;
+        emit errorOccurred(QString("Failed to watch %1 (error %2)").arg(portName).arg(err));
+        ::CloseHandle(hPort);
+        return false;
+    }
+
     m_hWin        = static_cast<void*>(hPort);
+    m_winStopEvent = static_cast<void*>(stopEvent);
     m_winPortName = portName;
     m_winBaudRate = baudRate;
 
@@ -180,16 +196,25 @@ void SerialPortController::close()
     if (m_rtsFn != PinFunction::None)
         ::EscapeCommFunction(hPort, m_rtsActiveHigh ? CLRRTS : SETRTS);
 
-    // Stop watcher thread: flag it, then abort the pending WaitCommEvent
+    // Stop watcher thread: flag it, then wake its wait; it cancels the
+    // pending WaitCommEvent itself.
     m_stopWinWatch.store(true);
-    ::SetCommMask(hPort, 0);    // causes pending WaitCommEvent to return immediately
+    HANDLE stopEvent = static_cast<HANDLE>(m_winStopEvent);
+    ::SetEvent(stopEvent);
 
     if (m_winWatchThread) {
-        m_winWatchThread->wait(3000);
+        if (!m_winWatchThread->wait(3000)) {
+            qCWarning(lcDevices) << "SerialPortController: watcher did not stop on"
+                                 << m_winPortName << "— cancelling its I/O";
+            ::CancelIoEx(hPort, nullptr);
+            m_winWatchThread->wait(3000);
+        }
         delete m_winWatchThread;
         m_winWatchThread = nullptr;
     }
 
+    ::CloseHandle(stopEvent);
+    m_winStopEvent = nullptr;
     ::CloseHandle(hPort);
     m_hWin        = nullptr;
     m_winPortName.clear();
@@ -230,17 +255,45 @@ void SerialPortController::updatePolling()
 void SerialPortController::runWinWatcher()
 {
     HANDLE hPort = static_cast<HANDLE>(m_hWin);
+    HANDLE stopEvent = static_cast<HANDLE>(m_winStopEvent);
+
+    OVERLAPPED ov = {};
+    ov.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) {
+        qCWarning(lcDevices) << "SerialPortController: watcher CreateEvent failed, Win32 error"
+                             << ::GetLastError();
+        return;
+    }
+    const HANDLE waits[2] = {ov.hEvent, stopEvent};
 
     qCDebug(lcDevices) << "SerialPortController: watcher thread started";
 
     while (!m_stopWinWatch.load()) {
         DWORD evtMask = 0;
-        // Synchronous blocking call — returns when a pin changes or SetCommMask(0) aborts it
-        if (!::WaitCommEvent(hPort, &evtMask, nullptr)) {
+        DWORD unused = 0;
+        ::ResetEvent(ov.hEvent);
+        // Returns at once when an event is already queued; otherwise the request
+        // stays pending until a pin changes or close() sets stopEvent.
+        if (!::WaitCommEvent(hPort, &evtMask, &ov)) {
             DWORD err = ::GetLastError();
-            if (err == ERROR_OPERATION_ABORTED || err == ERROR_INVALID_HANDLE) break;
-            qCWarning(lcDevices) << "SerialPortController: WaitCommEvent error" << err;
-            break;
+            if (err != ERROR_IO_PENDING) {
+                if (err != ERROR_OPERATION_ABORTED && err != ERROR_INVALID_HANDLE)
+                    qCWarning(lcDevices) << "SerialPortController: WaitCommEvent error" << err;
+                break;
+            }
+            if (::WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
+                // close(): cancel the request and reap it before ov and
+                // evtMask go out of scope.
+                ::CancelIoEx(hPort, &ov);
+                ::GetOverlappedResult(hPort, &ov, &unused, TRUE);
+                break;
+            }
+            if (!::GetOverlappedResult(hPort, &ov, &unused, FALSE)) {
+                err = ::GetLastError();
+                if (err != ERROR_OPERATION_ABORTED)
+                    qCWarning(lcDevices) << "SerialPortController: WaitCommEvent error" << err;
+                break;
+            }
         }
 
         if (m_stopWinWatch.load()) break;
@@ -263,6 +316,7 @@ void SerialPortController::runWinWatcher()
         }, Qt::QueuedConnection);
     }
 
+    ::CloseHandle(ov.hEvent);
     qCDebug(lcDevices) << "SerialPortController: watcher thread exiting";
 }
 
