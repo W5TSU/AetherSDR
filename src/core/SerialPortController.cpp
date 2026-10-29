@@ -95,9 +95,16 @@ bool SerialPortController::open(const QString& portName, int baudRate,
     dcb.StopBits        = (stopBits == 2) ? TWOSTOPBITS : ONESTOPBIT;
     dcb.fBinary         = TRUE;
     dcb.fParity         = (parity != NOPARITY);
-    // Software-controlled outputs, start HIGH (Windows default on open)
-    dcb.fDtrControl     = DTR_CONTROL_ENABLE;
-    dcb.fRtsControl     = RTS_CONTROL_ENABLE;
+    // Software-controlled outputs. A pin with a PTT/CW function is set to its
+    // idle level here rather than enabled and cleared below, which keyed the
+    // line for the gap between the two (Principle VI). A driver may still raise
+    // DTR/RTS inside CreateFile, before any DCB applies; that sub-millisecond
+    // pulse is beyond reach here. A pin with no function stays HIGH (Windows
+    // default on open).
+    const bool dtrIdleLow = m_dtrFn != PinFunction::None && m_dtrActiveHigh;
+    const bool rtsIdleLow = m_rtsFn != PinFunction::None && m_rtsActiveHigh;
+    dcb.fDtrControl     = dtrIdleLow ? DTR_CONTROL_DISABLE : DTR_CONTROL_ENABLE;
+    dcb.fRtsControl     = rtsIdleLow ? RTS_CONTROL_DISABLE : RTS_CONTROL_ENABLE;
     dcb.fOutxCtsFlow    = FALSE;
     dcb.fOutxDsrFlow    = FALSE;
     dcb.fDsrSensitivity = FALSE;
