@@ -862,9 +862,13 @@ int main(int argc, char* argv[])
         // application-modal (showForkSplash); here, now that the main window
         // has a native handle, it is re-mapped as that window's transient child
         // so the compositor gets the set_parent at map time. On
-        // X11/KWin/Windows/macOS the WindowStaysOnTopHint alone already did it.
+        // X11/KWin/Windows/macOS the WindowStaysOnTopHint alone already did it,
+        // and the splash is already on screen there: re-mapping it would make
+        // it vanish and pop up a second time, so it is left alone.
         if (forkSplash) {
-            if (window.windowHandle() && forkSplash->windowHandle()) {
+            const bool wayland = QGuiApplication::platformName().startsWith(
+                QLatin1String("wayland"));
+            if (wayland && window.windowHandle() && forkSplash->windowHandle()) {
                 forkSplash->hide();
                 forkSplash->windowHandle()->setTransientParent(
                     window.windowHandle());
