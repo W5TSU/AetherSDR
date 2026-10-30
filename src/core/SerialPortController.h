@@ -32,7 +32,9 @@ namespace AetherSDR {
 //
 // On Windows, uses Win32 WaitCommEvent directly — QSerialPort::pinoutSignals()
 // (backed by GetCommModemStatus) returns stale data on FTDI and similar drivers
-// unless called in the context of a WaitCommEvent completion.
+// unless called in the context of a WaitCommEvent completion. The port is
+// opened overlapped so output-pin writes and close() never wait behind the
+// watcher's pending WaitCommEvent (#99).
 //
 // On Linux/macOS, polls QSerialPort::pinoutSignals() on a timer.
 //
@@ -138,6 +140,7 @@ private:
 #ifdef Q_OS_WIN
     // Win32 path: owns the COM port handle exclusively for WaitCommEvent-based detection
     void*         m_hWin{nullptr};      // Win32 HANDLE cast to void*; nullptr = closed
+    void*         m_winStopEvent{nullptr};  // Win32 event; close() sets it to end the watcher
     QString       m_winPortName;
     int           m_winBaudRate{0};
     QThread*      m_winWatchThread{nullptr};

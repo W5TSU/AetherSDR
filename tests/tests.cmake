@@ -2677,6 +2677,20 @@ add_test(NAME serial_port_combo_test COMMAND serial_port_combo_test)
 set_tests_properties(serial_port_combo_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# HARDWARE (#99): the Win32 serial path's PTT writes and close() must not wait
+# behind the watcher's pending WaitCommEvent. Needs a DTR->DSR wired COM pair
+# (null-modem cable or virtual pair) named in AETHER_SERIAL_TEST_PORT and
+# AETHER_SERIAL_TEST_FAR_PORT; skips (77) without them. It raises DTR, the PTT
+# output, so nothing else may be attached to the pair.
+if(WIN32)
+    add_executable(serial_port_controller_win_test tests/serial_port_controller_win_test.cpp)
+    target_include_directories(serial_port_controller_win_test PRIVATE src tests)
+    target_link_libraries(serial_port_controller_win_test PRIVATE aethercore Qt6::Core)
+    add_test(NAME serial_port_controller_win_test COMMAND serial_port_controller_win_test)
+    set_tests_properties(serial_port_controller_win_test PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 60)
+endif()
+
 add_executable(spectrum_preview_logic_test
     tests/spectrum_preview_logic_test.cpp
 )
