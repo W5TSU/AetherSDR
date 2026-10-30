@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 
 #include <cstdio>
+#include <optional>
 
 using namespace AetherSDR;
 
@@ -28,6 +29,35 @@ void check(bool ok, const char* what)
 bool sameRange(CwDecodeSettings::Range got, int low, int high)
 {
     return got.low == low && got.high == high;
+}
+
+bool sameRange(std::optional<CwDecodeSettings::Range> got, int low, int high)
+{
+    return got && sameRange(*got, low, high);
+}
+
+// Upstream a904cc79: the pitch range follows the radio's CW pitch. It is kept
+// when it contains the pitch and re-centred on the pitch when it misses it.
+void pitchRangeFollowsTheRadioPitch()
+{
+    using S = CwDecodeSettings;
+    // CONSTRUCTED pitches: they exercise the centring and the span edges only.
+    check(sameRange(S::pitchRangeAround(800), 650, 950)
+              && sameRange(S::pitchRangeAround(250), 300, 600)
+              && sameRange(S::pitchRangeAround(1150), 900, 1200)
+              && sameRange(S::pitchRangeAround(1500), 900, 1200),
+          "the range around a pitch is 300 Hz inside the slider span");
+
+    const S::Range fixedDefault = S::kPitchDefault;
+    check(sameRange(S::pitchRangeFor(710, fixedDefault), 560, 860),
+          "a pitch outside the range re-centres on it");
+    check(!S::pitchRangeFor(610, S::Range{545, 700}),
+          "a pitch change inside a hand-set range keeps it");
+    check(!S::pitchRangeFor(500, fixedDefault) && !S::pitchRangeFor(700, fixedDefault),
+          "a pitch on the range edge keeps it");
+    check(sameRange(S::pitchRangeFor(499, fixedDefault), 349, 649)
+              && sameRange(S::pitchRangeFor(701, fixedDefault), 551, 851),
+          "a pitch just outside the range re-centres on it");
 }
 
 void store(const char* json)
@@ -80,5 +110,7 @@ int main(int argc, char** argv)
 
     std::printf("%s\n", g_failed == 0 ? "cw_decode_settings_range_test: all checks passed"
                                       : "cw_decode_settings_range_test: FAILED");
+    pitchRangeFollowsTheRadioPitch();
+
     return g_failed == 0 ? 0 : 1;
 }
