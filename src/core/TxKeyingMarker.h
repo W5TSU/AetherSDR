@@ -30,6 +30,33 @@ inline void markTxKeying(QWidget* w)
         w->setProperty(kTxKeyingProperty, true);
 }
 
+// A TX-keying control whose switch-OFF only lowers TX risk — the VOX arm. The
+// bridge accepts `setChecked false` on it (or 0 / off / no / unchecked) without
+// TX permission, so an agent can always disarm VOX; every other action on it
+// still needs permission (#6053, upstream f42d432b). Mark the control with
+// markTxKeying() too: this only relaxes the guard for the disarm.
+inline constexpr char kTxDisarmAllowedProperty[] = "aetherTxDisarmAllowed";
+
+inline void markTxDisarmAllowed(QWidget* w)
+{
+    if (w)
+        w->setProperty(kTxDisarmAllowedProperty, true);
+}
+
+// True only for an explicit switch-off of a markTxDisarmAllowed() control. Each
+// accepted spelling is one the bridge's boolean parser reads as false.
+inline bool isTxDisarmRequest(const QObject* object, const QString& action,
+                              const QString& value)
+{
+    if (!object || !object->property(kTxDisarmAllowedProperty).toBool()
+        || action != QLatin1String("setChecked"))
+        return false;
+    const QString v = value.trimmed().toLower();
+    return v == QLatin1String("false") || v == QLatin1String("0")
+        || v == QLatin1String("off") || v == QLatin1String("no")
+        || v == QLatin1String("unchecked");
+}
+
 // Lowercased words of an identifier or label, split on separators and camelCase
 // humps (aprsSvcWXBOT -> [aprs, svc, wxbot]). The TX-guard fallback matches a
 // deny-word against a WHOLE token, so "svc"+"wxbot" never reads as "cwx" (#3646).

@@ -199,8 +199,17 @@ int main(int argc, char** argv)
 
     // Set an auto-pitch range while stopped. The subsequent worker must start
     // from this snapshot; no live setter may republish it after start.
+    // Unlocking a STOPPED decoder releases its values: Zero Beat reads
+    // estimatedPitch(), and a kept value would retune the slice on a pitch
+    // nothing is measuring; the panel gets a cleared reading (#5745).
+    observedPitches.clear();
     decoder.lockPitch(false);
     decoder.lockSpeed(false);
+    expect(near(decoder.estimatedPitch(), 0.0f) && near(decoder.estimatedSpeed(), 0.0f),
+           "unlocking a stopped decoder leaves no estimate for Zero Beat");
+    pumpEvents(20);
+    expect(!observedPitches.isEmpty() && near(observedPitches.constLast(), 0.0f),
+           "unlocking a stopped decoder publishes the cleared reading");
     decoder.setPitchRange(800, 900);
     decoder.setSpeedRange(18, 22);
     pumpEvents(20);

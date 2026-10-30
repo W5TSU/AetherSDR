@@ -839,6 +839,14 @@ target_link_libraries(icom_ptt_authority_test PRIVATE
     aethercore Qt6::Core)
 add_test(NAME icom_ptt_authority_test COMMAND icom_ptt_authority_test)
 
+# Upstream 18d220b1 (#6680): a connected Icom session ends through the normal
+# disconnect/reconnect path when the radio reports its current media released,
+# and only then. Socket-free: unstarted session and control stream, no peer.
+add_executable(icom_session_release_test tests/icom_session_release_test.cpp)
+target_include_directories(icom_session_release_test PRIVATE src)
+target_link_libraries(icom_session_release_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME icom_session_release_test COMMAND icom_session_release_test)
+
 # Retired fake-radio fixtures. Positive session and backend convergence is
 # certified against real firmware through the automation bridge and radiocert;
 # deterministic protocol/model policy stays in socket-free tests. Keep these
@@ -1208,6 +1216,18 @@ add_executable(client_comp_test
     src/core/ClientPhaseRotator.cpp
 )
 target_include_directories(client_comp_test PRIVATE src)
+
+# Upstream bb2ba031 (#5921): the CW decoder's pitch/WPM ranges are one saved,
+# validated setting in the CwDecoder document. Isolated settings, no widgets.
+add_executable(cw_decode_settings_range_test
+    tests/cw_decode_settings_range_test.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+)
+target_include_directories(cw_decode_settings_range_test PRIVATE src tests)
+target_link_libraries(cw_decode_settings_range_test PRIVATE Qt6::Core Qt6::Gui)
+add_test(NAME cw_decode_settings_range_test COMMAND cw_decode_settings_range_test)
 
 add_executable(slice_label_test
     tests/slice_label_test.cpp
@@ -1937,6 +1957,22 @@ target_include_directories(bandplan_voice_labels_test PRIVATE src)
 target_link_libraries(bandplan_voice_labels_test PRIVATE Qt6::Core Qt6::Gui)
 add_test(NAME bandplan_voice_labels_test COMMAND bandplan_voice_labels_test)
 
+# IARU R1 / SSA rows match their charts, including the optional `usage`
+# annotation; loads through BandPlanManager so parser and resource are
+# checked together (#4667).
+qt_add_resources(BANDPLAN_USAGE_RESOURCE_TEST_RESOURCES resources/resources.qrc)
+add_executable(bandplan_usage_resource_test
+    tests/bandplan_usage_resource_test.cpp
+    src/models/BandPlanManager.cpp
+    src/core/LogManager.cpp
+    src/core/AsyncLogWriter.cpp
+    ${AETHER_SETTINGS_SOURCES}
+    ${BANDPLAN_USAGE_RESOURCE_TEST_RESOURCES}
+)
+target_include_directories(bandplan_usage_resource_test PRIVATE src)
+target_link_libraries(bandplan_usage_resource_test PRIVATE Qt6::Core Qt6::Gui)
+add_test(NAME bandplan_usage_resource_test COMMAND bandplan_usage_resource_test)
+
 add_executable(radio_discovery_test
     tests/radio_discovery_test.cpp
     src/core/RadioDiscovery.cpp
@@ -2260,6 +2296,18 @@ target_include_directories(dvk_panel_admission_test PRIVATE src tests)
 target_link_libraries(dvk_panel_admission_test PRIVATE aetherdesktop_support Qt6::Widgets)
 add_test(NAME dvk_panel_admission_test COMMAND dvk_panel_admission_test)
 set_tests_properties(dvk_panel_admission_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+# Upstream 2e02f0d7 (#6599) — a short DVK panel scrolls its slot rows instead
+# of squashing them; long names yield width; a tall panel needs no scroll bar.
+add_executable(dvk_panel_layout_test
+    tests/dvk_panel_layout_test.cpp
+    src/gui/DvkPanel.cpp
+)
+target_include_directories(dvk_panel_layout_test PRIVATE src tests)
+target_link_libraries(dvk_panel_layout_test PRIVATE aetherdesktop_support Qt6::Widgets)
+add_test(NAME dvk_panel_layout_test COMMAND dvk_panel_layout_test)
+set_tests_properties(dvk_panel_layout_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
 
@@ -3387,6 +3435,26 @@ if (ENABLE_ASR)
     set_target_properties(copy_assist_panel_test PROPERTIES AUTOMOC ON)
     add_test(NAME copy_assist_panel_test COMMAND copy_assist_panel_test)
     set_tests_properties(copy_assist_panel_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Real controller failure signals; no sockets, downloads, inference or radio.
+    add_executable(copy_assist_failure_test
+        tests/copy_assist_failure_test.cpp
+        src/gui/CopyAssistController.cpp
+        src/gui/CopyAssistPanel.cpp
+        src/gui/CopyAssistSettings.cpp
+        src/gui/CopyAssistSettingsDialog.cpp
+        src/gui/AsrAudioTap.cpp
+        src/gui/PersistentDialog.cpp
+        src/gui/FramelessResizer.cpp
+        src/gui/FramelessWindowTitleBar.cpp
+    )
+    target_include_directories(copy_assist_failure_test PRIVATE src)
+    target_link_libraries(copy_assist_failure_test PRIVATE
+        aetherdesktop_support aetherasr Qt6::Concurrent Qt6::Test)
+    set_target_properties(copy_assist_failure_test PROPERTIES AUTOMOC ON)
+    add_test(NAME copy_assist_failure_test COMMAND copy_assist_failure_test)
+    set_tests_properties(copy_assist_failure_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # Copy Assist settings dialog: offscreen UI test of the model + GPU pickers.
@@ -5889,6 +5957,14 @@ target_link_libraries(automation_persist_diagnostics_test PRIVATE aethercore Qt6
 add_test(NAME automation_persist_diagnostics_test COMMAND automation_persist_diagnostics_test)
 # Socket-free HL2 gain persistence: boardMaxRx bypasses discovery; the test
 # never pumps events and cancels DSP setup before it can start Metis UDP.
+# HL2 session memory (upstream 4e547347, #5777): the receiver set, each
+# receiver's own setpoints and the manual notches are remembered per radio and
+# replayed once per connect through the production link edge. Socket-free:
+# receivers configured as connectRadio() leaves them, link edge injected.
+add_executable(hl2_session_memory_test tests/hl2_session_memory_test.cpp)
+target_include_directories(hl2_session_memory_test PRIVATE src tests)
+target_link_libraries(hl2_session_memory_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_session_memory_test COMMAND hl2_session_memory_test)
 add_executable(hl2_gain_restore_test tests/hl2_gain_restore_test.cpp)
 target_include_directories(hl2_gain_restore_test PRIVATE src tests)
 target_link_libraries(hl2_gain_restore_test PRIVATE aethercore Qt6::Core)
@@ -6278,6 +6354,26 @@ set_target_properties(phone_applet_dexp_visibility_test PROPERTIES AUTOMOC ON)
 add_test(NAME phone_applet_dexp_visibility_test
          COMMAND phone_applet_dexp_visibility_test)
 set_tests_properties(phone_applet_dexp_visibility_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# The bridge may switch VOX off with or without TX permission, and never on
+# without it (#6053, upstream f42d432b): the VOX button's disarm-only relaxation
+# through the real invoke and clickAt paths, the operator's own input pinned.
+# Offscreen, no radio, no socket. aetherdesktop_support (AutomationServer.cpp)
+# is added by the AETHER_AUTOMATION_SERVER_TESTS loop below.
+add_executable(phone_applet_vox_disarm_test
+    tests/phone_applet_vox_disarm_test.cpp
+    src/gui/PhoneApplet.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/GuardedSlider.h      # Q_OBJECT in a header with no .cpp — AUTOMOC
+)
+target_include_directories(phone_applet_vox_disarm_test PRIVATE src tests)
+target_link_libraries(phone_applet_vox_disarm_test PRIVATE
+    aethercore Qt6::Core Qt6::Widgets Qt6::Network Qt6::Test
+)
+set_target_properties(phone_applet_vox_disarm_test PROPERTIES AUTOMOC ON)
+add_test(NAME phone_applet_vox_disarm_test COMMAND phone_applet_vox_disarm_test)
+set_tests_properties(phone_applet_vox_disarm_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # PhoneCwApplet — the APF row on the CW face (#4879). Widget-level, offscreen:
@@ -6720,6 +6816,7 @@ set(AETHER_SETTINGS_CONSUMERS
     dstar_model_test
     ole_compound_file_test
     copy_assist_settings_dialog_test
+    copy_assist_failure_test
     s_meter_geometry_test
     qrz_callsign_test
     shortcut_manager_test
@@ -6763,6 +6860,8 @@ set(AETHER_SETTINGS_CONSUMERS
     mini_pan_widget_test
     log_manager_filter_rules_test
     bandplan_voice_labels_test
+    bandplan_usage_resource_test
+    cw_decode_settings_range_test
     vkamp_connection_test
     system_info_dialog_test
     spectrum_overlay_band_highlight_test
@@ -6786,6 +6885,7 @@ endforeach()
 # leave these harnesses with unresolved bridge symbols.
 set(AETHER_AUTOMATION_SERVER_TESTS
     automation_audio_analyze_test   # fork-only; not in upstream's list
+    phone_applet_vox_disarm_test
     automation_menu_lookup_test
     automation_gauge_verb_test
 

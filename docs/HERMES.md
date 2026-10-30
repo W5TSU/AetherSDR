@@ -3591,7 +3591,10 @@ behavior is unchanged.
 
 The count was fixed at connect, from a persisted setting. It is now the
 operator's, at runtime: "Add Panadapter" and the pane close button. Connect
-always comes up with ONE receiver.
+always comes up with ONE receiver; the ones the operator had open come back
+after link-up through that same add (`Hl2Backend::replayRestoredSession`, from
+the `receivers` list of the `OperatingState` document), so the receiver
+ceiling at the current span still decides how many return (#5777).
 
 Retiring the persisted count mattered for a reason beyond tidiness: it made
 connect the only place the count could change, and a saved 4 was re-imposed on

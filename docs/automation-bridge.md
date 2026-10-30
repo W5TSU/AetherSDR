@@ -689,6 +689,13 @@ popup at a time and only while it is open; an empty combo is refused up front
 > **sliders/combos** like `Tune power`, `RF power`, or `VOX level` are never
 > blocked — moving a value setter can't transmit.
 >
+> **VOX:** the VOX button carries `markTxKeying()`. Without TX permission,
+> `invoke "VOX voice-operated transmit" setChecked false` still disarms it
+> (`0`, `off`, `no` and `unchecked` too); every other verb on it, and any
+> pointer input, is refused. With TX permission every verb works, as on any
+> keying control. The `vox_toggle` shortcut needs TX permission in either
+> direction; use the explicit disarm to switch VOX off without it (#6053).
+>
 > To deliberately drive a keying control (e.g. hardware-in-the-loop on a dummy
 > load), set `AETHER_AUTOMATION_ALLOW_TX=1` in the app's environment at launch.
 > Adding a new keying control? Call `markTxKeying(theButton)` — see
@@ -4499,3 +4506,19 @@ waterfall rate still follow their existing radio-publication paths; this change
 does not establish whether their setters echo on every firmware version.
 The aetherd panadapter resource exposes the same Average/FPS request provenance
 and last radio publications as the bridge, including same-value confirmations.
+
+### VOX shortcut admission probe
+
+With an isolated demo app launched using `AETHER_AUTOMATION_NO_TX=1` and
+connected explicitly to `DEMO-0001`, run:
+
+```sh
+python3 tools/automation_vox_guard.py --socket /tmp/aethersdr-vox-probe
+```
+
+Pass the actual explicit socket path for your instance. This opt-in probe uses
+the running app's production shortcut registration and dispatcher and requires
+the specific TX-safety refusal; an absent main window is a failure. It sends no
+keying command. `phone_applet_vox_disarm_test` separately checks the
+permission-free disarm, its aliases, refused arming, and the operator's own
+input without starting a socket server.

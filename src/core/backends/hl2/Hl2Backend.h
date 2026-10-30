@@ -4,6 +4,7 @@
 #include "core/dsp/WdspChannel.h"
 
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QString>
 #include <QThread>
 #include <QTimer>
@@ -24,6 +25,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -214,6 +216,7 @@ private:
     friend struct Hl2RitXitTestAccess;
     friend struct Hl2TuneTailTestAccess;
     friend struct Hl2TuneMemoryTestAccess;
+    friend struct Hl2SessionMemoryTestAccess;
     // Feeds EP6 status frames to the backend's own MetisClient on its I/O thread,
     // for hl2_hardware_ptt_state_test.
     friend struct Hl2HardwarePttTestAccess;
@@ -521,6 +524,8 @@ private:
         // mirror SliceModel's (off, level 50).
         bool nbOn = false;
         int  nbLevel = 50;
+        // A restored blanker still to be published once (emitSliceState).
+        bool nbEchoPending = false;
 
         // Host-side per-slice audio. The radio mixes nothing for us — a Flex
         // sums its slices on-radio and sends one stream, and an HL2 demodulates
@@ -626,6 +631,30 @@ private:
 
     // Index of `notchId` in m_notches — which IS its WDSP handle — or -1.
     [[nodiscard]] int notchIndexFor(int notchId) const;
+
+    // Session memory beyond the flat fields (Receivers and Notches domains),
+    // validated by applyRestoredState() and replayed once per connect by
+    // replayRestoredSession(). Index 0 is receiver A; ids in the notches are
+    // unused (createNotch() mints new ones).
+    std::vector<Receiver> m_restoredReceivers;
+    std::vector<NotchRecord> m_restoredNotches;
+    int m_restoredTxReceiver = 0;   // the list index that held transmit
+    // Remembered receivers the replay could not reopen (ceiling, failed open).
+    // Captured after the live ones so a short connect does not erase them;
+    // dropped once the operator adds or closes a receiver.
+    std::vector<Receiver> m_replayUnreopened;
+    bool m_sessionReplayPending = false;
+    void replayRestoredSession();
+    // The open receivers' own setpoints from the document, before their DSPs
+    // open: receiver A's extras, and the whole entry for any a numRx param opened.
+    void seedOpenReceiversFromMemory();
+    void seedReceiverExtras(Receiver& r, const Receiver& memory) const;
+    [[nodiscard]] static QJsonObject receiverMemoryJson(const Receiver& r);
+    // Nullopt for an entry with no usable frequency or mode; other bad fields
+    // drop alone, to their defaults.
+    [[nodiscard]] std::optional<Receiver> receiverFromMemory(const QJsonObject& o) const;
+    // createPanadapter() with the new receiver's state given rather than copied.
+    bool addReceiver(const Receiver& seed);
     // Push the whole notch set + tune frequency into one receiver's chain. Used
     // when a receiver appears after the notches did.
     void seedNotches(const Receiver& r);

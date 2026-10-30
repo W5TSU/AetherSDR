@@ -8,6 +8,8 @@
 #include <QShortcut>
 #include <QPainter>
 #include <QFrame>
+#include <QMargins>
+#include <QScrollArea>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QFileDialog>
@@ -50,8 +52,12 @@ DvkPanel::DvkPanel(DvkModel* model, QWidget* parent)
     AetherSDR::ThemeManager::instance().applyStyleSheet(title, "QLabel { color: {{color.accent}}; font-weight: bold; font-size: 12px; }");
     outerVbox->addWidget(title);
 
-    // Grid of slots — each row gets equal stretch
-    auto* grid = new QGridLayout;
+    // Grid of slots — each row gets equal stretch when the panel has room.
+    // The scroll area below keeps each row's content readable when the panel
+    // is shorter than all 12 rows (upstream 2e02f0d7).
+    auto* slotsWidget = new QWidget;
+    slotsWidget->setObjectName(QStringLiteral("dvkSlotsGrid"));
+    auto* grid = new QGridLayout(slotsWidget);
     grid->setContentsMargins(0, 0, 0, 0);
     grid->setSpacing(2);
 
@@ -84,6 +90,9 @@ DvkPanel::DvkPanel(DvkModel* model, QWidget* parent)
         auto* nameLabel = new QLabel(QString("Recording %1").arg(id));
         nameLabel->setObjectName(QString("dvkSlotName%1").arg(id));
         nameLabel->setStyleSheet("QLabel { color: #505060; font-size: 10px; }");
+        // Names shrink within their column so a long recording name cannot
+        // push the F-key or duration outside the scroll area's viewport.
+        nameLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         rowLayout->addWidget(nameLabel, 1);
 
         auto* durLabel = new QLabel("Empty");
@@ -107,6 +116,13 @@ DvkPanel::DvkPanel(DvkModel* model, QWidget* parent)
             "QProgressBar::chunk { background: #33aa33; border-radius: 1px; }");
         progressBar->hide();
         rowVbox->addWidget(progressBar);
+
+        // Keep the F-key, labels and the progress bar's space readable; the
+        // scroll area handles a panel shorter than 12 rows.
+        const QMargins rowMargins = rowVbox->contentsMargins();
+        rowFrame->setMinimumHeight(fkeyBtn->minimumSizeHint().height()
+                                   + progressBar->height() + rowVbox->spacing()
+                                   + rowMargins.top() + rowMargins.bottom());
 
         grid->addWidget(rowFrame, i, 0);
 
@@ -137,7 +153,18 @@ DvkPanel::DvkPanel(DvkModel* model, QWidget* parent)
         });
     }
 
-    outerVbox->addLayout(grid, 1);
+    auto* slotsScroll = new QScrollArea;
+    slotsScroll->setObjectName(QStringLiteral("dvkSlotsScroll"));
+    AetherSDR::ThemeManager::instance().applyStyleSheet(slotsScroll,
+        "QScrollArea#dvkSlotsScroll { background: transparent; border: none; }"
+        "QWidget#dvkSlotsGrid { background: transparent; }");
+    slotsScroll->viewport()->setAutoFillBackground(false);
+    slotsScroll->setWidget(slotsWidget);
+    slotsWidget->setAutoFillBackground(false);
+    slotsScroll->setWidgetResizable(true);
+    slotsScroll->setFrameShape(QFrame::NoFrame);
+    slotsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    outerVbox->addWidget(slotsScroll, 1);
 
     // Control buttons: REC | STOP | PLAY | PREV (matches SmartSDR layout)
     auto* btnRow = new QHBoxLayout;

@@ -4548,8 +4548,9 @@ QJsonObject AutomationServer::doInvoke(const QString& target, const QString& act
 
     // TX-safety guard — never key a live radio from the test bridge unless the
     // operator has explicitly opted in. (#3646 Phase 1 safety requirement.)
+    // A disarm (VOX off) lowers TX risk and passes without permission (#6053).
     const bool transmitControl = isTransmitControl(w);
-    if (transmitControl && !m_txAllowed) {
+    if (transmitControl && !m_txAllowed && !isTxDisarmRequest(w, action, value)) {
         qCWarning(lcAutomation).noquote()
             << "BLOCKED transmit-related invoke on" << target
             << "(" << shortClassName(w) << ")";

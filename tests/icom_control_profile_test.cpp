@@ -210,6 +210,37 @@ struct IcomCivBackendTestAccess {
     {
         return backend.m_civScheduler.m_queue.size();
     }
+
+    // A polled (03) or transceive (00) frequency report from the radio.
+    static void deliverFrequency(IcomCivBackend& backend, std::uint8_t command,
+                                 std::uint64_t hz)
+    {
+        backend.m_sessionGeneration = 1;
+        CivFrame frame;
+        frame.cmd = command;
+        frame.data = encodeFreq(hz);
+        backend.onCivFrame(frame, 1);
+    }
+
+    static void publishControls(IcomCivBackend& backend) { backend.publishModelControls(); }
+    static std::uint64_t frequency(const IcomCivBackend& backend) { return backend.m_frequencyHz; }
+    static int preampStep(const IcomCivBackend& backend) { return backend.m_preampStep; }
+    // Queued or already on the wire: the scheduler pumps a read at once when idle.
+    static bool requested(const IcomCivBackend& backend, const std::vector<std::uint8_t>& frame)
+    {
+        return queuedFrame(backend, frame)
+            || backend.m_civScheduler.stats().inFlightKey == backend.semanticKey(frame);
+    }
+    static void deliverPreamp(IcomCivBackend& backend, std::uint8_t stage)
+    {
+        backend.m_sessionGeneration = 1;
+        CivFrame frame;
+        frame.cmd = cmd::kFunction;
+        frame.hasSub = true;
+        frame.sub = func::kPreamp;
+        frame.data = {stage};
+        backend.onCivFrame(frame, 1);
+    }
 };
 } // namespace AetherSDR::icom
 
@@ -259,6 +290,82 @@ int main(int argc, char** argv)
         const IcomModel* ic705 = modelForName("IC-705");
         check(ic705 != nullptr, "the IC-705 resolves from the Icom model table");
         if (ic705) {
+            for (const std::uint64_t hz : {3'668'000ULL, 50'000'000ULL, 70'000'000ULL, 74'799'999ULL}) {
+                const auto labels = preampLabelsFor(*ic705, hz);
+                check(labels.size() == 3 && labels[2] == "P.AMP2",
+                      "IC-705 retains both preamps below 74.800 MHz");
+            }
+            for (const std::uint64_t hz : {0ULL, 74'800'000ULL, 144'300'000ULL, 442'000'000ULL}) {
+                const auto labels = preampLabelsFor(*ic705, hz);
+                check(labels.size() == 2 && labels[0] == "OFF" && labels[1] == "P.AMP1",
+                      "IC-705 offers only shared stages at unknown or higher frequency");
+            }
+            for (const char* name : {"IC-9700", "IC-7300MK2"}) {
+                const auto& model = *modelForName(name);
+                check(std::ranges::equal(preampLabelsFor(model, 14'100'000), preampLabelsFor(model, 442'000'000)),
+                      "other verified model ladders remain frequency independent");
+            }
+            {
+                // Upstream b5e0c571 (#6497): both frequency reply forms republish
+                // the ladder when it changes; a crossing reads the stage back and
+                // never writes one; the setter's bound follows the reported
+                // frequency, so a stale P.AMP2 request sends P.AMP1 on 2 m.
+                using Access = IcomCivBackendTestAccess;
+                IcomCivBackend backend;
+                Access::prepareSession(backend, *ic705);
+                QList<QStringList> ladders;
+                int preampValues = 0;
+                QObject::connect(&backend, &IRadioBackend::panPreampInfoChanged,
+                                 [&ladders](const QString&, const QStringList& labels) {
+                    ladders << labels;
+                });
+                QObject::connect(&backend, &IRadioBackend::panPreampChanged,
+                                 [&preampValues](const QString&, int) { ++preampValues; });
+                const std::uint8_t addr = ic705->civAddress;
+                const auto readPreamp = cmdReadFunction(addr, func::kPreamp);
+
+                Access::deliverFrequency(backend, cmd::kReadFreq, 14'100'000);
+                Access::publishControls(backend);
+                check(!ladders.isEmpty() && ladders.last().size() == 3,
+                      "IC-705 on 20 m publishes OFF/P.AMP1/P.AMP2");
+                const qsizetype hf = ladders.size();
+                backend.setSliceFrequency(0, 144'300'000);
+                check(ladders.size() == hf && Access::frequency(backend) == 14'100'000,
+                      "tune intent alone does not change the radio-reported ladder");
+                Access::deliverFrequency(backend, cmd::kReadFreq, 74'799'999);
+                check(ladders.size() == hf, "a same-ladder frequency read does not republish");
+
+                // Answer the read the first report asked for, so the crossing's
+                // own readback is what the scheduler holds next.
+                Access::deliverPreamp(backend, 1);
+                check(!Access::requested(backend, readPreamp), "the first preamp readback is answered");
+                preampValues = 0;
+                Access::deliverFrequency(backend, cmd::kSetFreqTrx, 74'800'000);
+                check(ladders.size() == hf + 1
+                          && ladders.last() == QStringList({QStringLiteral("OFF"),
+                                                            QStringLiteral("P.AMP1")}),
+                      "a transceive frequency at 74.800 MHz publishes two preamp positions");
+                check(Access::requested(backend, readPreamp),
+                      "the crossing reads the preamp stage back");
+                check(preampValues == 0
+                          && !Access::queuedFrame(backend, cmdSetFunction(addr, func::kPreamp, 1))
+                          && !Access::queuedFrame(backend, cmdSetFunction(addr, func::kPreamp, 0)),
+                      "the crossing never writes or invents a preamp setting");
+
+                backend.setPanPreamp(QStringLiteral("0"), 2);
+                check(Access::preampStep(backend) == 1,
+                      "a stale P.AMP2 request is bounded to P.AMP1 at the boundary");
+                backend.setPanPreamp(QStringLiteral("0"), 0);
+                check(Access::preampStep(backend) == 0,
+                      "OFF stays reachable from P.AMP1 on the two-position ladder");
+                Access::deliverFrequency(backend, cmd::kReadFreq, 442'000'000);
+                check(ladders.size() == hf + 1, "VHF to UHF keeps the two-position ladder");
+                Access::deliverFrequency(backend, cmd::kReadFreq, 50'000'000);
+                check(ladders.size() == hf + 2 && ladders.last().size() == 3,
+                      "a polled frequency back on 6 m restores P.AMP2");
+                backend.setPanPreamp(QStringLiteral("0"), 2);
+                check(Access::preampStep(backend) == 2, "P.AMP2 stays selectable below 74.800 MHz");
+            }
             int pitch = -1;
             IcomCivBackend backend;
             IcomCivBackendTestAccess::selectModel(backend, *ic705);

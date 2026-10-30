@@ -80,6 +80,8 @@ public:
     int speedRangeHigh()  const;
     int pitchRangeLow()   const;
     int pitchRangeHigh()  const;
+    // Sets both decoder range sliders to the saved shared ranges.
+    void restoreCwRanges();
 
     // RTTY decode panel
     void  setRttyPanelVisible(bool visible);
