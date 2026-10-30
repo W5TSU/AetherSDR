@@ -155,9 +155,9 @@ DvkPanel::DvkPanel(DvkModel* model, QWidget* parent)
 
     auto* slotsScroll = new QScrollArea;
     slotsScroll->setObjectName(QStringLiteral("dvkSlotsScroll"));
-    slotsScroll->setStyleSheet(QStringLiteral(
+    AetherSDR::ThemeManager::instance().applyStyleSheet(slotsScroll,
         "QScrollArea#dvkSlotsScroll { background: transparent; border: none; }"
-        "QWidget#dvkSlotsGrid { background: transparent; }"));
+        "QWidget#dvkSlotsGrid { background: transparent; }");
     slotsScroll->viewport()->setAutoFillBackground(false);
     slotsScroll->setWidget(slotsWidget);
     slotsWidget->setAutoFillBackground(false);
