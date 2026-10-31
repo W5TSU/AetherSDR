@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.8
+## Current cycle: post-v26.10.9
 
 ### In flight
 
@@ -76,25 +76,25 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
-- **Windows: AetherSDR keeps running after exit**
-  ([#99](https://github.com/W5TSU/AetherSDR/issues/99)) — reported on
-  v26.10.7 with a Hermes-Lite 2 on Windows 11. After the window closes, an
-  AetherSDR process stays running, and it interferes with the next launch.
-  Not yet diagnosed or checked against v26.10.8.
+- **Windows serial PTT — check on real hardware** — v26.10.9 fixes
+  AetherSDR staying open after exit with a serial port open
+  ([#99](https://github.com/W5TSU/AetherSDR/issues/99)), tested on a virtual
+  COM pair. Still to check: an FTDI adapter, and a real port keying a
+  transmitter.
 - **Hermes-Lite 2 — on-air check of v26.10.8's two level changes** — receive
   audio 12.04 dB quieter, and CW at full scale like TUNE (about 6 dB more at
   the same RF Power). Both were ported from upstream and haven't yet been
   checked on this fork's HL2: the CW carrier against TUNE on a power meter
   into a dummy load, and receive audio level at AF 100.
-- **Upstream bug-fix sync (batch 6)** — batch 5 shipped in v26.10.8
-  ([#100](https://github.com/W5TSU/AetherSDR/pull/100)). What it deferred
-  is tracked in [#98](https://github.com/W5TSU/AetherSDR/issues/98):
+- **Upstream bug-fix sync (batch 7)** — batch 6 shipped in v26.10.9
+  ([#105](https://github.com/W5TSU/AetherSDR/pull/105)), with the HL2
+  receiver and notch memory. Still deferred, tracked in
+  [#98](https://github.com/W5TSU/AetherSDR/issues/98):
   - upstream's RTL-SDR receive work (M1, WFM, multi-RX, SSB/AM, live PPM),
     which builds on the typed receive-intent seam the fork doesn't have;
   - three Flex items that need live verification: nickname confirm,
     per-slice Auto squelch, and SmartSDR 4.3 per-band RCA suppression;
-  - the rest of the HL2 session memory: receiver set, notches, FFT AVG and
-    the auto-gain law;
+  - the rest of the HL2 session memory: FFT AVG and the auto-gain law;
   - the release-pipeline rewrite and Qt 6.12, which need a dry-run tag.
 
   **Open upstream HL2 bugs likely shared here:**
@@ -247,6 +247,13 @@ Highlights from the last 30 days — full list in
   air (v26.10.6); then Windows builds with the HackRF bundled, and a clean
   disconnect and reconnect when it is unplugged mid-session (v26.10.7).
   Driving goal: FM amateur-satellite work. Fork-only.
+- **Upstream fix sync, batch 6** — 14 upstream fixes
+  ([#105](https://github.com/W5TSU/AetherSDR/pull/105), v26.10.9): the HL2
+  remembers its receivers, setpoints and notches; CW decoder ranges kept;
+  IC-705 preamp and reconnect fixes; VOX gated as a TX action; and Windows
+  upgrades clear a stale TLS plugin that broke HTTPS. The same release
+  fixes AetherSDR staying open on Windows with a serial port open
+  ([#99](https://github.com/W5TSU/AetherSDR/issues/99)).
 - **Upstream fix sync, batch 5** — 82 of the 100 upstream fixes
   reviewed in [#98](https://github.com/W5TSU/AetherSDR/issues/98)
   (v26.10.8); the rest are deferred or don't apply. On

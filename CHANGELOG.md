@@ -8,6 +8,82 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.9] — 2026-10-30
+
+This release fixes AetherSDR staying open on Windows after you close it, and
+the fork splash that appeared twice there. It also brings the sixth sync of
+upstream fixes from `aethersdr/AetherSDR` (#105), which adds the HL2 session
+memory that v26.10.8 left out.
+
+### Windows
+
+- **AetherSDR exits when you close it, with a serial port open for PTT or
+  CW (#99, #106).** Before, the window closed but AetherSDR kept running,
+  and kept the COM port, so the next launch said the port was in use. If
+  that happened to you, end any leftover AetherSDR in Task Manager once
+  before you install this version.
+- **A PTT or CW pin no longer pulses when the port opens (#106).** It goes
+  straight to its idle level. Some USB serial drivers still raise DTR for
+  under a millisecond as Windows opens the port, before AetherSDR can set
+  it. Not yet tested on an FTDI adapter.
+- **The "This is a Fork" splash shows once (#107).** It used to vanish as
+  the main window opened, then come back.
+- **Upgrading clears old Qt plugin folders (#105).** On an install that
+  dates from before May 2026, a TLS plugin left by an older installer
+  broke every HTTPS connection: SmartLink login, Check for Updates, QRZ
+  lookups, FreeDV Reporter, the propagation forecast and model downloads.
+  The errors read "TLS initialization failed" or "SSL Sockets are not
+  supported on this platform".
+
+### Hermes-Lite 2
+
+- **The HL2 remembers your receivers (#105).** The receiver set, each
+  receiver's settings and your manual notches come back when you reconnect.
+  FFT averaging and the automatic RF gain are not part of this.
+
+### CW decoder
+
+- **Pitch and WPM ranges are kept** across restarts and pan changes.
+- **Unlocking a stopped decoder** no longer leaves a pitch that never
+  decodes.
+
+### Icom
+
+- **IC-705 preamp on 144 and 430 MHz:** the preamp button now steps from
+  P.AMP1 to OFF. Before, it kept asking for P.AMP2, which those bands
+  don't have, and stayed on P.AMP1.
+- **AetherSDR reconnects** when the radio takes back the audio and CI-V
+  streams, which an interrupted earlier session can cause. Before, it
+  showed as connected while the CI-V commands timed out.
+
+### Everything else
+
+- **VOX:** `vox_toggle` counts as a transmit action for automation
+  clients, and a client without transmit permission can still turn VOX
+  off.
+- **MIDI:** a crash while saving no longer loses your bindings, because
+  `midi.settings` is written atomically.
+- **Band plan:**
+  - IARU Region 1 and Swedish all-mode segments are no longer painted as
+    digital-only;
+  - hovering over the band strip shows each segment's usage note.
+- **Display fixes:**
+  - DVK slots stay readable in a short window;
+  - the GHE Port field shows its value again;
+  - the waveform install hint no longer clips.
+- **Copy Assist** says why it could not be turned on.
+
+### Not in this release
+
+These are still tracked in #98:
+
+- upstream's RTL-SDR receive work: M1, WFM, multi-RX, SSB/AM and live PPM;
+- confirming a Flex nickname on the radio;
+- per-slice Auto squelch;
+- SmartSDR 4.3 per-band RCA suppression during TUNE;
+- the release-pipeline rewrite;
+- Qt 6.12.
+
 ## [v26.10.8] — 2026-10-22
 
 This release is the fifth sync of upstream fixes from `aethersdr/AetherSDR`,
