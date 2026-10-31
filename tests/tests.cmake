@@ -6909,11 +6909,18 @@ add_test(NAME spectrum_overlay_mouse_boundary_test
 set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
+add_executable(panadapter_late_packet_test tests/panadapter_late_packet_test.cpp)
+target_include_directories(panadapter_late_packet_test PRIVATE src)
+target_link_libraries(panadapter_late_packet_test PRIVATE aethercore Qt6::Core)
+set_target_properties(panadapter_late_packet_test PROPERTIES AUTOMOC ON)
+add_test(NAME panadapter_late_packet_test COMMAND panadapter_late_packet_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    panadapter_late_packet_test
     agc_t_no_audio_test
     cat_freedv_mode_tokens_test
     tci_rx_volume_test
