@@ -94,7 +94,6 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
     which builds on the typed receive-intent seam the fork doesn't have;
   - three Flex items that need live verification: nickname confirm,
     per-slice Auto squelch, and SmartSDR 4.3 per-band RCA suppression;
-  - the rest of the HL2 session memory: FFT AVG and the auto-gain law;
   - the release-pipeline rewrite and Qt 6.12, which need a dry-run tag.
 
   **Open upstream HL2 bugs likely shared here:**
@@ -263,12 +262,6 @@ Highlights from the last 30 days — full list in
   restores only the outputs it turned off, controls that did nothing on
   non-Flex radios now work or say why, and Flex, TCI, Icom and waterfall
   fixes.
-- **Upstream fix sync, 75 commits** — the WDSP/DSP seam (real channel
-  start/stop, a process-wide FFTW planner lock and the `IRadioBackend`
-  threading contract); on the Hermes-Lite 2, a dBm reference from the AD9866
-  datasheet and a watchdog that asks a silent radio to stream again; RX
-  meters that read WDSP's average instead of peak-hold, so the noise floor no
-  longer reads 11–14 dB high; and ANAN, TGXL, PGXL and SPE fixes (v26.9.10).
 - **No more Windows crash on connect** — v26.10.1 and v26.10.2 closed on
   Windows every time a Hermes-Lite 2, or another radio whose signal
   processing runs on the PC, connected. Memory the bundled FFT library had
@@ -278,11 +271,9 @@ Highlights from the last 30 days — full list in
   and RTL-SDR is in the Linux and macOS downloads; a release build now fails
   rather than ship without it or HackRF (v26.9.11). The x86_64 AppImage and
   the GPG signatures that v26.10.6 shipped without are back (v26.10.7).
-- **JS8Call spots in SpotHub** — `RX.SPOT` and `RX.DIRECTED` decodes from
-  JS8Call's TCP API become spots, with their own SpotHub tab. Receive-only
-  (v26.9.10).
 
-For older highlights (the Hermes-Lite 2's promotion to supported, the ANAN
+For older highlights (the 75-commit upstream sync and JS8Call spots in
+SpotHub of v26.9.10, the Hermes-Lite 2's promotion to supported, the ANAN
 and RTL-SDR backends, the workspace canvas, networked Icom radios and the
 CI-V command scheduler, four HL2 receivers, client settings on SQLite, demo
 mode, KiwiSDR receive and the public-receiver browser, SmartMTR TX meters,
