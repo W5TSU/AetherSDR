@@ -7,7 +7,7 @@ as direction changes.
 
 For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current cycle: post-v26.10.9
+## Current cycle: post-v26.10.10
 
 ### In flight
 
@@ -130,11 +130,17 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   — focused security review of the macOS shared-memory audio bridge.
   (The RigctlPty side is resolved — RigctlPty was removed in #3380.)
 - **PureSignal on HL2** — TX predistortion/linearization using an RX
-  feedback path to correct amplifier nonlinearity. Explicitly out of scope
-  for the HL2 "supported" milestone
-  ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md))
-  and not yet designed — needs its own RFC (feedback path, predistortion
-  algorithm, calibration UI) before implementation starts.
+  feedback path to correct amplifier nonlinearity: one PS button, for an HL2
+  driving an amplifier with a sampler on the N2ADR I/O board's PURE input.
+  Designed in
+  [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md)
+  as five steps. Step 1, the receive gain while transmitting (register
+  `0x0e`), shipped in v26.10.10
+  ([#111](https://github.com/W5TSU/AetherSDR/pull/111)) and still needs its
+  bench check. Next: the feedback level, the PureSignal receivers, the PS
+  button, and a two-tone generator. Out of scope for the HL2 "supported"
+  milestone
+  ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md)).
 - **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`
   already take plain PCM (`QByteArray`), but the integration wiring in
   `MainWindow_DigitalModes.cpp` sources that PCM exclusively from Flex's
