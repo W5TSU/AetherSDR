@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <vector>
 #include <limits>
+#include <optional>
 
 using namespace AetherSDR::hl2;
 
@@ -215,6 +216,46 @@ int main()
         check(f[0] == 0x04, "rx1freq C0 = 0x04 (RX1 NCO, not TX 0x02)");
         check(f[1] == 0x00 && f[2] == 0x98 && f[3] == 0x96 && f[4] == 0x80, "rx1freq BE bytes");
         check((f[0] & 0x01) == 0, "rx1freq C0 even (MOX=0)");
+    }
+
+    // ---- 0x0e: generic ADC assignment when unset, HL2 TX LNA gain when set ----
+    // ad9866.v @ 7de0b57: cmd_data[15] enables the gain, [14] selects the
+    // native six-bit code in [13:8] -- C3 of the bank.
+    {
+        const Cc unset{kC0AdcAssignOrTxGain, 0, 0, 0, 0};
+        check(ccAdcAssignOrTxGain(std::nullopt) == unset,
+              "0x0e unset: all zero, byte-identical to the old ccAdcAssign()");
+        check(ccAdcAssignOrTxGain(-12) == Cc{kC0AdcAssignOrTxGain, 0, 0, 0xC0, 0},
+              "0x0e at -12 dB: C3 = enable | native | code 0");
+        check(ccAdcAssignOrTxGain(0) == Cc{kC0AdcAssignOrTxGain, 0, 0, 0xCC, 0},
+              "0x0e at 0 dB: code 12");
+        check(ccAdcAssignOrTxGain(48) == Cc{kC0AdcAssignOrTxGain, 0, 0, 0xFC, 0},
+              "0x0e at +48 dB: code 60");
+        check(ccAdcAssignOrTxGain(100) == ccAdcAssignOrTxGain(48)
+                  && ccAdcAssignOrTxGain(-50) == ccAdcAssignOrTxGain(-12),
+              "0x0e: out-of-range dB clamps, never spills into C2 or C4");
+        check(ccAdcAssignOrTxGain(std::numeric_limits<int>::max()) == ccAdcAssignOrTxGain(48)
+                  && ccAdcAssignOrTxGain(std::numeric_limits<int>::min()) == ccAdcAssignOrTxGain(-12),
+              "0x0e: INT_MAX / INT_MIN clamp too");
+        check((ccAdcAssignOrTxGain(20)[3] & 0x3F) == (ccRxGain(20)[4] & 0x3F),
+              "0x0e gain code matches 0x0a's for the same dB");
+    }
+
+    // ---- raw RX IQ peak window ----
+    {
+        RxIqPeakWindow w;
+        check(!w.peakDbfs().has_value(), "iq peak: an empty window has none");
+        const std::vector<std::complex<float>> a{{0.1f, 0.0f}, {0.0f, -0.5f}, {0.3f, 0.4f}};
+        w.observe(a);
+        check(w.peakDbfs().has_value()
+                  && std::abs(*w.peakDbfs() - 20.0 * std::log10(0.5)) < 1e-6,
+              "iq peak: the largest |I+jQ| in dBFS (0.5 -> -6.02 dB)");
+        const std::vector<std::complex<float>> b{{0.2f, 0.0f}};
+        w.observe(b);
+        check(std::abs(*w.peakDbfs() - 20.0 * std::log10(0.5)) < 1e-6,
+              "iq peak: a quieter later block does not lower the window's peak");
+        w.clear();
+        check(!w.peakDbfs().has_value(), "iq peak: clear() leaves none");
     }
 
     // ---- LNA gain: C4 = 0x40 | (dB+12), clamped to [-12,+48] ----

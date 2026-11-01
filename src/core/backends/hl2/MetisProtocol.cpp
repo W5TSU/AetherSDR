@@ -172,11 +172,18 @@ Cc ccRxGain(int db) noexcept
     return {kC0AdcGain, 0x00, 0x00, 0x00, static_cast<std::uint8_t>(0x40 | code)};
 }
 
-Cc ccAdcAssign() noexcept
+Cc ccAdcAssignOrTxGain(std::optional<int> txGainDb) noexcept
 {
-    // RX1..RX7 -> ADC0, TX attenuation 0. All-zero payload is the correct value
-    // for a single-ADC Phase-1 receiver; what matters is that the bank is sent.
-    return {kC0AdcAssignOrTxGain, 0x00, 0x00, 0x00, 0x00};
+    // Unset: RX1..RX7 -> ADC0, TX attenuation 0. All-zero payload is the correct
+    // value for a single-ADC Phase-1 receiver; what matters is that the bank is
+    // sent. On the HL2 it also leaves the transmit gain disabled.
+    if (!txGainDb)
+        return {kC0AdcAssignOrTxGain, 0x00, 0x00, 0x00, 0x00};
+    // Set: the HL2 meaning, ad9866.v @ 7de0b57. cmd_data[15] (C3 bit 7) enables
+    // the gain while transmitting, cmd_data[14] (C3 bit 6) selects the native
+    // six-bit code in cmd_data[13:8] -- the same code ccRxGain puts in C4.
+    const int code = clampDb(kLnaGainMinDb, *txGainDb, kLnaGainMaxDb) - kLnaGainMinDb;
+    return {kC0AdcAssignOrTxGain, 0x00, 0x00, static_cast<std::uint8_t>(0x80 | 0x40 | code), 0x00};
 }
 
 Cc ccRegister(int addr, std::uint32_t data) noexcept

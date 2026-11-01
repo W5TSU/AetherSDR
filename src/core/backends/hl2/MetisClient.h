@@ -54,6 +54,10 @@ public:
         // panadapter of DC and look like a hardware fault.
         std::uint32_t rxFrequencyHz = 10'000'000;
         int lnaGainDb = kLnaDefaultGainDb;
+        // The receive LNA gain while transmitting (register 0x0e on the HL2),
+        // or nullopt for none -- the all-zero bank, gain disabled. Session state:
+        // Hl2Backend owns it and hands it over on every start().
+        std::optional<int> txLnaGainDb;
         // How many receivers to actually RUN. Phase 1 runs one. This is the
         // value the config register must carry -- not the board's capability.
         int numRx = 1;
@@ -241,6 +245,12 @@ public:
     // receivers that survive are PRESERVED; new ones start on RX1's.
     Q_INVOKABLE void setReceiverCount(int count);
     Q_INVOKABLE void setLnaGainDb(int db);
+    // The HL2's receive LNA gain while transmitting, in dB (ccAdcAssignOrTxGain
+    // clamps it). Goes out as a one-shot when streaming and stays in the round
+    // robin. clearTxLnaGain() puts the all-zero bank back. Not TX-gated: it keys
+    // nothing, and with the transmitter off the gateware never applies it.
+    Q_INVOKABLE void setTxLnaGainDb(int db);
+    Q_INVOKABLE void clearTxLnaGain();
     // Select the companion filter board's band filter (MetisProtocol kOc* bits).
     //
     // Latched into the config register, and that is the whole mechanism: the
@@ -860,6 +870,7 @@ private:
     std::vector<Cc> m_ccRxFreq;
     Cc m_ccTxFreq{};
     Cc m_ccTxDrive{};
+    Cc m_ccAdcAssignOrTxGain = ccAdcAssignOrTxGain(std::nullopt);
     Cc m_ccTxLatencyPttHang = ccTxLatencyPttHang(20, 12);  // reference-client defaults
     Cc m_ccResetOnDisconnect = ccResetOnDisconnect(false);
 
@@ -995,6 +1006,7 @@ private:
     // publishTelemetry() does not flood the GUI thread. (#4449 review)
     QElapsedTimer m_telemetryEmitClock;
     ForwardPowerWindow m_fwdWindow;      // forward-power peak of the current emit window
+    RxIqPeakWindow m_rxIqPeak;           // RX1 raw IQ peak of the current emit window
     static constexpr qint64 kTelemetryMinIntervalMs = 100;
 
     // ---- transport counters (see LinkCounters) ----

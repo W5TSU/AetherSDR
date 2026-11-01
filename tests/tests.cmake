@@ -4834,6 +4834,13 @@ target_include_directories(hl2_band_filter_frame_test PRIVATE src)
 target_link_libraries(hl2_band_filter_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_band_filter_frame_test COMMAND hl2_band_filter_frame_test)
 
+# HL2 receive LNA gain while transmitting (0x0e): one-shot, round robin and
+# start() seeding, on the exact bytes buildNextControlPacket() emits.
+add_executable(hl2_tx_lna_gain_frame_test tests/hl2_tx_lna_gain_frame_test.cpp)
+target_include_directories(hl2_tx_lna_gain_frame_test PRIVATE src)
+target_link_libraries(hl2_tx_lna_gain_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tx_lna_gain_frame_test COMMAND hl2_tx_lna_gain_frame_test)
+
 # HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
 # socket. Binds nothing: recorded datagrams go straight into MetisClient's
 # drain path through the MetisClientTestAccess friend seam.
@@ -5956,6 +5963,12 @@ target_link_libraries(automation_dsp_backend_readback_test PRIVATE
 )
 add_test(NAME automation_dsp_backend_readback_test
          COMMAND automation_dsp_backend_readback_test)
+# `txlnagain` bridge verb against a real, unconnected Hl2Backend: nothing
+# binds, nothing keys. aetherdesktop_support comes from the loop below.
+add_executable(automation_txlnagain_verb_test tests/automation_txlnagain_verb_test.cpp)
+target_include_directories(automation_txlnagain_verb_test PRIVATE src tests)
+target_link_libraries(automation_txlnagain_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME automation_txlnagain_verb_test COMMAND automation_txlnagain_verb_test)
 # Ordinary RX lifecycle through production model/backend bindings and an
 # injected command/reply sink. No sockets, firmware peer, DSP or USB access.
 add_executable(backend_slice_lifecycle_test tests/backend_slice_lifecycle_test.cpp)
@@ -6916,6 +6929,7 @@ set(AETHER_AUTOMATION_SERVER_TESTS
     automation_rn2_probe_test
     connect_state_model_test
     automation_dsp_backend_readback_test
+    automation_txlnagain_verb_test
     backend_slice_lifecycle_test
     tci_automation_test
     reroute_dead_controls_test

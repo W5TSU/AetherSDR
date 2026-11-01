@@ -3435,6 +3435,13 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
                 return s.doBandscope(a.action);
             });
 
+        add("txlnagain", {},
+            "txlnagain [status|off|<dB>] — Hermes-Lite 2 receive LNA gain while transmitting (register 0x0e, -12..+48 dB); reports it and RX1's raw IQ peak from `health`",
+            parseActionValue,
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doTxLnaGain(a.action);
+            });
+
         add("droopcal", {},
             "droopcal [status|start|stop|apply|discard] — ANAN-G2 DDC0 droop calibration sweep (radios with a measured DDC edge droop)",
             parseActionValue,
@@ -8348,6 +8355,83 @@ QJsonObject AutomationServer::doBandscope(const QString& action)
     // I/O thread and publishes its real state on LinkCounters, so a row that
     // still reads off here means the enable has not landed yet — or was refused
     // because the link is down. Echoing `on` back would hide both.
+    return report(verb);
+}
+
+// ── Receive LNA gain while transmitting (HL2, register 0x0e) ─────
+// status / off / <dB>. Not TX-gated: it keys nothing, and the gateware only
+// applies it while the radio is transmitting. Reported from the health snapshot
+// after the call, like bandscope, so the reply is what the backend holds (the
+// clamp included), never an echo of the request.
+QJsonObject AutomationServer::doTxLnaGain(const QString& action)
+{
+    RadioModel* radio = m_radioModel;
+    if (!radio)
+        return err(QStringLiteral("no radio model available"));
+    if (!radio->backendDeclaresExtension(QStringLiteral("hl2"))) {
+        return err(QStringLiteral(
+            "txlnagain: this radio has no hardware-managed transmit gain — "
+            "register 0x0e is a Hermes-Lite 2 feature"));
+    }
+    IRadioBackend* backend = radio->backend();
+    if (!backend)
+        return err(QStringLiteral("no backend attached"));
+
+    auto report = [backend](const QString& what) {
+        const auto snap = backend->healthSnapshot();
+        const QVariant gain = snap.values.value(QStringLiteral("txLnaGainDb"));
+        bool isNumber = false;
+        const int db = gain.toInt(&isNumber);
+        const QVariant peak = snap.values.value(QStringLiteral("rx1IqPeakDbfs"));
+        bool havePeak = false;
+        const double peakDbfs = peak.toDouble(&havePeak);
+        return QJsonObject{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("txlnagain"), what},
+            {QStringLiteral("gainDb"), isNumber ? QJsonValue(db) : QJsonValue()},
+            {QStringLiteral("rx1IqPeakDbfs"),
+             havePeak ? QJsonValue(peakDbfs) : QJsonValue()},
+        };
+    };
+
+    const QString verb = action.trimmed().isEmpty() ? QStringLiteral("status")
+                                                    : action.trimmed().toLower();
+    if (verb == QLatin1String("status"))
+        return report(verb);
+
+    QVariant arg;   // invalid: off
+    if (verb != QLatin1String("off")) {
+        bool ok = false;
+        const int db = verb.toInt(&ok);
+        if (!ok)
+            return err(QStringLiteral("txlnagain: expected status, off or a gain in dB"));
+        arg = QVariant(db);
+    }
+
+    bool answered = false;
+    bool failed = false;
+    QString failure;
+    const quint64 rid = ++m_extensionRequestId;
+    auto okConn = connect(backend, &IRadioBackend::extensionResult, this,
+                          [&](quint64 id, const QVariant&) {
+        if (id == rid)
+            answered = true;
+    }, Qt::DirectConnection);
+    auto errConn = connect(backend, &IRadioBackend::extensionError, this,
+                           [&](quint64 id, const QString& msg) {
+        if (id != rid)
+            return;
+        answered = true;
+        failed = true;
+        failure = msg;
+    }, Qt::DirectConnection);
+    backend->invokeExtension(QStringLiteral("hl2"), QStringLiteral("txlnagain.set"), rid, arg);
+    disconnect(okConn);
+    disconnect(errConn);
+    if (!answered)
+        return err(QStringLiteral("this backend does not implement txlnagain.set"));
+    if (failed)
+        return err(failure);
     return report(verb);
 }
 

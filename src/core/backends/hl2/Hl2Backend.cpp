@@ -2290,6 +2290,7 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
     // function keeps startFreqHz in the true-RF domain.
     mp.rxFrequencyHz = ncoCommandHz(startFreqHz);
     mp.lnaGainDb = m_lnaGainDb;
+    mp.txLnaGainDb = m_txLnaGainDb;
     mp.adcDither = Hl2MiscOptionsSettings::adcDither(hl2SettingsScope());
     mp.adcRandom = Hl2MiscOptionsSettings::adcRandom(hl2SettingsScope());
     mp.numRx = rateLimited;
@@ -5357,6 +5358,38 @@ void Hl2Backend::invokeExtension(const QString& ns, const QString& verb, quint64
                 emit extensionResult(requestId, QVariant(m_freqCalPpb));
             return;
         }
+        // Receive LNA gain while transmitting (register 0x0e). Completes
+        // locally like freqcal.*: an int dB sets it (clamped to the AD9866's
+        // -12..+48), an invalid/null argument turns it off, anything else is an
+        // error rather than a silent off. Keys nothing, so it is not TX-gated.
+        if (verb == QLatin1String("txlnagain.set")) {
+            std::optional<int> db;
+            if (arg.isValid() && !arg.isNull()) {
+                bool ok = false;
+                const int v = arg.toInt(&ok);
+                if (!ok) {
+                    emit extensionError(requestId,
+                        QStringLiteral("hl2: txlnagain.set expects a gain in dB or nothing for off"));
+                    return;
+                }
+                db = std::clamp(v, hl2::kLnaGainMinDb, hl2::kLnaGainMaxDb);
+            }
+            if (db != m_txLnaGainDb) {
+                m_txLnaGainDb = db;
+                qCInfo(lcHl2).noquote() << "HL2 receive gain while transmitting:"
+                    << (db ? QStringLiteral("%1 dB").arg(*db) : QStringLiteral("off"));
+            }
+            if (m_metis) {
+                if (db)
+                    QMetaObject::invokeMethod(m_metis, "setTxLnaGainDb", Qt::QueuedConnection,
+                                              Q_ARG(int, *db));
+                else
+                    QMetaObject::invokeMethod(m_metis, "clearTxLnaGain", Qt::QueuedConnection);
+            }
+            if (requestId != 0)
+                emit extensionResult(requestId, db ? QVariant(*db) : QVariant());
+            return;
+        }
         if (verb == QLatin1String("freqcal.get")) {
             if (requestId != 0) {
                 emit extensionResult(requestId, QVariantMap{
@@ -5842,6 +5875,19 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // twin of the slice-side freshness gate.
     put("adcOverload", QStringLiteral("ADC overload (pre-DDC, 0–38.4 MHz)"),
         opt(t.adcOverload));
+    // Register 0x0e, as handed to MetisClient. Always present: "off" answers
+    // "is the transmit gain doing anything?" where an absent row would not.
+    put("txLnaGainDb", QStringLiteral("Receive gain while transmitting (dB)"),
+        m_txLnaGainDb ? QVariant(*m_txLnaGainDb) : QVariant(QStringLiteral("off")));
+    // RX1's raw IQ peak, before any DSP: the one receive level that still reads
+    // while transmitting, when the receive chain is fed zeros. Absent until a
+    // window has reported and once the last report is over a second old.
+    {
+        const bool fresh = m_rx1IqPeakDbfs && m_rx1IqPeakClock.isValid()
+                           && m_rx1IqPeakClock.elapsed() <= 1000;
+        put("rx1IqPeakDbfs", QStringLiteral("RX1 raw IQ peak (dBFS, before DSP)"),
+            fresh ? QVariant(QString::number(*m_rx1IqPeakDbfs, 'f', 1)) : QVariant());
+    }
     // Per receiver, because the post-DDC half of the pairing is per SLICE: two
     // receivers on different bands get two different answers from one converter
     // flag, which is the multi-slice form of the same disagreement.
@@ -7711,6 +7757,10 @@ void Hl2Backend::defineMeters()
 
 void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
 {
+    if (t.rx1IqPeakDbfs) {
+        m_rx1IqPeakDbfs = t.rx1IqPeakDbfs;
+        m_rx1IqPeakClock.restart();
+    }
     // Forward/reverse power are UNCALIBRATED ADC counts. MeterModel's FWDPWR
     // path expects dBm and converts to watts, so publishing a raw count there
     // would render as a confident, wrong wattage. Until there is a per-unit
