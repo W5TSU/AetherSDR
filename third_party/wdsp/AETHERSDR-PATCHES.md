@@ -2,12 +2,13 @@
 
 The source snapshot is pinned to TAPR/OpenHPSDR-wdsp commit
 `b02d5bac675dd2f33ec2bab2b339f79a597c47dd` (`Release Version 2.10`).
-AetherSDR carries thirteen local changes in the otherwise exact `Source/*.[ch]`
+AetherSDR carries fourteen local changes in the otherwise exact `Source/*.[ch]`
 snapshot — four teardown corrections, three channel-state fixes, one
 performance change, one worker/host ordering fix, three sanitizer fixes
 (a TX-path lock, the analyzer's dispatcher hand-offs, and the PureSignal
-handles), and the PureSignal correction thread's teardown wait. They are
-numbered 1-4, 7-10, 13, 16-18 and 22 to match upstream AetherSDR's ledger (and
+handles), the PureSignal correction thread's teardown wait, and one host entry
+point for PureSignal's correction stage. They are
+numbered 1-4, 7-10, 13, 16-18, 22 and 23 to match upstream AetherSDR's ledger (and
 the `// AetherSDR patch N:` markers in the source); upstream's patches 5 and 6
 belong to the Neural Noise Reduction integration, 11, 12 and 14 to the HL2 TXA
 modulation and minimum-phase work, 15 to the HL2 TX audio pacing, and 19-21 to
@@ -816,3 +817,24 @@ skipped on Windows. The test queues the restore through
 
 When updating WDSP, keep this unless upstream's `destroy_calcc()` joins the
 correction thread before freeing.
+
+## Patch 23 — PureSignal's correction stage on IQ the host supplies
+
+`upstream/iqc.c`, declared in `include/aether_wdsp.h`. Fork only.
+
+`Hl2TxDsp` is a phasing modulator of its own, not a TXA chain, so `xtxa()` never
+runs on an HL2 and neither does the `xiqc()` inside it. `calcc` (measuring) and
+`iqc` (correcting) are otherwise self-contained. The host keeps a stopped TXA
+channel to own them and calls:
+
+- `PSApplyCorrection(channel, size, in, out)` runs `xiqc()` on the caller's
+  buffers under `ch[].csDSP`, the lock `SetTXAiqcStart/Swap/End` hold while they
+  replace the splines, and restores the stage's own buffers afterwards.
+- `PSCorrectionBusy(channel)` reports the stage's `busy` bit.
+
+`SetTXAiqcStart/Swap/End` spin until `xiqc()` finishes a ramp, so the host must
+keep calling `PSApplyCorrection`, on silence if need be, while a ramp is running.
+Patch 22's teardown wait clears `busy`, so a host that stopped calling cannot
+hang `CloseChannel()`.
+
+When updating WDSP, keep this unless the host moves to a real TXA chain.

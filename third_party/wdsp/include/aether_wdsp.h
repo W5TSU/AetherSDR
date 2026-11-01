@@ -264,6 +264,13 @@ void wdspPortSetHandoffPauseForTest(unsigned microseconds);
 // thread. AetherSDR calls it only from wdsp_calcc_teardown_test (patch 22).
 void PSRestoreCorr(int channel, char* filename);
 
+// AetherSDR patch 23: PureSignal's correction on IQ the host supplies, for a host
+// whose modulator is not WDSP's TXA chain. Interleaved doubles, `size` complex
+// samples, `in` may equal `out`. Must keep being called while correction is
+// starting or ending: those ramps only advance here.
+void PSApplyCorrection(int channel, int size, double* in, double* out);
+int PSCorrectionBusy(int channel);
+
 #ifdef __cplusplus
 }
 #endif

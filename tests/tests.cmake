@@ -646,6 +646,12 @@ target_link_libraries(wdsp_calcc_teardown_test PRIVATE aethercore)
 add_test(NAME wdsp_calcc_teardown_test COMMAND wdsp_calcc_teardown_test)
 set_tests_properties(wdsp_calcc_teardown_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+# WDSP patch 23: PureSignal's correction stage on IQ the host supplies. No radio.
+add_executable(wdsp_ps_apply_test tests/wdsp_ps_apply_test.cpp)
+target_link_libraries(wdsp_ps_apply_test PRIVATE aethercore aether::wdsp)
+add_test(NAME wdsp_ps_apply_test COMMAND wdsp_ps_apply_test)
+set_tests_properties(wdsp_ps_apply_test PROPERTIES TIMEOUT 120)
+
 add_executable(rtl_receiver_registry_test tests/rtl_receiver_registry_test.cpp)
 target_link_libraries(rtl_receiver_registry_test PRIVATE aethercore Qt6::Core)
 add_test(NAME rtl_receiver_registry_test COMMAND rtl_receiver_registry_test)
