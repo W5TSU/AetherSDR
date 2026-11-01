@@ -27,6 +27,14 @@ void report(const char* name, bool ok, const QString& detail = QString())
         ++g_failed;
 }
 
+int g_unknownTokens = 0;
+
+void countUnknownTokens(QtMsgType, const QMessageLogContext&, const QString& message)
+{
+    if (message.contains(QStringLiteral("unknown token")))
+        ++g_unknownTokens;
+}
+
 QPushButton* psButton(TxApplet& applet)
 {
     for (QPushButton* b : applet.findChildren<QPushButton*>()) {
@@ -51,6 +59,7 @@ int main(int argc, char** argv)
 {
     TestSettingsProfile settingsProfile(QStringLiteral("aether-tx-applet-ps-button-test"));
     QApplication app(argc, argv);
+    qInstallMessageHandler(countUnknownTokens);
 
     {
         TxApplet applet;
@@ -137,6 +146,9 @@ int main(int argc, char** argv)
         report("and comes back lit", btn->isChecked());
         radio.setBackendForTest(nullptr, QString());
     }
+
+    report("every colour names a token that exists", g_unknownTokens == 0,
+           QString::number(g_unknownTokens));
 
     std::printf("%s\n", g_failed == 0 ? "all checks passed" : "FAILURES");
     return g_failed == 0 ? 0 : 1;

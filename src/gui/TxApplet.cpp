@@ -45,13 +45,16 @@ static const char* const kMoxIdleStyle =
 // PS keys nothing, so it wears its neighbours' neutral look rather than MOX's
 // transmit accent, and it is the one of them that shows a state of its own.
 static const char* const kPsStyle =
-    "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
-    "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; "
+    "QPushButton { background: {{color.background.1}}; border: 1px solid {{color.border.strong}}; "
+    "border-radius: 3px; color: {{color.text.primary}}; font-size: 10px; font-weight: bold; "
     "padding: 2px; }"
-    "QPushButton:hover { background: #204060; }"
-    "QPushButton:checked { background: #1f6a3a; border: 1px solid #30a060; color: #e8ffe8; }"
-    "QPushButton:disabled { background-color: #1a1a2a; color: #556070; "
-    "border: 1px solid #2a3040; }";
+    "QPushButton:hover { background: {{color.background.2}}; }"
+    "QPushButton:checked { background: {{color.toggle.success.background.checked}}; "
+    "border: 1px solid {{color.toggle.success.border.checked}}; "
+    "color: {{color.toggle.success.foreground.checked}}; }"
+    "QPushButton:disabled { background-color: {{color.button.background.disabled}}; "
+    "color: {{color.button.foreground.disabled}}; "
+    "border: 1px solid {{color.button.border.disabled}}; }";
 
 // ── Styled indicator label (small coloured-dot + text) ──────────────────────
 
@@ -798,20 +801,20 @@ void TxApplet::showPureSignalStatus(bool on, const QString& state, int feedbackL
     m_psBtn->setChecked(on);
 
     QString band = QStringLiteral("none");
-    QString color = QStringLiteral("#8090a0");
+    QString color = QStringLiteral("{{color.text.secondary}}");
     // 0 is no calibration yet, not a level that failed.
     const bool haveLevel = on && feedbackLevel > 0;
     if (haveLevel) {
         // Thetis's and deskHPSDR's bands for the feedback meter.
         if (feedbackLevel > 128 && feedbackLevel <= 181) {
             band = QStringLiteral("good");
-            color = QStringLiteral("#40c060");
+            color = QStringLiteral("{{color.accent.success}}");
         } else if (feedbackLevel > 90 && feedbackLevel <= 200) {
             band = QStringLiteral("warn");
-            color = QStringLiteral("#d0a030");
+            color = QStringLiteral("{{color.accent.warning}}");
         } else {
             band = QStringLiteral("bad");
-            color = QStringLiteral("#d05040");
+            color = QStringLiteral("{{color.accent.danger}}");
         }
     }
     m_psStatus->setProperty("psBand", band);
