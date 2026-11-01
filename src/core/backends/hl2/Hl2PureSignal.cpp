@@ -4,6 +4,7 @@
 
 #include <aether_wdsp.h>
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
@@ -26,6 +27,7 @@ constexpr double kLoopDelaySec = 0.0;
 
 // A reset takes effect only while samples reach pscc (deskHPSDR tx_ps_onoff).
 constexpr int kDrainBlocks = 7;
+constexpr int kCalccStateReset = 0;   // LRESET in calcc.c
 
 // save_file and restore_file in calcc.c, including the terminator.
 constexpr int kWdspPathBytes = 256;
@@ -105,6 +107,9 @@ void Hl2PureSignal::setMox(bool modulated)
     m_mox = modulated;
     m_filled = 0;
     SetPSMox(m_channelId, modulated ? 1 : 0);
+    // Nothing feeds pscc now, and a reset would sit armed until the next key-down.
+    if (!modulated && m_resetPending)
+        drainWithSilence();
 }
 
 void Hl2PureSignal::feed(std::span<const std::complex<float>> feedback,
@@ -126,6 +131,7 @@ void Hl2PureSignal::feed(std::span<const std::complex<float>> feedback,
         m_reference[static_cast<std::size_t>(m_filled) * 2 + 1] = reference[i].imag();
         if (++m_filled == kFeedBlock) {
             pscc(m_channelId, kFeedBlock, m_reference.data(), m_feedback.data());
+            noteCalccStepped();
             m_filled = 0;
         }
     }
@@ -133,20 +139,51 @@ void Hl2PureSignal::feed(std::span<const std::complex<float>> feedback,
 
 void Hl2PureSignal::start()
 {
-    if (m_channel)
-        SetPSControl(m_channelId, 0, 0, 1, 0);
+    if (!m_channel)
+        return;
+    if (m_resetPending) {
+        m_startDeferred = true;
+        return;
+    }
+    SetPSControl(m_channelId, 0, 0, 1, 0);
 }
 
 void Hl2PureSignal::stop()
 {
     if (!m_channel)
         return;
+    m_startDeferred = false;
+    m_resetPending = true;
     SetPSControl(m_channelId, 1, 0, 0, 0);
-    if (m_mox)
-        return;     // the feed is running and carries the reset
+    if (!m_mox)
+        drainWithSilence();
+}
+
+void Hl2PureSignal::drainWithSilence() noexcept
+{
     std::fill(m_feedback.begin(), m_feedback.end(), 0.0);
-    for (int i = 0; i < kDrainBlocks; ++i)
+    for (int i = 0; i < kDrainBlocks && m_resetPending; ++i) {
         pscc(m_channelId, kFeedBlock, m_feedback.data(), m_feedback.data());
+        noteCalccStepped();
+    }
+    // A calibration in progress holds calcc in LCALC past these blocks. correct()
+    // runs on every EP2 packet and comes back here until LRESET has run.
+}
+
+void Hl2PureSignal::noteCalccStepped() noexcept
+{
+    if (!m_resetPending)
+        return;
+    int info[16] = {};
+    GetPSInfo(m_channelId, info);
+    // info[15] is the state pscc just ran. LRESET has run, so the reset is done.
+    if (info[15] != kCalccStateReset)
+        return;
+    m_resetPending = false;
+    if (m_startDeferred) {
+        m_startDeferred = false;
+        SetPSControl(m_channelId, 0, 0, 1, 0);
+    }
 }
 
 void Hl2PureSignal::setFeedbackRate(int rateHz)
@@ -176,6 +213,8 @@ bool Hl2PureSignal::saveCorrection(const QString& path)
 {
     const QByteArray name = QFile::encodeName(path);
     if (!m_channel || name.size() >= kWdspPathBytes)
+        return false;
+    if (!QDir().mkpath(QFileInfo(path).path()))
         return false;
     QFile::remove(path);
     QByteArray writable = name;
@@ -216,6 +255,8 @@ void Hl2PureSignal::correct(std::span<std::complex<float>> block, bool applyToOu
 {
     if (!m_channel || block.empty())
         return;
+    if (m_resetPending && !m_mox)
+        drainWithSilence();
     const std::size_t n = std::min<std::size_t>(block.size(), kTxSamplesPerPacket);
     for (std::size_t i = 0; i < n; ++i) {
         m_correctBuffer[i * 2] = block[i].real();

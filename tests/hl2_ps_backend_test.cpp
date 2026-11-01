@@ -48,6 +48,11 @@ struct Hl2PureSignalTestAccess {
         return b.psCorrectionPath(band);
     }
     static RadioSettingsScope scope(const Hl2Backend& b) { return b.hl2SettingsScope(); }
+    static bool active(const Hl2Backend& b) { return b.m_psActive; }
+    static void spanDone(Hl2Backend& b, int rate)
+    {
+        b.finishSpanRebuild(rate, b.m_sampleRateHz, b.m_connectGeneration, SpanRebuildOutcome::Ok);
+    }
     static double alcTarget(const Hl2Backend& b) { return b.m_alcTargetPeak; }
     static bool keyed(const Hl2Backend& b) { return b.m_keyed; }
     static bool twoToneRunning(Hl2Backend& b)
@@ -252,6 +257,7 @@ int main(int argc, char** argv)
                   "PS on is remembered by a new backend");
             A::setConnected(b, true);
             emit b.connected();
+            QCoreApplication::processEvents();
             check(A::wireCount(b) == 4, "and comes back on connect");
             check(!A::keyed(b), "and nothing keys");
             psSet(b, false);
@@ -268,6 +274,19 @@ int main(int argc, char** argv)
         Hl2Backend b;
         A::setSerial(b, QStringLiteral("00:1c:c0:a2:13:dd"));
         A::setBandKey(b, QStringLiteral("20m"));
+        // A curve is only for the drive it was measured at.
+        Hl2MiscOptionsSettings::setPureSignalCurve(A::scope(b), QStringLiteral("20m"), 4.6, 77);
+        const QString stale = A::correctionPath(b, QStringLiteral("20m"));
+        check(writeGarbage(stale), "premise: a file from another drive");
+        A::setConnected(b, true);
+        psSet(b, true);
+        QThread::msleep(800);
+        QCoreApplication::processEvents();
+        check(QFile::exists(stale), "a curve from another drive is not even tried");
+        psSet(b, false);
+        A::setConnected(b, false);
+        Hl2MiscOptionsSettings::setPureSignalCurve(A::scope(b), QStringLiteral("20m"), 4.6, 100);
+        Hl2MiscOptionsSettings::setPureSignalCurve(A::scope(b), QStringLiteral("40m"), 4.6, 100);
         Hl2MiscOptionsSettings::setPureSignalGainDb(A::scope(b), QStringLiteral("20m"), 14);
         check(Hl2MiscOptionsSettings::pureSignalGainDb(A::scope(b), QStringLiteral("20m")) == 14,
               "a band's gain is stored");
@@ -294,6 +313,62 @@ int main(int argc, char** argv)
         check(row(b, "txLnaGainDb").toInt() == -12, "a band with no gain starts at the minimum");
         check(waitFor([&] { return !QFile::exists(other); }, 3000),
               "changing band tries that band's file");
+        psSet(b, false);
+        A::setConnected(b, false);
+    }
+
+    {
+        // Review finding: an auto-reconnect has no disconnectRadio, and left PS
+        // reading on with a new session running none of it.
+        Hl2Backend b;
+        A::setConnected(b, true);
+        psSet(b, true);
+        check(A::active(b), "premise: PS is up");
+        RadioConnectRequest req;
+        req.host = QStringLiteral("127.0.0.1");
+        req.port = 9;
+        b.connectRadio(req);
+        check(!A::active(b), "a new session starts with PS's layout gone");
+        check(row(b, "psState").toString() == QStringLiteral("idle"), "still wanted, so idle");
+        b.disconnectRadio();
+        psSet(b, false);
+    }
+
+    {
+        // Review finding: remembered slices come back after connected().
+        Hl2Backend b;
+        psSet(b, true);
+        A::setConnected(b, true);
+        emit b.connected();
+        A::addSlice(b);
+        A::addSlice(b);
+        QCoreApplication::processEvents();
+        check(!A::active(b), "three remembered slices: PS does not silently take one");
+        check(A::wireCount(b) == 3, "all three stay");
+        A::setConnected(b, false);
+        psSet(b, false);
+    }
+
+    {
+        // Review finding: a refusal at connect left the button lit, for good.
+        Hl2Backend b;
+        psSet(b, true);
+        bool lit = true;
+        QString why;
+        QObject::connect(&b, &IRadioBackend::pureSignalStatusChanged, &b,
+                         [&](bool on, const QString&, int, const QString& refusal) {
+            lit = on;
+            why = refusal;
+        });
+        A::setConnected(b, true);
+        A::setSampleRate(b, 384000);
+        emit b.connected();
+        QCoreApplication::processEvents();
+        check(!lit && why.contains(QStringLiteral("span")), "refused at connect: not lit, and says why");
+        check(row(b, "psState").toString() == QStringLiteral("off"), "and reads off");
+        A::spanDone(b, 48000);
+        QCoreApplication::processEvents();
+        check(A::active(b), "a narrower span brings it back");
         psSet(b, false);
         A::setConnected(b, false);
     }

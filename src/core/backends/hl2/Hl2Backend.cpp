@@ -326,9 +326,7 @@ constexpr int kHl2PsFeedbackDdc = 2;
 constexpr int kHl2PsReferenceDdc = 3;
 
 // calcc's top bucket starts at 0.9375, so a signal that never gets there never
-// finishes a calibration. Hl2TxDsp's shipped target is kHl2AlcTargetDefault.
-constexpr double kHl2AlcTargetDefault = 0.85;
-constexpr double kHl2AlcTargetWithPureSignal = 0.99;
+// finishes a calibration, which is hl2PsAlcTarget() in Hl2PsController.h.
 
 // 1203 Hz apart, not 1200: that one repeats every 40 samples at 48 kHz, and the
 // envelope then misses whole amplitude buckets, so calibration never finishes.
@@ -407,7 +405,9 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
         m_psState = QStringLiteral("idle");
 
     // Also fires when the link comes back on the same session; activating twice
-    // is a no-op.
+    // is a no-op. Queued, because the remembered slices come back right after this
+    // signal (replayRestoredSession), and PS must see them to refuse rather than
+    // take the receivers they need.
     connect(this, &IRadioBackend::connected, this, [this] {
         if (m_psWanted && !m_psActive) {
             const QString refusal = pureSignalRefusal();
@@ -415,10 +415,11 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
                 activatePureSignal();
             } else {
                 qCWarning(lcHl2).noquote() << "HL2: PureSignal stays off:" << refusal;
+                m_psState = QStringLiteral("off");
                 publishPureSignal(refusal);
             }
         }
-    });
+    }, Qt::QueuedConnection);
 
     // THE UNKEY HOLD. Single-shot and parented here, so it fires on this
     // object's thread -- the same thread applyKeying() runs on, which lets a
@@ -1153,6 +1154,12 @@ void Hl2Backend::activatePureSignal()
     m_psGainDb = gain;
     m_txLnaGainDb = gain;
     const QString correction = psCorrectionPath(m_currentBandKey);
+    // A curve is for the drive it was measured at. Anything else calibrates.
+    const auto curve = Hl2MiscOptionsSettings::pureSignalCurve(hl2SettingsScope(), m_currentBandKey);
+    const bool restoring = QFile::exists(correction) && curve
+                           && curve->drivePercent == m_rfPowerPercent;
+    const std::optional<double> curveGap = restoring ? std::optional<double>(curve->gapDb)
+                                                     : std::nullopt;
 
     QMetaObject::invokeMethod(m_metis, "setPureSignalEnabled", Qt::BlockingQueuedConnection,
                               Q_ARG(bool, true));
@@ -1170,7 +1177,7 @@ void Hl2Backend::activatePureSignal()
     const int rate = m_sampleRateHz;
     bool opened = false;
     QString failure;
-    QMetaObject::invokeMethod(m_metis, [this, rate, gain, correction, &opened, &failure] {
+    QMetaObject::invokeMethod(m_metis, [this, rate, gain, correction, restoring, curveGap, &opened, &failure] {
         m_ps = std::make_unique<Hl2PureSignal>();
         std::string error;
         if (!m_ps->open(rate, &error)) {
@@ -1182,12 +1189,13 @@ void Hl2Backend::activatePureSignal()
         m_psController.setGainDb(gain);
         m_metis->setTxLnaGainDb(gain);
         m_metis->setTxIqCorrector(m_ps.get());
-        const bool restoring = QFile::exists(correction);
         const Hl2PsActions a = m_psController.setEnabled(true, restoring);
+        m_psController.setSettledGapDb(curveGap);
         if (restoring) {
             m_ps->restoreCorrection(correction);
             m_psRestorePath = correction;
             m_psRestoreCheckTicks = kPsRestoreCheckTicks;
+            m_psHoldingRestored = true;
         } else if (a.resume) {
             m_ps->start();
         }
@@ -1215,24 +1223,29 @@ void Hl2Backend::activatePureSignal()
                   << gain << "dB";
 }
 
-void Hl2Backend::deactivatePureSignal()
+void Hl2Backend::deactivatePureSignal(bool sessionEnded)
 {
     m_psActive = false;
-    m_psState = QStringLiteral("off");
+    m_psState = (sessionEnded && m_psWanted) ? QStringLiteral("idle") : QStringLiteral("off");
     if (m_psGainDb)
         savePureSignalBandGain(m_currentBandKey, *m_psGainDb);
     const QString correction = psCorrectionPath(m_currentBandKey);
-    QMetaObject::invokeMethod(m_metis, [this, correction] {
+    const bool keyed = m_keyed || sessionEnded;
+    const QString band = m_currentBandKey;
+    const int drive = m_rfPowerPercent;
+    QMetaObject::invokeMethod(m_metis, [this, correction, keyed, band, drive] {
         if (m_psTimer)
             m_psTimer->stop();
+        const std::optional<double> gap = m_psController.settledGapDb();
         m_psController.setEnabled(false);
         m_psKeyedModulated.store(false);
         m_psRestoreCheckTicks = 0;
         m_psHoldingRestored = false;
         if (m_ps) {
-            const Hl2PsSnapshot snap = m_ps->snapshot();
-            if (snap.info[14] != 0 && snap.correctionRunning)
-                m_ps->saveCorrection(correction);
+            if (gap && hl2PsMaySaveCorrection(m_ps->snapshot(), keyed)
+                && m_ps->saveCorrection(correction)) {
+                rememberPureSignalCurve(band, *gap, drive);
+            }
             m_ps->stop();
         }
     }, Qt::BlockingQueuedConnection);
@@ -1243,7 +1256,7 @@ void Hl2Backend::deactivatePureSignal()
 
     m_txLnaGainDb = m_operatorTxLnaGainDb;
 
-    if (m_keyed) {
+    if (m_keyed && !sessionEnded) {
         // Correction is ending now, on its ramp. The receiver layout changes on a
         // hard edge of the EP6 stream, so it waits for the key to come up.
         m_psLayoutOwed = true;
@@ -1252,6 +1265,32 @@ void Hl2Backend::deactivatePureSignal()
     }
     restoreReceiverLayoutAfterPureSignal();
     publishPureSignal();
+}
+
+void Hl2Backend::retryPureSignalIfWanted()
+{
+    if (m_psWanted && !m_psActive && m_connected && pureSignalRefusal().isEmpty())
+        activatePureSignal();
+}
+
+void Hl2Backend::applyPureSignalAlcTarget(Hl2PsState state)
+{
+    const double target = hl2PsAlcTarget(state);
+    if (target == m_alcTargetPeak)
+        return;
+    m_alcTargetPeak = target;
+    QMetaObject::invokeMethod(m_txDsp, "setAlcTargetPeak", Qt::QueuedConnection,
+                              Q_ARG(double, target));
+}
+
+void Hl2Backend::rememberPureSignalCurve(const QString& band, double gapDb, int drivePercent)
+{
+    // Called on the I/O thread, and the settings store belongs to this object's.
+    QMetaObject::invokeMethod(this, [this, band, gapDb, drivePercent] {
+        RadioSettingsScope scope;
+        if (hl2SettingsScopeForWrite(scope))
+            Hl2MiscOptionsSettings::setPureSignalCurve(scope, band, gapDb, drivePercent);
+    }, Qt::QueuedConnection);
 }
 
 void Hl2Backend::restoreReceiverLayoutAfterPureSignal()
@@ -1287,7 +1326,13 @@ void Hl2Backend::updatePureSignalMox(bool key)
     const Receiver* txRx = rx(m_txDdc);
     const bool cw = txRx && txRx->mode.startsWith(QLatin1String("CW"));
     const bool modulated = m_psActive && key && (m_tuning ? m_tuneTwoTone : !cw);
-    QMetaObject::invokeMethod(m_metis, [this, modulated] {
+    const bool tuneDrive = m_tuning && m_tuneTwoTone;
+    QMetaObject::invokeMethod(m_metis, [this, modulated, tuneDrive] {
+        // A held curve is for RF power, and a two-tone goes out at tune power.
+        if (tuneDrive && m_psHoldingRestored) {
+            m_psHoldingRestored = false;
+            m_psController.requestRecalibration();
+        }
         m_psKeyedModulated.store(modulated);
         if (m_ps)
             m_ps->setMox(modulated);
@@ -1302,8 +1347,9 @@ void Hl2Backend::psTickOnIoThread()
         return;
     const Hl2PsSnapshot snap = m_ps->snapshot();
     if (m_psRestoreCheckTicks > 0 && --m_psRestoreCheckTicks == 0) {
-        m_psHoldingRestored = snap.correctionRunning;
         if (!snap.correctionRunning) {
+            m_psHoldingRestored = false;
+            m_psController.setSettledGapDb(std::nullopt);
             // calcc reads correcting after any restore, and this one has nothing
             // behind it. The file can never work, so it does not stay.
             qCWarning(lcHl2).noquote() << "HL2: PureSignal could not read"
@@ -1322,11 +1368,13 @@ void Hl2Backend::psTickOnIoThread()
         m_ps->start();
         m_psHoldingRestored = false;
     }
-    const QString state = hl2PsStateName(m_psController.state());
+    const Hl2PsState stateNow = m_psController.state();
+    const QString state = hl2PsStateName(stateNow);
     const int gain = m_psController.gainDb();
-    QMetaObject::invokeMethod(this, [this, snap, state, gain] {
+    QMetaObject::invokeMethod(this, [this, snap, stateNow, state, gain] {
         if (!m_psActive)
             return;
+        applyPureSignalAlcTarget(stateNow);
         m_psSnapshot = snap;
         m_psGainDb = gain;
         m_txLnaGainDb = gain;
@@ -1367,21 +1415,32 @@ void Hl2Backend::pureSignalBandChanged(const QString& oldBand, const QString& ne
     m_txLnaGainDb = gain;
     const QString oldPath = psCorrectionPath(oldBand);
     const QString newPath = psCorrectionPath(newBand);
-    QMetaObject::invokeMethod(m_metis, [this, oldPath, newPath, gain] {
+    const auto curve = Hl2MiscOptionsSettings::pureSignalCurve(hl2SettingsScope(), newBand);
+    const bool restoring = QFile::exists(newPath) && curve && curve->drivePercent == m_rfPowerPercent;
+    const std::optional<double> curveGap = restoring ? std::optional<double>(curve->gapDb)
+                                                     : std::nullopt;
+    const bool keyed = m_keyed;
+    const int drive = m_rfPowerPercent;
+    QMetaObject::invokeMethod(m_metis, [this, oldBand, oldPath, newPath, gain, restoring, curveGap,
+                                        keyed, drive] {
         if (!m_ps)
             return;
+        const std::optional<double> gap = m_psController.settledGapDb();
+        if (gap && hl2PsMaySaveCorrection(m_ps->snapshot(), keyed)
+            && m_ps->saveCorrection(oldPath)) {
+            rememberPureSignalCurve(oldBand, *gap, drive);
+        }
         m_psController.setGainDb(gain);
+        m_psController.setSettledGapDb(curveGap);
         m_metis->setTxLnaGainDb(gain);
-        const Hl2PsSnapshot snap = m_ps->snapshot();
-        if (snap.info[14] != 0 && snap.correctionRunning)
-            m_ps->saveCorrection(oldPath);
         m_psHoldingRestored = false;
         // The old band's curve says nothing about this one's filters and amplifier.
         m_ps->stop();
-        if (QFile::exists(newPath)) {
+        if (restoring) {
             m_ps->restoreCorrection(newPath);
             m_psRestorePath = newPath;
             m_psRestoreCheckTicks = kPsRestoreCheckTicks;
+            m_psHoldingRestored = true;
         } else {
             m_ps->start();
         }
@@ -1390,7 +1449,9 @@ void Hl2Backend::pureSignalBandChanged(const QString& oldBand, const QString& ne
 
 void Hl2Backend::publishPureSignal(const QString& refusal)
 {
-    emit pureSignalStatusChanged(m_psWanted, m_psState,
+    // Lit means running, or waiting for a radio: a refusal at connect keeps
+    // m_psWanted, to try again, and must not look like success.
+    emit pureSignalStatusChanged(m_psActive || (m_psWanted && !m_connected), m_psState,
                                  m_psActive ? m_psSnapshot.info[4] : -1, refusal);
 }
 
@@ -1729,6 +1790,8 @@ bool Hl2Backend::removePanadapter(const QString& panId)
     if (m_metis) {
         QMetaObject::invokeMethod(m_metis, "setReceiverCount", Qt::BlockingQueuedConnection,
             Q_ARG(int, wireReceiverCount()));
+        // A slice closed may be what PureSignal was waiting for.
+        QMetaObject::invokeMethod(this, [this] { retryPureSignalIfWanted(); }, Qt::QueuedConnection);
         // Every SURVIVING receiver may have moved down a hardware slot, and the
         // NCO registers are addressed by that slot. Re-assert all of them, or
         // the receivers after the closed one keep tuning the register that used
@@ -2470,6 +2533,12 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
         emit connectionError(QStringLiteral("HL2: invalid host '%1'").arg(request.host));
         return;
     }
+
+    // RadioModel's auto-reconnect arrives here with no disconnectRadio(). The new
+    // session starts with no PureSignal bit and one receiver, so the old session's
+    // correction would run with no feedback at all. connected() brings it back.
+    if (m_psActive || m_psLayoutOwed)
+        deactivatePureSignal(/*sessionEnded=*/true);
 
     // Point the stream-free poller at this radio now, before the stream exists.
     // Not for the connected case -- the cadence rule polls at zero while EP6 is
@@ -3289,8 +3358,8 @@ void Hl2Backend::invalidateTxDspConfiguration()
 void Hl2Backend::disconnectRadio()
 {
     // m_psWanted stays: the next connect brings it back.
-    if (m_psActive)
-        deactivatePureSignal();
+    if (m_psActive || m_psLayoutOwed)
+        deactivatePureSignal(/*sessionEnded=*/true);
     invalidateTxDspConfiguration();
     // Invalidate any DSP build still in flight. Without this, a disconnect
     // during the opens would be followed by finishDspSetup() starting a wire
@@ -4336,6 +4405,7 @@ void Hl2Backend::finishSpanRebuild(int newRateHz, int previousRateHz,
         // failure permanent across restarts, which is why this is Ok-only.
         m_sampleRateHz = newRateHz;
         Hl2Settings::setSpanMhz(static_cast<double>(newRateHz) / 1.0e6);
+        retryPureSignalIfWanted();
         // Protocol 1's feedback runs at the receiver rate.
         if (m_psActive) {
             QMetaObject::invokeMethod(m_metis, [this, newRateHz] {

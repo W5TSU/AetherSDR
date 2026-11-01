@@ -19,7 +19,10 @@ constexpr int kLargeStepDb = 15;
 constexpr double kClippingDbfs = -1.0;
 // Below this there is no signal to compare with: a pause in speech.
 constexpr double kReferencePresentDbfs = -30.0;
-constexpr double kFeedbackGoneGapDb = 40.0;
+// How far the gap may move from the one the curve was measured at. Amplifier
+// compression moves it a little; a pulled sampler or an amplifier switched in or
+// out moves it by much more.
+constexpr double kGapToleranceDb = 10.0;
 
 constexpr int kFailedFitsAllowedInARow = 3;
 constexpr int kAttemptsBeforeFault = 20;
@@ -31,6 +34,22 @@ bool fitFailed(const Hl2PsSnapshot& s)
 }
 
 }  // namespace
+
+double hl2PsAlcTarget(Hl2PsState state)
+{
+    // Calibrating needs the headroom. A fault has nothing to gain from it, and the
+    // uncorrected signal must not go out hotter than with PS off.
+    return (state == Hl2PsState::Off || state == Hl2PsState::FeedbackWeak
+            || state == Hl2PsState::FeedbackStrong)
+               ? kHl2AlcTargetDefault
+               : kHl2AlcTargetWithPureSignal;
+}
+
+bool hl2PsMaySaveCorrection(const Hl2PsSnapshot& snapshot, bool keyed)
+{
+    // Keyed, a save could hold the I/O thread, and EP2 with it, for up to a second.
+    return !keyed && snapshot.info[14] != 0 && snapshot.correctionRunning;
+}
 
 QString hl2PsStateName(Hl2PsState state)
 {
@@ -55,7 +74,7 @@ Hl2PsActions Hl2PsController::setEnabled(bool on, bool correctionRestored)
     m_faulted = false;
     m_pendingResume = false;
     m_recalibrate = false;
-    m_levelSettled = correctionRestored;
+    m_settledGapDb.reset();
     m_failedFitsInARow = 0;
     m_attemptsSinceSuccess = 0;
     if (on) {
@@ -71,6 +90,7 @@ Hl2PsActions Hl2PsController::setEnabled(bool on, bool correctionRestored)
 void Hl2PsController::setGainDb(int db)
 {
     m_gainDb = std::clamp(db, kMinGainDb, kMaxGainDb);
+    m_settledGapDb.reset();   // the gap is measured at a gain
 }
 
 void Hl2PsController::requestRecalibration() noexcept
@@ -84,6 +104,7 @@ Hl2PsActions Hl2PsController::fault(Hl2PsState state)
     m_state = state;
     m_faulted = true;
     m_pendingResume = false;
+    m_settledGapDb.reset();
     Hl2PsActions a;
     a.reset = true;
     return a;
@@ -144,6 +165,7 @@ Hl2PsActions Hl2PsController::tick(const Hl2PsSnapshot& s, bool keyedModulated)
         if (next == m_gainDb)
             return fault(Hl2PsState::FeedbackStrong);
         m_gainDb = next;
+        m_settledGapDb.reset();
         a.newGainDb = next;
         a.reset = true;
         m_pendingResume = true;
@@ -152,14 +174,26 @@ Hl2PsActions Hl2PsController::tick(const Hl2PsSnapshot& s, bool keyedModulated)
     }
 
     // The sampler gone: the feedback falls away from the reference at once, long
-    // before a calibration cycle could report it. Only once the level has been in
-    // its working range: until then, a big gap is just a gain still on its way up.
-    if (newAttempt || newSuccess)
-        m_levelSettled = s.info[4] >= kDeadBandLow && s.info[4] <= kDeadBandHigh;
-    if (m_levelSettled && correcting && s.feedbackPeakDbfs && s.referencePeakDbfs
-        && *s.referencePeakDbfs > kReferencePresentDbfs
-        && *s.feedbackPeakDbfs < *s.referencePeakDbfs - kFeedbackGoneGapDb) {
-        return fault(Hl2PsState::FeedbackWeak);
+    // before a calibration cycle could report it. Judged against the curve's own gap,
+    // because the gap at a working gain can be small whatever is on the sampler.
+    const bool referencePresent = s.feedbackPeakDbfs && s.referencePeakDbfs
+                                  && *s.referencePeakDbfs > kReferencePresentDbfs;
+    if (referencePresent && correcting && m_settledGapDb) {
+        const double gap = *s.referencePeakDbfs - *s.feedbackPeakDbfs;
+        if (gap > *m_settledGapDb + kGapToleranceDb)
+            return fault(Hl2PsState::FeedbackWeak);
+        if (gap < *m_settledGapDb - kGapToleranceDb) {
+            // Stronger than the curve knows, such as the amplifier switched in.
+            m_settledGapDb.reset();
+            m_pendingResume = true;
+            m_state = Hl2PsState::Calibrating;
+            a.reset = true;
+            return a;
+        }
+    }
+    if (referencePresent && correcting && newSuccess && s.info[4] >= kDeadBandLow
+        && s.info[4] <= kDeadBandHigh) {
+        m_settledGapDb = *s.referencePeakDbfs - *s.feedbackPeakDbfs;
     }
 
     if (newSuccess) {
@@ -190,6 +224,7 @@ Hl2PsActions Hl2PsController::tick(const Hl2PsSnapshot& s, bool keyedModulated)
             const int next = std::clamp(m_gainDb + step, kMinGainDb, kMaxGainDb);
             if (next != m_gainDb) {
                 m_gainDb = next;
+                m_settledGapDb.reset();
                 a.newGainDb = next;
                 a.reset = true;
                 m_pendingResume = true;

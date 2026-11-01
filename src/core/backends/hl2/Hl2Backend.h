@@ -959,7 +959,12 @@ private:
     [[nodiscard]] QString pureSignalRefusal() const;
     QString setPureSignal(bool on);
     void activatePureSignal();
-    void deactivatePureSignal();
+    // `sessionEnded`: the radio is going or gone, so nothing is saved and the
+    // layout does not wait for an unkey that may never come.
+    void deactivatePureSignal(bool sessionEnded = false);
+    void retryPureSignalIfWanted();
+    void applyPureSignalAlcTarget(Hl2PsState state);
+    void rememberPureSignalCurve(const QString& band, double gapDb, int drivePercent);
     void restoreReceiverLayoutAfterPureSignal();
     void updatePureSignalMox(bool key);
     void psTickOnIoThread();

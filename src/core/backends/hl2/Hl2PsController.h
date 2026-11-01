@@ -12,6 +12,11 @@ enum class Hl2PsState { Off, Idle, Calibrating, Correcting, FeedbackWeak, Feedba
 
 QString hl2PsStateName(Hl2PsState state);
 
+inline constexpr double kHl2AlcTargetDefault = 0.85;
+inline constexpr double kHl2AlcTargetWithPureSignal = 0.99;
+double hl2PsAlcTarget(Hl2PsState state);
+bool hl2PsMaySaveCorrection(const Hl2PsSnapshot& snapshot, bool keyed);
+
 // One tick's worth of instructions. A reset ends correction, ramped. A resume
 // starts calibrating again.
 struct Hl2PsActions {
@@ -48,6 +53,12 @@ public:
     // Every 100 ms. `keyedModulated` is voice, data or two-tone on the air.
     Hl2PsActions tick(const Hl2PsSnapshot& snapshot, bool keyedModulated);
 
+    // How far the feedback sat below the reference when the curve was good. A curve
+    // restored from a file brings its own, because it gets no calibrations to check
+    // it: this comparison is all that watches it.
+    void setSettledGapDb(std::optional<double> gapDb) { m_settledGapDb = gapDb; }
+    [[nodiscard]] std::optional<double> settledGapDb() const noexcept { return m_settledGapDb; }
+
     [[nodiscard]] Hl2PsState state() const noexcept { return m_state; }
 
 private:
@@ -60,7 +71,7 @@ private:
     bool m_faulted = false;
     bool m_pendingResume = false;
     bool m_recalibrate = false;
-    bool m_levelSettled = false;
+    std::optional<double> m_settledGapDb;
     int m_lastSuccesses = 0;
     int m_lastAttempts = 0;
     int m_failedFitsInARow = 0;

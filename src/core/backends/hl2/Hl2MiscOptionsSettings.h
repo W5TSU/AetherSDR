@@ -71,6 +71,18 @@ public:
     static std::optional<int> pureSignalGainDb(const RadioSettingsScope& scope, const QString& band);
     static void setPureSignalGainDb(const RadioSettingsScope& scope, const QString& band, int db);
 
+    // What a band's saved correction was measured at: the feedback's gap below the
+    // reference, and the RF power. A curve is only restored at that drive, and is
+    // watched against that gap, because held curves get no calibrations to check.
+    struct PureSignalCurve {
+        double gapDb = 0.0;
+        int drivePercent = 0;
+    };
+    static std::optional<PureSignalCurve> pureSignalCurve(const RadioSettingsScope& scope,
+                                                          const QString& band);
+    static void setPureSignalCurve(const RadioSettingsScope& scope, const QString& band,
+                                   double gapDb, int drivePercent);
+
     static bool swapAudioChannels(const RadioSettingsScope& scope);
     static void setSwapAudioChannels(const RadioSettingsScope& scope, bool enabled);
 };

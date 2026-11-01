@@ -61,6 +61,30 @@ void Hl2MiscOptionsSettings::setPureSignalGainDb(const RadioSettingsScope& scope
     writeField(scope, kFieldPureSignalGain, gains);
 }
 
+std::optional<Hl2MiscOptionsSettings::PureSignalCurve> Hl2MiscOptionsSettings::pureSignalCurve(
+    const RadioSettingsScope& scope, const QString& band)
+{
+    const QJsonValue v = scope.feature(kFeature)
+                             .value(QLatin1String("pureSignalCurveByBand")).toObject().value(band);
+    if (!v.isObject())
+        return std::nullopt;
+    const QJsonObject o = v.toObject();
+    if (!o.value(QLatin1String("gapDb")).isDouble() || !o.value(QLatin1String("drive")).isDouble())
+        return std::nullopt;
+    return PureSignalCurve{o.value(QLatin1String("gapDb")).toDouble(),
+                           o.value(QLatin1String("drive")).toInt()};
+}
+
+void Hl2MiscOptionsSettings::setPureSignalCurve(const RadioSettingsScope& scope, const QString& band,
+                                                double gapDb, int drivePercent)
+{
+    QJsonObject curves = scope.featureExact(kFeature)
+                             .value(QLatin1String("pureSignalCurveByBand")).toObject();
+    curves[band] = QJsonObject{{QLatin1String("gapDb"), gapDb},
+                               {QLatin1String("drive"), drivePercent}};
+    writeField(scope, "pureSignalCurveByBand", curves);
+}
+
 bool Hl2MiscOptionsSettings::adcDither(const RadioSettingsScope& scope)
 {
     return scope.feature(kFeature).value(QLatin1String(kFieldAdcDither)).toBool(false);

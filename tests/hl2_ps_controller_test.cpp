@@ -132,6 +132,63 @@ int main()
         check(c.state() != Hl2PsState::FeedbackWeak, "and is not a fault");
     }
     {
+        // Review finding: this station's internal coupling keeps feedback within
+        // 40 dB of the reference at working gain, so a fixed gap could never see a
+        // pulled cable. It is judged against the gap the curve was measured at.
+        Hl2PsController c = enabledAt(20);
+        c.tick(snap(152, 1), true);
+        check(c.settledGapDb().has_value(), "a good calibration records its gap");
+        Hl2PsSnapshot s = snap(152, 1);
+        s.feedbackPeakDbfs = -32.0;
+        const Hl2PsActions a = c.tick(s, true);
+        check(a.reset && c.state() == Hl2PsState::FeedbackWeak,
+              "feedback 15 dB down on the settled gap: reset at once");
+    }
+    {
+        // A curve restored from a file has no calibrations to check it.
+        Hl2PsController c;
+        c.setEnabled(true, true);
+        c.setGainDb(20);
+        c.setSettledGapDb(4.6);
+        check(!c.tick(snap(0, 0), true).reset, "restored, at its stored gap: left alone");
+        Hl2PsSnapshot weak = snap(0, 0);
+        weak.feedbackPeakDbfs = -32.0;
+        check(c.tick(weak, true).reset && c.state() == Hl2PsState::FeedbackWeak,
+              "restored, sampler gone: reset");
+
+        Hl2PsController d;
+        d.setEnabled(true, true);
+        d.setGainDb(20);
+        d.setSettledGapDb(20.0);
+        const Hl2PsActions hot = d.tick(snap(0, 0), true);
+        check(hot.reset && d.state() == Hl2PsState::Calibrating,
+              "restored, feedback much stronger (amplifier now on): the curve is dropped");
+        check(d.tick(snap(0, 0), true).resume, "and calibration starts over");
+        check(!d.settledGapDb().has_value(), "with no stale gap left");
+    }
+    {
+        Hl2PsController c = enabledAt(0);
+        c.tick(snap(152, 1), true);
+        check(c.settledGapDb().has_value(), "premise: a gap is recorded");
+        c.setGainDb(10);
+        check(!c.settledGapDb().has_value(), "a new gain means a new gap");
+    }
+    {
+        // Never louder than PS off when it is not correcting anything.
+        check(hl2PsAlcTarget(Hl2PsState::FeedbackWeak) == kHl2AlcTargetDefault
+                  && hl2PsAlcTarget(Hl2PsState::FeedbackStrong) == kHl2AlcTargetDefault
+                  && hl2PsAlcTarget(Hl2PsState::Off) == kHl2AlcTargetDefault,
+              "a fault or off: the shipped ALC target");
+        check(hl2PsAlcTarget(Hl2PsState::Calibrating) == kHl2AlcTargetWithPureSignal
+                  && hl2PsAlcTarget(Hl2PsState::Correcting) == kHl2AlcTargetWithPureSignal,
+              "calibrating or correcting: reaches calcc's top bucket");
+        Hl2PsSnapshot running = snap(152, 1);
+        running.correctionRunning = true;
+        check(hl2PsMaySaveCorrection(running, false), "a running curve, unkeyed: may be saved");
+        check(!hl2PsMaySaveCorrection(running, true), "keyed: not, a save can stall the I/O thread");
+        check(!hl2PsMaySaveCorrection(snap(152, 1), false), "nothing running: nothing to save");
+    }
+    {
         // A pause in speech: no reference, so a quiet feedback means nothing.
         Hl2PsController c = enabledAt(0);
         c.tick(snap(152, 1), true);

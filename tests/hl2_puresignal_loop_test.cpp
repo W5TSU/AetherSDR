@@ -265,6 +265,38 @@ int main()
         ps.stop();
     }
 
+    // Review finding: with the feed running, stop() then start() at once lost the
+    // reset, and a band change kept the old band's curve.
+    ps.setMox(true);
+    ps.start();
+    check(loop.runUntil([&] { return ps.snapshot().correctionRunning; }, 30.0), "correcting, keyed");
+    ps.stop();
+    ps.start();
+    check(loop.runUntil([&] { return !ps.snapshot().correctionRunning; }, 10.0),
+          "keyed, stop then start at once still ends the old correction");
+    check(loop.runUntil([&] { return ps.snapshot().correctionRunning; }, 30.0),
+          "and calibrates a new one");
+    ps.stop();
+    ps.start();
+    ps.setMox(false);
+    for (int i = 0; i < 400; ++i)
+        loop.block();
+    check(!ps.snapshot().correctionRunning, "a reset pending at unkey is carried out, not left armed");
+
+    // Review finding: nothing made the folder, so every save failed.
+    {
+        ps.setMox(true);
+        ps.start();
+        check(loop.runUntil([&] { return ps.snapshot().correctionRunning; }, 30.0), "correcting to save");
+        const auto dir = std::filesystem::temp_directory_path()
+                       / ("hl2-ps-newdir-" + std::to_string(::time(nullptr)));
+        const auto deep = dir / "radio" / "20m.corr";
+        check(ps.saveCorrection(QString::fromStdString(deep.string())),
+              "saving makes the folder it needs");
+        std::error_code e;
+        std::filesystem::remove_all(dir, e);
+    }
+
     // Close in the middle of a start ramp must not hang.
     ps.setMox(true);
     ps.start();

@@ -51,7 +51,9 @@ public:
     void feed(std::span<const std::complex<float>> feedback,
               std::span<const std::complex<float>> reference) noexcept;
 
-    void start();   // calibrate continually; any correction running restarts
+    // Calibrate continually. After a stop() the feed has not carried out yet, this
+    // waits for it: SetPSControl would otherwise overwrite the reset unseen.
+    void start();
     void stop();    // back to uncorrected, ramped
     void setFeedbackRate(int rateHz);
 
@@ -72,6 +74,10 @@ private:
     std::unique_ptr<WdspChannel> m_channel;
     int m_channelId = -1;
     bool m_mox = false;
+    bool m_resetPending = false;   // stop() issued, calcc has not reached LRESET
+    bool m_startDeferred = false;
+    void drainWithSilence() noexcept;
+    void noteCalccStepped() noexcept;
 
     std::vector<double> m_feedback;     // interleaved, kFeedBlock pairs
     std::vector<double> m_reference;
