@@ -271,6 +271,20 @@ void PSRestoreCorr(int channel, char* filename);
 void PSApplyCorrection(int channel, int size, double* in, double* out);
 int PSCorrectionBusy(int channel);
 
+// PureSignal's measuring side (calcc.c), driven by Hl2PureSignal.
+void pscc(int channel, int size, double* tx, double* rx);
+void PSSaveCorr(int channel, char* filename);
+void GetPSInfo(int channel, int* info);
+void GetPSHWPeak(int channel, double* peak);
+void GetPSMaxTX(int channel, double* maxtx);
+void SetPSControl(int channel, int reset, int mancal, int automode, int turnon);
+void SetPSMox(int channel, int mox);
+void SetPSHWPeak(int channel, double peak);
+void SetPSFeedbackRate(int channel, int rate);
+void SetPSLoopDelay(int channel, double delay);
+void SetPSMoxDelay(int channel, double delay);
+double SetPSTXDelay(int channel, double delay);
+
 #ifdef __cplusplus
 }
 #endif

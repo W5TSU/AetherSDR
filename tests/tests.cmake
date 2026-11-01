@@ -4853,6 +4853,13 @@ target_include_directories(hl2_ps_wire_test PRIVATE src)
 target_link_libraries(hl2_ps_wire_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_ps_wire_test COMMAND hl2_ps_wire_test)
 
+# PureSignal end to end against a software amplifier: IMD3 has to fall. No radio.
+add_executable(hl2_puresignal_loop_test tests/hl2_puresignal_loop_test.cpp)
+target_include_directories(hl2_puresignal_loop_test PRIVATE src)
+target_link_libraries(hl2_puresignal_loop_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_puresignal_loop_test COMMAND hl2_puresignal_loop_test)
+set_tests_properties(hl2_puresignal_loop_test PROPERTIES TIMEOUT 240)
+
 # HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
 # socket. Binds nothing: recorded datagrams go straight into MetisClient's
 # drain path through the MetisClientTestAccess friend seam.
