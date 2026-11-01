@@ -191,6 +191,9 @@ public:
         else if (firstReport) emit powerProvenanceChanged();
     }
     QString tuneMode()        const { return m_tuneMode; }
+    // What the next TUNE was asked to be. tuneMode() is what a Flex reports back,
+    // so a radio that generates its own waveform has to read this instead.
+    bool nextTuneIsTwoTone()  const { return m_nextTuneIsTwoTone; }
     QString txSliceMode()     const { return m_txSliceMode; }
     bool tuneAvailable() const { return m_tuneAvailable; }
     void setTuneAvailable(bool available);
@@ -622,6 +625,7 @@ private:
     int     m_rcaTxReqPolarity{0};
     int     m_maxPowerLevel{100};
     QString m_tuneMode{"single_tone"};
+    bool m_nextTuneIsTwoTone{false};
     bool m_tuneAvailable = true;
     QString m_txSliceMode;   // empty until first transmit status; "FDVU", "FDVL", "USB", etc.
     bool    m_showTxInWaterfall{false};

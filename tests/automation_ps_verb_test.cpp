@@ -97,6 +97,30 @@ int main(int argc, char** argv)
                   && r.value(QStringLiteral("state")).toString() == QStringLiteral("off"),
               "ps off reads off");
     }
+    {
+        // Found on the radio: TransmitModel's tune mode only changes on a Flex's
+        // status echo, so this path sent a single carrier. Through the model, not
+        // straight at the backend, because that is where it broke.
+        const auto waveform = [&radio] {
+            return radio.backend()->healthSnapshot()
+                .values.value(QStringLiteral("tuneWaveform")).toString();
+        };
+        auto& tx = radio.transmitModel();
+        tx.setTuneAvailable(true);
+        tx.setPttPreflight({});   // no slice here, and the gate is not what is under test
+        check(waveform() == QStringLiteral("carrier"), "TUNE is a carrier by default");
+        tx.startTwoToneTune();
+        check(waveform() == QStringLiteral("two-tone"), "the bridge's two-tone reaches the backend");
+        tx.stopTune();
+        check(waveform() == QStringLiteral("carrier"), "and it does not outlive the tune");
+        tx.setTuneMode(QStringLiteral("two_tone"));
+        tx.startTune();
+        check(waveform() == QStringLiteral("two-tone"), "the TUNE menu's Two Tone reaches it too");
+        tx.stopTune();
+        tx.startTune();
+        check(waveform() == QStringLiteral("carrier"), "the menu's choice is for one tune only");
+        tx.stopTune();
+    }
     check(!ps(server, QStringLiteral("loud")).value(QStringLiteral("ok")).toBool(),
           "an unknown action is an error");
 

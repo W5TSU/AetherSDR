@@ -6303,6 +6303,8 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     // "is the transmit gain doing anything?" where an absent row would not.
     put("txLnaGainDb", QStringLiteral("Receive gain while transmitting (dB)"),
         m_txLnaGainDb ? QVariant(*m_txLnaGainDb) : QVariant(QStringLiteral("off")));
+    put("tuneWaveform", QStringLiteral("TUNE waveform"),
+        m_tuneTwoTone ? QStringLiteral("two-tone") : QStringLiteral("carrier"));
     // PureSignal, for `ps status` and the Radio Health window.
     put("psState", QStringLiteral("PureSignal"), m_psState);
     if (m_psActive) {

@@ -7163,12 +7163,10 @@ QJsonObject AutomationServer::doTxTest(const QString& action)
     }
     if (action == QLatin1String("twotone")) {
         // CAPABILITY, NOT FAMILY (Constitution II/III). The question is whether
-        // the backend behind this verb has a two-tone generator, and only Flex
-        // does: `transmit set tune_mode=two_tone` is read by FlexBackend alone.
-        // Every other backend drives the same button into a single carrier —
-        // Icom's setTune(), the HL2's test tone at zero offset — so a family
-        // check written for Icom would have left HL2 certifying two-tone RF it
-        // never produced. Refuse before the TX gate: this is about what the
+        // the backend behind this verb has a two-tone generator. A Flex reads
+        // `transmit set tune_mode=two_tone`, the HL2 reads setTuneTwoTone(), and
+        // the rest drive the same button into a single carrier, so a family check
+        // written for Icom would certify two-tone RF it never produced. Refuse before the TX gate: this is about what the
         // evidence would claim, so it is wrong to key even when TX is allowed.
         if (!m_radioModel->backendCapabilities().twoToneGenerator) {
             return err(QStringLiteral("two-tone generation is not implemented on this radio; "
