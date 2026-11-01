@@ -16,6 +16,7 @@ namespace {
 const QString kRootKey = QStringLiteral("Hl2");
 
 constexpr const char* kFieldSpanMhz = "spanMhz";
+constexpr const char* kFieldPureSignal = "pureSignal";
 
 // Owned by the connection panel, not by us. Read only; see the header.
 const QString kLowBandwidthKey = QStringLiteral("LowBandwidthConnect");
@@ -49,6 +50,21 @@ void Hl2Settings::setSpanMhz(double mhz)
     // (Principle XIV) — never half a config after a crash mid-write.
     QJsonObject o = readObj();
     o[QLatin1String(kFieldSpanMhz)] = mhz;
+    auto& s = AppSettings::instance();
+    s.setValue(kRootKey,
+               QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    s.save();
+}
+
+bool Hl2Settings::pureSignal()
+{
+    return readObj().value(QLatin1String(kFieldPureSignal)).toBool(false);
+}
+
+void Hl2Settings::setPureSignal(bool on)
+{
+    QJsonObject o = readObj();
+    o[QLatin1String(kFieldPureSignal)] = on;
     auto& s = AppSettings::instance();
     s.setValue(kRootKey,
                QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));

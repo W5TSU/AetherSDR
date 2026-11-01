@@ -405,7 +405,10 @@ Cc ccRxFreq(int rxIndex, std::uint32_t hz) noexcept;
 // RX1 NCO frequency in Hz. Equivalent to ccRxFreq(0, hz).
 Cc ccRx1Freq(std::uint32_t hz) noexcept;
 // AD9866 LNA gain in dB, clamped to [-12, +48]; C4 = 0x40 | (dB + 12).
-Cc ccRxGain(int db) noexcept;
+// `pureSignal` sets 0x0a bit 22 (C2 0x40): while transmitting, the gateware feeds
+// the second mixer from the DAC, which makes DDC 3 the transmit reference
+// (radio.v MIX1_3). DDC 2 stays on the ADC and carries the feedback.
+Cc ccRxGain(int db, bool pureSignal = false) noexcept;
 // Address 0x0e (see kC0AdcAssignOrTxGain). Unset: the generic per-receiver ADC
 // assignment, all zero because Phase 1 runs every receiver on ADC0 -- the bank
 // still has to be SENT for a conforming device to route ADC samples to RX1 at

@@ -18,10 +18,13 @@
 #include "core/backends/hl2/Hl2TelemetryCadence.h"  // Hl2LinkState (#15)
 #include "core/backends/hl2/Hl2TelemetryService.h"  // borrowed, owned by RadioModel
 #include "core/backends/hl2/Hl2TelemetrySource.h"   // the shared attribution rule
+#include "core/backends/hl2/Hl2PsController.h"
+#include "core/backends/hl2/Hl2PureSignal.h"
 #include "core/backends/hl2/Hl2Receivers.h"
 #include "core/backends/hl2/Hl2SpanRebuild.h"   // SpanRebuildOutcome
 #include "core/backends/hl2/MetisProtocol.h"   // Hl2Telemetry
 
+#include <atomic>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -146,6 +149,7 @@ public:
     // so repeating the base's is how the two quietly diverge later. The sole
     // call site passes it explicitly.
     void setTune(bool on, int tunePowerPercent) override;
+    void setTuneTwoTone(bool twoTone) override { m_tuneTwoTone = twoTone; }
     void setTxAudioMonitor(bool on) override;
     void setTxFrequency(double hz);
     // RIT / XIT, per receiver (#5386, #6105). RIT offsets that receiver's own
@@ -212,6 +216,7 @@ public:
 
 private:
     friend struct Hl2DspReadbackTestAccess;
+    friend struct Hl2PureSignalTestAccess;
     friend struct Hl2UnkeyHoldTestAccess;
     friend struct Hl2RitXitTestAccess;
     friend struct Hl2TuneTailTestAccess;
@@ -944,6 +949,52 @@ private:
     // Kept for the app session and handed to MetisClient on every connect, so a
     // reconnect restores it. Not persisted: PureSignal will own it.
     std::optional<int> m_txLnaGainDb;
+
+    // ---- PureSignal ----
+    //
+    // The operator's choice and the layout, on the GUI thread. The WDSP side and
+    // every decision live on the I/O thread with their own timer, so the fail-safe
+    // does not wait on a busy GUI.
+    [[nodiscard]] int wireReceiverCount() const;
+    [[nodiscard]] QString pureSignalRefusal() const;
+    QString setPureSignal(bool on);
+    void activatePureSignal();
+    // `sessionEnded`: the radio is going or gone, so nothing is saved and the
+    // layout does not wait for an unkey that may never come.
+    void deactivatePureSignal(bool sessionEnded = false);
+    void retryPureSignalIfWanted();
+    void applyPureSignalAlcTarget(Hl2PsState state);
+    void rememberPureSignalCurve(const QString& band, double gapDb, int drivePercent);
+    void restoreReceiverLayoutAfterPureSignal();
+    void updatePureSignalMox(bool key);
+    void psTickOnIoThread();
+    void publishPureSignal(const QString& refusal = {});
+    [[nodiscard]] QString psCorrectionPath(const QString& band) const;
+    void pureSignalBandChanged(const QString& oldBand, const QString& newBand);
+    void savePureSignalBandGain(const QString& band, int gainDb);
+
+    bool m_psWanted = false;         // the operator's choice
+    bool m_psActive = false;         // the layout is up on a radio
+    bool m_psLayoutOwed = false;     // switched off while keyed; the layout waits
+    bool m_tuneTwoTone = false;
+    std::uint32_t m_psTxCommandHz = 0;
+    QString m_psState = QStringLiteral("off");
+    Hl2PsSnapshot m_psSnapshot;
+    int m_psPublishedLevel = -1;
+    std::optional<int> m_psGainDb;
+    std::optional<int> m_operatorTxLnaGainDb;
+
+    // I/O thread only.
+    std::unique_ptr<Hl2PureSignal> m_ps;
+    Hl2PsController m_psController;
+    QTimer* m_psTimer = nullptr;
+    std::atomic<bool> m_psKeyedModulated{false};
+    // Ticks left before a restore's outcome is read; a read file starts correction.
+    int m_psRestoreCheckTicks = 0;
+    QString m_psRestorePath;
+    // A restored curve runs without calibrating, so a change it cannot describe
+    // has to ask for one.
+    bool m_psHoldingRestored = false;
     // Last raw RX1 IQ peak from telemetry (Hl2Telemetry::rx1IqPeakDbfs), and
     // when it arrived, so a stale reading drops out of Radio Health.
     std::optional<double> m_rx1IqPeakDbfs;

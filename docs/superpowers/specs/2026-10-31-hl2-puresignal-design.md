@@ -1,6 +1,6 @@
 # PureSignal on the Hermes-Lite 2 — design
 
-Date: 2026-10-31. Status: draft for the operator's approval.
+Date: 2026-10-31. Status: built. Measured on the HL2 alone; not yet working through the amplifier (see "Measured").
 
 ## Why
 
@@ -212,8 +212,35 @@ Each is its own branch and PR, and each leaves the radio working.
 
 ## Calls made without the operator (check these)
 
-- Mode 0 on the I/O board, no register 11 writes.
+- Mode 0 on the I/O board, no register 11 writes. **Not confirmed by measurement;**
+  see "Measured".
 - The button lives in the transmit panel beside TUNE/MOX.
 - Correction saved per band; on/off saved globally.
 - The two-tone generator is in scope.
 - Build order 1 → 5 as separate PRs.
+
+## Measured (2026-11-01, W5TSU's station, on the air on 14.215 MHz)
+
+No dummy load was available, so these went out on the antenna at the operator's
+choice. HackRF Pro by pickup, receive only.
+
+- **`0x0e`:** the HL2's own carrier reads -51.9 dBFS at -12 dB and -20.1 dBFS at
+  +20 dB: 31.8 of the expected 32 dB.
+- **Reference:** DDC 3 reads -12.6 dBFS, 0.235, for a 0.98 peak two-tone, against a
+  hardware peak of 0.24.
+- **HL2 alone, 5% drive, amplifier in Standby:** IMD3 -31.8 dBc off, -43.5 dBc on.
+  IMD5 -47.7 off, -51.3 on. The tones fell 2.2 dB. No product rose. The level loop
+  walked the gain from -12 to about +24 dB by itself, and calibration never failed.
+- **Through the amplifier: not working.** The feedback does not come from the
+  sampler. With about 10 W out, about -15 dBm should reach PURE, yet the reading
+  (-53 dBFS at -12 dB gain) is the same with the amplifier in Standby or operate,
+  in I/O board mode 0 or 2, and follows the HL2's own forward power dB for dB. It
+  appears to be coupling inside the HL2, past the I/O board's switch, so PureSignal
+  is correcting the HL2's own stage and is blind to the amplifier.
+- **Not run:** speech, and pulling the sampler cable while correcting. The cable
+  case is meaningless until the sampler is what is being read.
+
+**To find out next, at the bench, with no transmitter:** whether a signal put into
+PURE reaches the receiver at all. Something on PURE that should be visible and is
+not points at the board, the HL2's T/R switching or the connector. It also decides
+whether this design's "mode 0, no switching" assumption survives.

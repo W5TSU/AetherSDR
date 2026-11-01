@@ -646,6 +646,12 @@ target_link_libraries(wdsp_calcc_teardown_test PRIVATE aethercore)
 add_test(NAME wdsp_calcc_teardown_test COMMAND wdsp_calcc_teardown_test)
 set_tests_properties(wdsp_calcc_teardown_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+# WDSP patch 23: PureSignal's correction stage on IQ the host supplies. No radio.
+add_executable(wdsp_ps_apply_test tests/wdsp_ps_apply_test.cpp)
+target_link_libraries(wdsp_ps_apply_test PRIVATE aethercore aether::wdsp)
+add_test(NAME wdsp_ps_apply_test COMMAND wdsp_ps_apply_test)
+set_tests_properties(wdsp_ps_apply_test PROPERTIES TIMEOUT 120)
+
 add_executable(rtl_receiver_registry_test tests/rtl_receiver_registry_test.cpp)
 target_link_libraries(rtl_receiver_registry_test PRIVATE aethercore Qt6::Core)
 add_test(NAME rtl_receiver_registry_test COMMAND rtl_receiver_registry_test)
@@ -4841,6 +4847,25 @@ target_include_directories(hl2_tx_lna_gain_frame_test PRIVATE src)
 target_link_libraries(hl2_tx_lna_gain_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_lna_gain_frame_test COMMAND hl2_tx_lna_gain_frame_test)
 
+# PureSignal on the wire: 0x0a bit 22, the corrector hook, the two-tone signal.
+add_executable(hl2_ps_wire_test tests/hl2_ps_wire_test.cpp)
+target_include_directories(hl2_ps_wire_test PRIVATE src)
+target_link_libraries(hl2_ps_wire_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ps_wire_test COMMAND hl2_ps_wire_test)
+
+# PureSignal end to end against a software amplifier: IMD3 has to fall. No radio.
+add_executable(hl2_puresignal_loop_test tests/hl2_puresignal_loop_test.cpp)
+target_include_directories(hl2_puresignal_loop_test PRIVATE src)
+target_link_libraries(hl2_puresignal_loop_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_puresignal_loop_test COMMAND hl2_puresignal_loop_test)
+set_tests_properties(hl2_puresignal_loop_test PROPERTIES TIMEOUT 240)
+
+# PureSignal's decisions: state, fail-safe, automatic receive gain. No WDSP.
+add_executable(hl2_ps_controller_test tests/hl2_ps_controller_test.cpp)
+target_include_directories(hl2_ps_controller_test PRIVATE src)
+target_link_libraries(hl2_ps_controller_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ps_controller_test COMMAND hl2_ps_controller_test)
+
 # HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
 # socket. Binds nothing: recorded datagrams go straight into MetisClient's
 # drain path through the MetisClientTestAccess friend seam.
@@ -5969,6 +5994,15 @@ add_executable(automation_txlnagain_verb_test tests/automation_txlnagain_verb_te
 target_include_directories(automation_txlnagain_verb_test PRIVATE src tests)
 target_link_libraries(automation_txlnagain_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME automation_txlnagain_verb_test COMMAND automation_txlnagain_verb_test)
+add_executable(automation_ps_verb_test tests/automation_ps_verb_test.cpp)
+target_include_directories(automation_ps_verb_test PRIVATE src tests)
+target_link_libraries(automation_ps_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME automation_ps_verb_test COMMAND automation_ps_verb_test)
+add_executable(hl2_ps_backend_test tests/hl2_ps_backend_test.cpp)
+target_include_directories(hl2_ps_backend_test PRIVATE src tests)
+target_link_libraries(hl2_ps_backend_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ps_backend_test COMMAND hl2_ps_backend_test)
+set_tests_properties(hl2_ps_backend_test PROPERTIES TIMEOUT 120)
 # Ordinary RX lifecycle through production model/backend bindings and an
 # injected command/reply sink. No sockets, firmware peer, DSP or USB access.
 add_executable(backend_slice_lifecycle_test tests/backend_slice_lifecycle_test.cpp)
@@ -6345,6 +6379,23 @@ set_target_properties(tx_applet_power_reconciliation_test PROPERTIES AUTOMOC ON)
 add_test(NAME tx_applet_power_reconciliation_test
          COMMAND tx_applet_power_reconciliation_test)
 set_tests_properties(tx_applet_power_reconciliation_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tx_applet_ps_button_test
+    tests/tx_applet_ps_button_test.cpp
+    src/gui/TxApplet.cpp
+    src/gui/AtuPreTuneDialog.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+)
+target_include_directories(tx_applet_ps_button_test PRIVATE src tests)
+target_link_libraries(tx_applet_ps_button_test PRIVATE
+    aethercore Qt6::Core Qt6::Widgets Qt6::Test
+)
+set_target_properties(tx_applet_ps_button_test PROPERTIES AUTOMOC ON)
+add_test(NAME tx_applet_ps_button_test COMMAND tx_applet_ps_button_test)
+set_tests_properties(tx_applet_ps_button_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(phone_tx_filter_numeric_entry_test
@@ -6930,6 +6981,7 @@ set(AETHER_AUTOMATION_SERVER_TESTS
     connect_state_model_test
     automation_dsp_backend_readback_test
     automation_txlnagain_verb_test
+    automation_ps_verb_test
     backend_slice_lifecycle_test
     tci_automation_test
     reroute_dead_controls_test

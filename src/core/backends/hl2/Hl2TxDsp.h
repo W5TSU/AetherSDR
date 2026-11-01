@@ -87,6 +87,9 @@ public:
     Q_INVOKABLE void setFilter(double lowHz, double highHz);
     // Linear gain applied to the audio before modulation. 1.0 = unity.
     Q_INVOKABLE void setMicGain(double linear);
+    // PureSignal only calibrates on a signal reaching calcc's top bucket, 0.9375 of
+    // full scale, which the shipped 0.85 cannot.
+    Q_INVOKABLE void setAlcTargetPeak(double peak) { m_config.alcTargetPeak = peak; }
     [[nodiscard]] double micGain() const noexcept { return m_micGain; }
 
     // Last applied configuration. Read-back consumers must check isConfigured()

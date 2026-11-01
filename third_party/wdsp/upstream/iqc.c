@@ -188,6 +188,46 @@ void setSize_iqc (IQC a, int size)
 	a->size = size;
 }
 
+// AetherSDR patch 23: run the stage on IQ the host supplies, for a host whose
+// modulator is not this TXA chain. csDSP is what SetTXAiqcStart/Swap/End hold
+// while they replace the splines; the channel's own worker never runs xiqc for
+// such a host, because it is never fed.
+PORT
+void PSApplyCorrection (int channel, int size, double* in, double* out)
+{
+	IQC a = txa[channel].iqc.p;
+	double* savedIn;
+	double* savedOut;
+	int savedSize;
+	EnterCriticalSection (&ch[channel].csDSP);
+	savedIn = a->in;
+	savedOut = a->out;
+	savedSize = a->size;
+	a->in = in;
+	a->out = out;
+	a->size = size;
+	xiqc (a);
+	a->in = savedIn;
+	a->out = savedOut;
+	a->size = savedSize;
+	LeaveCriticalSection (&ch[channel].csDSP);
+}
+
+// AetherSDR patch 23: whether the stage is correcting at all. calcc's info[14]
+// reads 1 after a restore even when reading the file failed; this does not.
+PORT
+int PSCorrectionRunning (int channel)
+{
+	return _InterlockedAnd (&txa[channel].iqc.p->run, 1);
+}
+
+// AetherSDR patch 23: whether a start, swap or end ramp is still in progress.
+PORT
+int PSCorrectionBusy (int channel)
+{
+	return _InterlockedAnd (&txa[channel].iqc.p->busy, 1);
+}
+
 /********************************************************************************************************
 *																										*
 *											TXA Properties												*

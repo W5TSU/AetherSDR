@@ -691,6 +691,8 @@ public:
     // because a user action is a request. Nothing else may call it — see
     // notePcAudioEnabled() for the connect edge.
     void setPcAudioEnabled(bool on);
+    // The PS button. The answer comes back on pureSignalStatusChanged.
+    void setPureSignal(bool on);
     // The client's PC Audio state, published so the backend can ADVISE on a
     // mismatch. Writes nothing: Principle III owns DATA OFF MOD to the radio,
     // so a connect must never replay this client-persisted flag onto it.
@@ -1130,6 +1132,9 @@ signals:
     // lacks this" from "there is no radio" — the latter restores the permissive
     // value (see MainWindow::applyCapabilitiesToUi).
     void capabilitiesChanged(bool connected, const RadioCapabilities& caps);
+    // Relayed from the backend (IRadioBackend::pureSignalStatusChanged).
+    void pureSignalStatusChanged(bool on, const QString& state, int feedbackLevel,
+                                 const QString& refusal);
     void transmitFrequencyCheckChanged(bool on);
     // Emitted whenever the backend instance is (re)built — including the
     // connect-time swap between FlexBackend and SimBackend (RFC #4288). The old

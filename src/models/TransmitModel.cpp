@@ -411,6 +411,7 @@ void TransmitModel::setTuneMode(const QString& mode)
         qWarning() << "TransmitModel: ignoring invalid tune mode:" << mode;
         return;
     }
+    m_nextTuneIsTwoTone = mode == "two_tone";
     emit commandReady("transmit set tune_mode=" + mode);
 }
 
@@ -496,6 +497,7 @@ void TransmitModel::toggleTwoToneTune()
 
 void TransmitModel::stopTune()
 {
+    m_nextTuneIsTwoTone = false;   // the choice is for one tune (TxApplet's menu)
     if (m_tune) {
         m_tune = false;
         emit tuneChanged(false);

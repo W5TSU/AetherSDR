@@ -10,6 +10,7 @@ namespace AetherSDR {
 
 namespace {
 constexpr const char* kFieldAdcDither = "adcDither";
+constexpr const char* kFieldPureSignalGain = "pureSignalGainDbByBand";
 constexpr const char* kFieldAdcRandom = "adcRandom";
 constexpr const char* kFieldResetOnDisconnect = "resetOnDisconnect";
 constexpr const char* kFieldTxLatency = "txLatency";
@@ -42,6 +43,47 @@ void writeField(const RadioSettingsScope& scope, const char* field, const QJsonV
     }
 }
 }  // namespace
+
+std::optional<int> Hl2MiscOptionsSettings::pureSignalGainDb(const RadioSettingsScope& scope,
+                                                            const QString& band)
+{
+    const QJsonValue v = scope.feature(kFeature)
+                             .value(QLatin1String(kFieldPureSignalGain)).toObject().value(band);
+    return v.isDouble() ? std::optional<int>(v.toInt()) : std::nullopt;
+}
+
+void Hl2MiscOptionsSettings::setPureSignalGainDb(const RadioSettingsScope& scope,
+                                                 const QString& band, int db)
+{
+    QJsonObject gains = scope.featureExact(kFeature)
+                            .value(QLatin1String(kFieldPureSignalGain)).toObject();
+    gains[band] = db;
+    writeField(scope, kFieldPureSignalGain, gains);
+}
+
+std::optional<Hl2MiscOptionsSettings::PureSignalCurve> Hl2MiscOptionsSettings::pureSignalCurve(
+    const RadioSettingsScope& scope, const QString& band)
+{
+    const QJsonValue v = scope.feature(kFeature)
+                             .value(QLatin1String("pureSignalCurveByBand")).toObject().value(band);
+    if (!v.isObject())
+        return std::nullopt;
+    const QJsonObject o = v.toObject();
+    if (!o.value(QLatin1String("gapDb")).isDouble() || !o.value(QLatin1String("drive")).isDouble())
+        return std::nullopt;
+    return PureSignalCurve{o.value(QLatin1String("gapDb")).toDouble(),
+                           o.value(QLatin1String("drive")).toInt()};
+}
+
+void Hl2MiscOptionsSettings::setPureSignalCurve(const RadioSettingsScope& scope, const QString& band,
+                                                double gapDb, int drivePercent)
+{
+    QJsonObject curves = scope.featureExact(kFeature)
+                             .value(QLatin1String("pureSignalCurveByBand")).toObject();
+    curves[band] = QJsonObject{{QLatin1String("gapDb"), gapDb},
+                               {QLatin1String("drive"), drivePercent}};
+    writeField(scope, "pureSignalCurveByBand", curves);
+}
 
 bool Hl2MiscOptionsSettings::adcDither(const RadioSettingsScope& scope)
 {

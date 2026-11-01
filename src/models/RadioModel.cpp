@@ -573,6 +573,15 @@ void RadioModel::invokeBackendExtension(const QString& ns, const QString& verb,
     m_backend->invokeExtension(ns, verb, requestId, arg);
 }
 
+void RadioModel::setPureSignal(bool on)
+{
+    if (!m_backend || !m_backend->capabilities().hasPureSignal) {
+        return;
+    }
+    m_backend->invokeExtension(backendCapabilities().family, QStringLiteral("ps.set"), 0,
+                               QVariant(on));
+}
+
 void RadioModel::setPcAudioEnabled(bool on)
 {
     // Gated on the DECLARED NAMESPACE, not on the family string (#5262 M1).
@@ -1630,6 +1639,8 @@ void RadioModel::applyBackendLinkStats(const IRadioBackend::LinkStats& stats)
 
 void RadioModel::wireBackendReceiverState()
 {
+    connect(m_backend.get(), &IRadioBackend::pureSignalStatusChanged,
+            this, &RadioModel::pureSignalStatusChanged);
     if (!m_backend) {
         return;
     }
@@ -2646,6 +2657,9 @@ RadioModel::RadioModel(QObject* parent)
             }
             // Hand the backend the operator's TUNE power. A host-modulated
             // backend has no other path to it — see IRadioBackend::setTune().
+            if (on) {
+                m_backend->setTuneTwoTone(m_transmitModel.nextTuneIsTwoTone());
+            }
             m_backend->setTune(on, m_transmitModel.tunePower());
             m_backendTuneKeyed = on;
             // A tune carrier is a transmission. Hl2Backend::setTune() calls
