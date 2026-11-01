@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -234,10 +235,11 @@ inline constexpr std::uint8_t kC0AdcGain = 0x14;  // addr 0x0a: AD9866 LNA gain
 // brought up and verified on air with it left that way, so this is NOT a
 // blocker for basic SSB.
 //
-// It still matters for two things neither of which is implemented: the T/R gain
-// switch (the mechanism Quisk uses for fast turnaround) and PureSignal's
-// unclipped feedback path. Both need 0x0e to carry a real value, and this round
-// robin would zero it every third frame.
+// It matters for two things: the T/R gain switch (the mechanism Quisk uses for
+// fast turnaround) and PureSignal's unclipped feedback path. Both need 0x0e to
+// carry a real value, so ccAdcAssignOrTxGain() encodes one when asked
+// (ad9866.v @ 7de0b57: [15] enable, [14] native code, [13:8] gain) and the
+// round robin re-asserts whatever is set. Unset, the bank stays all zero.
 inline constexpr std::uint8_t kC0AdcAssignOrTxGain = 0x1C;
 
 // addr 0x39: sync / reset. DATA[7:4] = 0x8 resets every decimation filter
@@ -404,10 +406,13 @@ Cc ccRxFreq(int rxIndex, std::uint32_t hz) noexcept;
 Cc ccRx1Freq(std::uint32_t hz) noexcept;
 // AD9866 LNA gain in dB, clamped to [-12, +48]; C4 = 0x40 | (dB + 12).
 Cc ccRxGain(int db) noexcept;
-// Per-receiver ADC assignment (see kC0AdcAssignOrTxGain). Phase 1 runs one receiver on
-// ADC0, so every field is zero; the bank still has to be SENT for a conforming
-// device to route ADC samples to RX1 at all.
-Cc ccAdcAssign() noexcept;
+// Address 0x0e (see kC0AdcAssignOrTxGain). Unset: the generic per-receiver ADC
+// assignment, all zero because Phase 1 runs every receiver on ADC0 -- the bank
+// still has to be SENT for a conforming device to route ADC samples to RX1 at
+// all, and on the HL2 all zero leaves the transmit gain disabled. Set: the HL2's
+// receive LNA gain while transmitting, in dB, clamped to [-12, +48] and encoded
+// like ccRxGain (gateware ad9866.v @ 7de0b57: [15] enable, [14] native, [13:8]).
+Cc ccAdcAssignOrTxGain(std::optional<int> txGainDb) noexcept;
 // One-shot filter-pipeline reset. UNUSED — read the warning at kC0Sync before
 // calling this from anywhere.
 Cc ccPipelineReset() noexcept;
@@ -762,6 +767,10 @@ struct Hl2Telemetry {
     // The window's RADDR-1 responses skipped as isNonMeasurementRaddr1(). A unit
     // whose temperature word is always 0 has every response here and no peak.
     int forwardPowerSkipped = 0;
+    // Peak of RX1's raw IQ over the same window (RxIqPeakWindow), in dBFS. Read
+    // before any DSP, so it reports the receiver's level while transmitting too.
+    // Filled by MetisClient at each emit; nullopt when the window had no IQ.
+    std::optional<double> rx1IqPeakDbfs;
 
     // Merge a decoded response in, leaving untouched fields alone.
     //
@@ -812,6 +821,30 @@ struct ForwardPowerWindow {
         peak.reset();
         samples = 0;
         skipped = 0;
+    }
+};
+
+// Peak |I+jQ| of raw receiver IQ over one telemetry window, in dBFS. Raw means
+// as decoded from EP6, before any DSP -- so it still reads while transmitting,
+// when the receive chain is fed zeros. ep6SamplesMulti normalises to full scale,
+// so 1.0 is 0 dBFS.
+struct RxIqPeakWindow {
+    std::optional<float> peakMag;
+
+    void observe(std::span<const std::complex<float>> iq) noexcept
+    {
+        for (const auto& s : iq) {
+            const float m = std::abs(s);
+            if (!peakMag || m > *peakMag)
+                peakMag = m;
+        }
+    }
+    void clear() noexcept { peakMag.reset(); }
+    [[nodiscard]] std::optional<double> peakDbfs() const noexcept
+    {
+        if (!peakMag)
+            return std::nullopt;
+        return 20.0 * std::log10(static_cast<double>(*peakMag));
     }
 };
 

@@ -1271,7 +1271,7 @@ bool MetisClient::requestRegister(int addr, quint32 data, bool subsystemRead)
     // needs either has to gate it on transmitEnabled() deliberately.
     static constexpr int kRequestableAddresses[] = {
         kC0AdcGain >> 1,            // 0x0a  AD9866 RX LNA gain (ccRxGain)
-        kC0AdcAssignOrTxGain >> 1,  // 0x0e  ADC assign / TX LNA gain (ccAdcAssign)
+        kC0AdcAssignOrTxGain >> 1,  // 0x0e  ADC assign / TX LNA gain (ccAdcAssignOrTxGain)
     };
     if (std::find(std::begin(kRequestableAddresses), std::end(kRequestableAddresses), addr)
         == std::end(kRequestableAddresses))
@@ -1456,7 +1456,7 @@ void MetisClient::flushTxIq()
 
 std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
 {
-    static const Cc kCcAdc = ccAdcAssign();
+    static const Cc kCcAdc = ccAdcAssignOrTxGain(std::nullopt);
     // Cleared here rather than only on confirmation: a packet built and then
     // thrown away (a test, or a caller that inspects the bytes) must not leave
     // a stale claim that some later packet carried the request.
