@@ -76,6 +76,11 @@ int main(int argc, char** argv)
         applet.showPureSignalStatus(true, QStringLiteral("idle"), -1, QString());
         report("the backend's report lights it", btn->isChecked());
         report("the line says the state", label->text().contains(QStringLiteral("idle")));
+        applet.showPureSignalStatus(true, QStringLiteral("idle"), 0, QString());
+        report("no calibration yet: no level to judge",
+               label->property("psBand").toString() == QStringLiteral("none")
+                   && label->text() == QStringLiteral("PS: idle"));
+        report("lit looks different from out", btn->styleSheet().contains(QStringLiteral(":checked")));
 
         applet.showPureSignalStatus(true, QStringLiteral("correcting"), 150, QString());
         report("the line has the level", label->text().contains(QStringLiteral("correcting"))

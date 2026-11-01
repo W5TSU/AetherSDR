@@ -42,6 +42,17 @@ static const char* const kMoxIdleStyle =
 
 
 
+// PS keys nothing, so it wears its neighbours' neutral look rather than MOX's
+// transmit accent, and it is the one of them that shows a state of its own.
+static const char* const kPsStyle =
+    "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+    "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; "
+    "padding: 2px; }"
+    "QPushButton:hover { background: #204060; }"
+    "QPushButton:checked { background: #1f6a3a; border: 1px solid #30a060; color: #e8ffe8; }"
+    "QPushButton:disabled { background-color: #1a1a2a; color: #556070; "
+    "border: 1px solid #2a3040; }";
+
 // ── Styled indicator label (small coloured-dot + text) ──────────────────────
 
 static QLabel* makeIndicator(const QString& text)
@@ -266,7 +277,7 @@ void TxApplet::buildUI()
         // Beside TUNE and MOX, but it keys nothing: PureSignal only works on what
         // the operator transmits anyway. So no markTxKeying().
         m_psBtn = new QPushButton("PS");
-        AetherSDR::ThemeManager::instance().applyStyleSheet(m_psBtn, kMoxIdleStyle);
+        AetherSDR::ThemeManager::instance().applyStyleSheet(m_psBtn, kPsStyle);
         m_psBtn->setCheckable(true);
         m_psBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_psBtn->setFixedHeight(22);
@@ -788,7 +799,9 @@ void TxApplet::showPureSignalStatus(bool on, const QString& state, int feedbackL
 
     QString band = QStringLiteral("none");
     QString color = QStringLiteral("#8090a0");
-    if (on && feedbackLevel >= 0) {
+    // 0 is no calibration yet, not a level that failed.
+    const bool haveLevel = on && feedbackLevel > 0;
+    if (haveLevel) {
         // Thetis's and deskHPSDR's bands for the feedback meter.
         if (feedbackLevel > 128 && feedbackLevel <= 181) {
             band = QStringLiteral("good");
@@ -806,7 +819,7 @@ void TxApplet::showPureSignalStatus(bool on, const QString& state, int feedbackL
         m_psStatus, QStringLiteral("QLabel { color: %1; font-size: 9px; }").arg(color));
 
     QString text = QStringLiteral("PS: %1").arg(state);
-    if (on && feedbackLevel >= 0)
+    if (haveLevel)
         text += QStringLiteral(" · %1").arg(feedbackLevel);
     if (!refusal.isEmpty())
         text = refusal;
