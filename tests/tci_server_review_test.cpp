@@ -2480,6 +2480,19 @@ public:
         return receiveOnlyProtocol.generateInitBurst()
             .contains(QStringLiteral("tx_enable:0,false;"));
     }
+    // The init burst names the TCI version the server targets. WSJT-X and
+    // JTDX key their command formats on "ExpertSDR3" alone, so the version
+    // can follow the spec without changing what they send.
+    static bool initBurstAnnouncesTci21()
+    {
+        RadioModel model;
+        model.setBackendForTest(std::make_unique<TxCapableBackend>(),
+                                QStringLiteral("test"));
+        TciProtocol protocol(&model);
+        const QString init = protocol.generateInitBurst();
+        return init.contains(QStringLiteral("protocol:ExpertSDR3,2.1;"))
+            && !init.contains(QStringLiteral("protocol:ExpertSDR3,1.5;"));
+    }
 };
 
 } // namespace AetherSDR
@@ -2558,6 +2571,8 @@ int main(int argc, char** argv)
         = AetherSDR::TciServerReviewTest::borrowedIqChannelIsRefused();
     const bool iqRearms
         = AetherSDR::TciServerReviewTest::iqStreamRearmsAfterStopStartCycle();
+    const bool tci21Announced
+        = AetherSDR::TciServerReviewTest::initBurstAnnouncesTci21();
     const bool iqClientScoped
         = AetherSDR::TciServerReviewTest::sharedIqSubscriptionIsClientScoped();
     const bool modePermission
@@ -2640,6 +2655,8 @@ int main(int argc, char** argv)
                 iqRearms ? "PASS" : "FAIL");
     std::printf("%s  shared IQ subscriptions are client-scoped\n",
                 iqClientScoped ? "PASS" : "FAIL");
+    std::printf("%s  init burst announces TCI 2.1\n",
+                tci21Announced ? "PASS" : "FAIL");
     std::printf("%s  TCI TX permission follows modes and live capabilities (#6438)\n",
                 modePermission ? "PASS" : "FAIL");
     std::printf("%s  TCI TX permission is independent of TX ownership (#6438)\n",
@@ -2657,6 +2674,6 @@ int main(int argc, char** argv)
         && vfoChannelZeroOnce
         && routeLogStaleCache && routeLogSampleOrder && routeLogSanitizes
         && native24kPayload && fourIqStreams && sharedPanChannel
-        && borrowRefused && iqRearms && iqClientScoped && txPermission && modePermission
+        && borrowRefused && iqRearms && iqClientScoped && txPermission && modePermission && tci21Announced
         ? 0 : 1;
 }

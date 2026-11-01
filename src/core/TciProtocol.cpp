@@ -351,28 +351,17 @@ QString TciProtocol::generateInitBurst()
     // over the PDF.
     burst += QStringLiteral("channels_count:2;");
 
-    // Identity chosen to bypass WSJT-X's TCI gain-reduction code path.
-    // WSJT-X's TCITransceiver halves TX sample amplitude (K2 = 0.499/0x7FFF
-    // vs K1 = 0.999/0x7FFF, ~-6 dB) when BOTH conditions hold:
-    //   device  == "SunSDR2DX" or "SunSDR2PRO"
-    //   protocol != starts-with "ExpertSDR3"
-    // Either branch alone keeps the K1 (full-amplitude) path; both branches
-    // satisfied makes it doubly safe.
-    //   - device: literal "AetherSDR" avoids the SunSDR-specific gain trap
-    //     AND avoids the leading-space bug in the older "<name> <model>"
-    //     form when the radio's nickname is empty.
-    //   - protocol: "ExpertSDR3,1.5" sets WSJT-X's ESDR3 flag, which both
-    //     gates the gain reduction off and selects WSJT-X command formats
-    //     that AetherSDR already handles correctly (proven in v26.5.1).
-    // RF2K-S amp whitelist (which keyed on SunSDR2DX + ExpertSDR2) is
-    // regressed by this change; a configurable / adaptive identity is
-    // tracked in #2806.  Everything else from #2597 (init-burst order,
-    // vfo_limits, if_limits, channels_count, split_enable) is preserved
-    // and is what the RF2K-S TCI parser actually needs to engage.
+    // Identity chosen so WSJT-X's TCITransceiver keeps full TX amplitude: it
+    // halves samples (K2 = 0.499/0x7FFF vs K1 = 0.999/0x7FFF) only when device is
+    // "SunSDR2DX"/"SunSDR2PRO" AND protocol doesn't start with "ExpertSDR3"; we fail
+    // both. Any "ExpertSDR3" protocol selects WSJT-X's ESDR3 command formats;
+    // WSJT-X, JTDX and eesdr-tci read the name, not the version. The
+    // RF2K-S whitelist (SunSDR2DX + ExpertSDR2) is not matched; a configurable
+    // identity is #2806.
     burst += QStringLiteral("device:AetherSDR;");
     burst += QStringLiteral("receive_only:false;");
     burst += QStringLiteral("modulations_list:usb,lsb,cw,cwr,am,sam,fm,nfm,digu,digl,rtty;");
-    burst += QStringLiteral("protocol:ExpertSDR3,1.5;");
+    burst += QStringLiteral("protocol:ExpertSDR3,2.1;");
 
     // ── Phase 2: Current state notifications ──────────────────────────
     // Identical in syntax to the events fired by a live tuning
