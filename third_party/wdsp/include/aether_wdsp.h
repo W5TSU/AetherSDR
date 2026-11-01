@@ -270,6 +270,7 @@ void PSRestoreCorr(int channel, char* filename);
 // starting or ending: those ramps only advance here.
 void PSApplyCorrection(int channel, int size, double* in, double* out);
 int PSCorrectionBusy(int channel);
+int PSCorrectionRunning(int channel);
 
 // PureSignal's measuring side (calcc.c), driven by Hl2PureSignal.
 void pscc(int channel, int size, double* tx, double* rx);

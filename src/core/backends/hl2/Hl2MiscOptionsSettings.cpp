@@ -10,6 +10,7 @@ namespace AetherSDR {
 
 namespace {
 constexpr const char* kFieldAdcDither = "adcDither";
+constexpr const char* kFieldPureSignalGain = "pureSignalGainDbByBand";
 constexpr const char* kFieldAdcRandom = "adcRandom";
 constexpr const char* kFieldResetOnDisconnect = "resetOnDisconnect";
 constexpr const char* kFieldTxLatency = "txLatency";
@@ -42,6 +43,23 @@ void writeField(const RadioSettingsScope& scope, const char* field, const QJsonV
     }
 }
 }  // namespace
+
+std::optional<int> Hl2MiscOptionsSettings::pureSignalGainDb(const RadioSettingsScope& scope,
+                                                            const QString& band)
+{
+    const QJsonValue v = scope.feature(kFeature)
+                             .value(QLatin1String(kFieldPureSignalGain)).toObject().value(band);
+    return v.isDouble() ? std::optional<int>(v.toInt()) : std::nullopt;
+}
+
+void Hl2MiscOptionsSettings::setPureSignalGainDb(const RadioSettingsScope& scope,
+                                                 const QString& band, int db)
+{
+    QJsonObject gains = scope.featureExact(kFeature)
+                            .value(QLatin1String(kFieldPureSignalGain)).toObject();
+    gains[band] = db;
+    writeField(scope, kFieldPureSignalGain, gains);
+}
 
 bool Hl2MiscOptionsSettings::adcDither(const RadioSettingsScope& scope)
 {

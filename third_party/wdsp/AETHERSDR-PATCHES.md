@@ -831,6 +831,8 @@ channel to own them and calls:
   buffers under `ch[].csDSP`, the lock `SetTXAiqcStart/Swap/End` hold while they
   replace the splines, and restores the stage's own buffers afterwards.
 - `PSCorrectionBusy(channel)` reports the stage's `busy` bit.
+- `PSCorrectionRunning(channel)` reports its `run` bit. `info[14]` reads 1 after
+  `PSRestoreCorr()` even when reading the file failed.
 
 `SetTXAiqcStart/Swap/End` spin until `xiqc()` finishes a ramp, so the host must
 keep calling `PSApplyCorrection`, on silence if need be, while a ramp is running.

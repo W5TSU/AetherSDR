@@ -1,5 +1,9 @@
 #pragma once
 
+#include <QString>
+
+#include <optional>
+
 namespace AetherSDR {
 
 class RadioSettingsScope;
@@ -62,6 +66,11 @@ public:
     // non-HL2 openHPSDR family that does) has a setting already in place —
     // the same "kept, harmless, not load-bearing" treatment MetisProtocol.h
     // already gives kConfigMercury/kConfigDuplex.
+    // PureSignal's receive gain while transmitting, per band, as its level loop
+    // last settled it. Absent means start from the minimum.
+    static std::optional<int> pureSignalGainDb(const RadioSettingsScope& scope, const QString& band);
+    static void setPureSignalGainDb(const RadioSettingsScope& scope, const QString& band, int db);
+
     static bool swapAudioChannels(const RadioSettingsScope& scope);
     static void setSwapAudioChannels(const RadioSettingsScope& scope, bool enabled);
 };

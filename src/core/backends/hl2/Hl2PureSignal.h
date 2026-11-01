@@ -24,6 +24,7 @@ struct Hl2PsSnapshot {
     std::array<int, 16> info{};
     double maxTx = 0.0;
     double hwPeak = 0.0;
+    bool correctionRunning = false;
     std::optional<double> feedbackPeakDbfs;
     std::optional<double> referencePeakDbfs;
 };
@@ -57,8 +58,10 @@ public:
     // Reading takes the peaks seen since the previous read.
     [[nodiscard]] Hl2PsSnapshot snapshot();
 
-    // A file the correction thread reads or writes, so these return at once.
-    void saveCorrection(const QString& path);
+    // Waits for the correction thread, for at most a second (it may be in the middle
+    // of a calibration), because a stop() queued behind it would run first. False when nothing could be written.
+    bool saveCorrection(const QString& path);
+    // Returns at once. correctionRunning says afterwards whether the file was good.
     void restoreCorrection(const QString& path);
 
     void correct(std::span<std::complex<float>> block, bool applyToOutput) noexcept override;

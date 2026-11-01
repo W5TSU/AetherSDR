@@ -192,17 +192,17 @@ int main()
     ps.setMox(true);
 
     // Save, stop, restore: the correction comes back with no calibration.
-    ps.saveCorrection(QString::fromStdString(corrFile.string()));
-    // EP2 keeps running in the real thing, and a swap in flight only finishes in
-    // correct(), so this waits the way the radio would.
-    for (int i = 0; i < 3000 && !std::filesystem::exists(corrFile); ++i) {
-        loop.block();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    check(std::filesystem::exists(corrFile), "the correction is saved to its file");
+    check(ps.saveCorrection(QString::fromStdString(corrFile.string())),
+          "saving reports that the file was written");
+    std::error_code sizeError;
+    check(std::filesystem::file_size(corrFile, sizeError) > 0 && !sizeError,
+          "the correction is in its file");
+    check(ps.snapshot().correctionRunning, "correction is running while it is saved");
 
     ps.stop();
     check(loop.runUntil([&] { return ps.snapshot().info[14] == 0; }, 10.0), "stop ends correction");
+    check(loop.runUntil([&] { return !ps.snapshot().correctionRunning; }, 10.0),
+          "and the correction stage stops running");
     for (int i = 0; i < 100; ++i)
         loop.block();
     {
@@ -275,6 +275,16 @@ int main()
     std::printf("  close took %.2f s\n", took);
     check(took < 3.0, "close returns promptly");
     check(!ps.isOpen(), "and is closed");
+    check(!ps.saveCorrection(QStringLiteral("/nonexistent/x.corr")), "closed: nothing is saved");
+    {
+        Hl2PureSignal fresh;
+        std::string freshError;
+        check(fresh.open(48000, &freshError), "reopens");
+        const QString tooLong(400, QLatin1Char('x'));
+        check(!fresh.saveCorrection(tooLong), "a path WDSP's 256-byte buffer cannot hold is refused");
+        fresh.restoreCorrection(tooLong);   // not a buffer overrun
+        fresh.close();
+    }
 
     std::error_code ignored;
     std::filesystem::remove(corrFile, ignored);

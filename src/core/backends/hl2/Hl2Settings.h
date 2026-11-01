@@ -32,6 +32,11 @@ public:
     static double spanMhz();
     static void setSpanMhz(double mhz);
 
+    // The PS button. Whether this operator runs PureSignal is theirs, not one
+    // radio's, so it is here with the span rather than radio-scoped.
+    static bool pureSignal();
+    static void setPureSignal(bool on);
+
     // The operator's "Use low bandwidth mode" choice, from the connection
     // panel. READ ONLY from here: it is a grandfathered flat key
     // ("LowBandwidthConnect") owned by the connection UI, and Principle V

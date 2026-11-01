@@ -964,6 +964,9 @@ private:
     void updatePureSignalMox(bool key);
     void psTickOnIoThread();
     void publishPureSignal(const QString& refusal = {});
+    [[nodiscard]] QString psCorrectionPath(const QString& band) const;
+    void pureSignalBandChanged(const QString& oldBand, const QString& newBand);
+    void savePureSignalBandGain(const QString& band, int gainDb);
 
     bool m_psWanted = false;         // the operator's choice
     bool m_psActive = false;         // the layout is up on a radio
@@ -980,6 +983,12 @@ private:
     Hl2PsController m_psController;
     QTimer* m_psTimer = nullptr;
     std::atomic<bool> m_psKeyedModulated{false};
+    // Ticks left before a restore's outcome is read; a read file starts correction.
+    int m_psRestoreCheckTicks = 0;
+    QString m_psRestorePath;
+    // A restored curve runs without calibrating, so a change it cannot describe
+    // has to ask for one.
+    bool m_psHoldingRestored = false;
     // Last raw RX1 IQ peak from telemetry (Hl2Telemetry::rx1IqPeakDbfs), and
     // when it arrived, so a stale reading drops out of Radio Health.
     std::optional<double> m_rx1IqPeakDbfs;

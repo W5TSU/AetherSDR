@@ -4,6 +4,9 @@
 
 #include <aether_wdsp.h>
 
+#include <QFile>
+#include <QFileInfo>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -23,6 +26,9 @@ constexpr double kLoopDelaySec = 0.0;
 
 // A reset takes effect only while samples reach pscc (deskHPSDR tx_ps_onoff).
 constexpr int kDrainBlocks = 7;
+
+// save_file and restore_file in calcc.c, including the terminator.
+constexpr int kWdspPathBytes = 256;
 
 std::optional<double> takePeakDb(float& peak)
 {
@@ -157,25 +163,47 @@ Hl2PsSnapshot Hl2PureSignal::snapshot()
     GetPSInfo(m_channelId, s.info.data());
     GetPSMaxTX(m_channelId, &s.maxTx);
     GetPSHWPeak(m_channelId, &s.hwPeak);
+    s.correctionRunning = PSCorrectionRunning(m_channelId) != 0;
+    // calcc sets this after any restore, even one whose file could not be read.
+    if (!s.correctionRunning)
+        s.info[14] = 0;
     s.feedbackPeakDbfs = takePeakDb(m_feedbackPeak);
     s.referencePeakDbfs = takePeakDb(m_referencePeak);
     return s;
 }
 
-void Hl2PureSignal::saveCorrection(const QString& path)
+bool Hl2PureSignal::saveCorrection(const QString& path)
 {
-    if (!m_channel)
-        return;
-    QByteArray name = path.toUtf8();
-    PSSaveCorr(m_channelId, name.data());
+    const QByteArray name = QFile::encodeName(path);
+    if (!m_channel || name.size() >= kWdspPathBytes)
+        return false;
+    QFile::remove(path);
+    QByteArray writable = name;
+    PSSaveCorr(m_channelId, writable.data());
+
+    // Stable size: the correction thread writes and closes in one go, and a swap
+    // it may be finishing first only advances in correct().
+    std::array<std::complex<float>, kTxSamplesPerPacket> silence{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    qint64 lastSize = -1;
+    while (std::chrono::steady_clock::now() < deadline) {
+        correct(silence, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const qint64 size = QFileInfo(path).size();
+        if (size > 0 && size == lastSize)
+            return true;
+        lastSize = size;
+    }
+    return false;
 }
 
 void Hl2PureSignal::restoreCorrection(const QString& path)
 {
-    if (!m_channel)
+    const QByteArray name = QFile::encodeName(path);
+    if (!m_channel || name.size() >= kWdspPathBytes)
         return;
-    QByteArray name = path.toUtf8();
-    PSRestoreCorr(m_channelId, name.data());
+    QByteArray writable = name;
+    PSRestoreCorr(m_channelId, writable.data());
     // PSRestoreCorr arms LTURNON, and calcc's state machine only steps in pscc.
     if (!m_mox) {
         std::fill(m_feedback.begin(), m_feedback.end(), 0.0);

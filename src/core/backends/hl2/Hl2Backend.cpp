@@ -1,5 +1,6 @@
 #include "core/backends/hl2/Hl2Backend.h"
 #include "core/backends/hl2/Hl2Bands.h"
+#include "core/AppSettings.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -29,6 +30,9 @@
 #include "core/backends/hl2/Hl2FilterBoardSettings.h"
 
 #include <QByteArray>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QHostAddress>
 #include <QLoggingCategory>
 #include <QPointer>
@@ -332,6 +336,10 @@ constexpr double kHl2TwoToneLowHz = 700.0;
 constexpr double kHl2TwoToneHighHz = 1903.0;
 constexpr double kHl2TwoToneAmplitudeEach = 0.49;
 
+// The correction thread reads a restored file at once; half a second of ticks is
+// plenty before its outcome is believed.
+constexpr int kPsRestoreCheckTicks = 5;
+
 }  // namespace
 
 Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
@@ -393,6 +401,10 @@ Hl2Backend::Hl2Backend(QObject* parent) : IRadioBackend(parent)
     m_metis->moveToThread(m_ioThread);
     m_txDsp->moveToThread(m_ioThread);
     m_ioThread->start();
+
+    m_psWanted = m_txAllowed && Hl2Settings::pureSignal();
+    if (m_psWanted)
+        m_psState = QStringLiteral("idle");
 
     // Also fires when the link comes back on the same session; activating twice
     // is a no-op.
@@ -1108,6 +1120,7 @@ QString Hl2Backend::setPureSignal(bool on)
             return refusal;
         }
         m_psWanted = true;
+        Hl2Settings::setPureSignal(true);
         if (m_connected) {
             activatePureSignal();
         } else {
@@ -1117,6 +1130,7 @@ QString Hl2Backend::setPureSignal(bool on)
         return {};
     }
     m_psWanted = false;
+    Hl2Settings::setPureSignal(false);
     if (m_psActive) {
         deactivatePureSignal();
     } else {
@@ -1134,8 +1148,11 @@ void Hl2Backend::activatePureSignal()
     m_psActive = true;
     m_operatorTxLnaGainDb = m_txLnaGainDb;
 
-    const int gain = m_psGainDb.value_or(Hl2PsController::kMinGainDb);
+    const int gain = Hl2MiscOptionsSettings::pureSignalGainDb(hl2SettingsScope(), m_currentBandKey)
+                         .value_or(Hl2PsController::kMinGainDb);
+    m_psGainDb = gain;
     m_txLnaGainDb = gain;
+    const QString correction = psCorrectionPath(m_currentBandKey);
 
     QMetaObject::invokeMethod(m_metis, "setPureSignalEnabled", Qt::BlockingQueuedConnection,
                               Q_ARG(bool, true));
@@ -1153,7 +1170,7 @@ void Hl2Backend::activatePureSignal()
     const int rate = m_sampleRateHz;
     bool opened = false;
     QString failure;
-    QMetaObject::invokeMethod(m_metis, [this, rate, gain, &opened, &failure] {
+    QMetaObject::invokeMethod(m_metis, [this, rate, gain, correction, &opened, &failure] {
         m_ps = std::make_unique<Hl2PureSignal>();
         std::string error;
         if (!m_ps->open(rate, &error)) {
@@ -1165,9 +1182,15 @@ void Hl2Backend::activatePureSignal()
         m_psController.setGainDb(gain);
         m_metis->setTxLnaGainDb(gain);
         m_metis->setTxIqCorrector(m_ps.get());
-        const Hl2PsActions a = m_psController.setEnabled(true);
-        if (a.resume)
+        const bool restoring = QFile::exists(correction);
+        const Hl2PsActions a = m_psController.setEnabled(true, restoring);
+        if (restoring) {
+            m_ps->restoreCorrection(correction);
+            m_psRestorePath = correction;
+            m_psRestoreCheckTicks = kPsRestoreCheckTicks;
+        } else if (a.resume) {
             m_ps->start();
+        }
         if (!m_psTimer) {
             m_psTimer = new QTimer();
             m_psTimer->setInterval(100);
@@ -1196,13 +1219,22 @@ void Hl2Backend::deactivatePureSignal()
 {
     m_psActive = false;
     m_psState = QStringLiteral("off");
-    QMetaObject::invokeMethod(m_metis, [this] {
+    if (m_psGainDb)
+        savePureSignalBandGain(m_currentBandKey, *m_psGainDb);
+    const QString correction = psCorrectionPath(m_currentBandKey);
+    QMetaObject::invokeMethod(m_metis, [this, correction] {
         if (m_psTimer)
             m_psTimer->stop();
         m_psController.setEnabled(false);
         m_psKeyedModulated.store(false);
-        if (m_ps)
+        m_psRestoreCheckTicks = 0;
+        m_psHoldingRestored = false;
+        if (m_ps) {
+            const Hl2PsSnapshot snap = m_ps->snapshot();
+            if (snap.info[14] != 0 && snap.correctionRunning)
+                m_ps->saveCorrection(correction);
             m_ps->stop();
+        }
     }, Qt::BlockingQueuedConnection);
 
     m_alcTargetPeak = kHl2AlcTargetDefault;
@@ -1269,13 +1301,27 @@ void Hl2Backend::psTickOnIoThread()
     if (!m_ps)
         return;
     const Hl2PsSnapshot snap = m_ps->snapshot();
+    if (m_psRestoreCheckTicks > 0 && --m_psRestoreCheckTicks == 0) {
+        m_psHoldingRestored = snap.correctionRunning;
+        if (!snap.correctionRunning) {
+            // calcc reads correcting after any restore, and this one has nothing
+            // behind it. The file can never work, so it does not stay.
+            qCWarning(lcHl2).noquote() << "HL2: PureSignal could not read"
+                                       << m_psRestorePath << "- calibrating from scratch";
+            QFile::remove(m_psRestorePath);
+            m_ps->stop();
+            m_ps->start();
+        }
+    }
     const Hl2PsActions a = m_psController.tick(snap, m_psKeyedModulated.load());
     if (a.newGainDb && m_metis)
         m_metis->setTxLnaGainDb(*a.newGainDb);
     if (a.reset)
         m_ps->stop();
-    if (a.resume)
+    if (a.resume) {
         m_ps->start();
+        m_psHoldingRestored = false;
+    }
     const QString state = hl2PsStateName(m_psController.state());
     const int gain = m_psController.gainDb();
     QMetaObject::invokeMethod(this, [this, snap, state, gain] {
@@ -1287,6 +1333,56 @@ void Hl2Backend::psTickOnIoThread()
         if (state != m_psState) {
             m_psState = state;
             publishPureSignal();
+        }
+    }, Qt::QueuedConnection);
+}
+
+QString Hl2Backend::psCorrectionPath(const QString& band) const
+{
+    // A MAC's colons are not a Windows file name.
+    QString radio = hl2SettingsScope().radioId();
+    radio.replace(QLatin1Char(':'), QLatin1Char('-'));
+    return QFileInfo(AppSettings::instance().filePath()).dir().filePath(
+        QStringLiteral("hl2-puresignal/%1/%2.corr")
+            .arg(radio.isEmpty() ? QStringLiteral("radio") : radio, band));
+}
+
+void Hl2Backend::savePureSignalBandGain(const QString& band, int gainDb)
+{
+    RadioSettingsScope scope;
+    if (hl2SettingsScopeForWrite(scope))
+        Hl2MiscOptionsSettings::setPureSignalGainDb(scope, band, gainDb);
+}
+
+void Hl2Backend::pureSignalBandChanged(const QString& oldBand, const QString& newBand)
+{
+    if (!m_psActive)
+        return;
+    if (m_psGainDb)
+        savePureSignalBandGain(oldBand, *m_psGainDb);
+    const int gain = Hl2MiscOptionsSettings::pureSignalGainDb(hl2SettingsScope(), newBand)
+                         .value_or(Hl2PsController::kMinGainDb);
+    m_psGainDb = gain;
+    m_txLnaGainDb = gain;
+    const QString oldPath = psCorrectionPath(oldBand);
+    const QString newPath = psCorrectionPath(newBand);
+    QMetaObject::invokeMethod(m_metis, [this, oldPath, newPath, gain] {
+        if (!m_ps)
+            return;
+        m_psController.setGainDb(gain);
+        m_metis->setTxLnaGainDb(gain);
+        const Hl2PsSnapshot snap = m_ps->snapshot();
+        if (snap.info[14] != 0 && snap.correctionRunning)
+            m_ps->saveCorrection(oldPath);
+        m_psHoldingRestored = false;
+        // The old band's curve says nothing about this one's filters and amplifier.
+        m_ps->stop();
+        if (QFile::exists(newPath)) {
+            m_ps->restoreCorrection(newPath);
+            m_psRestorePath = newPath;
+            m_psRestoreCheckTicks = kPsRestoreCheckTicks;
+        } else {
+            m_ps->start();
         }
     }, Qt::QueuedConnection);
 }
@@ -5386,6 +5482,14 @@ void Hl2Backend::setMicGain(int level)
 
 void Hl2Backend::setTxPower(int percent)
 {
+    if (m_psActive) {
+        QMetaObject::invokeMethod(m_metis, [this] {
+            if (m_psHoldingRestored) {
+                m_psHoldingRestored = false;
+                m_psController.requestRecalibration();
+            }
+        }, Qt::QueuedConnection);
+    }
     // The operator's 0..100 maps onto the HL2's 0..255 drive field. The gateware
     // only decodes the top nibble, so the effective resolution is coarser than
     // this suggests — the mapping is linear in the register, NOT calibrated to
@@ -7713,6 +7817,7 @@ void Hl2Backend::applyPerBandStateFor(double freqHz, const char* reason)
     m_lnaSessionPin = false;
     const QString oldBand = m_currentBandKey;
     m_currentBandKey = newBand;
+    pureSignalBandChanged(oldBand, newBand);
 
     // A band with no entry of its own comes up on the SHIPPED default, never on
     // a persisted one (#5829): the document key that used to sit here could not

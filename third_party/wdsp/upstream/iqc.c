@@ -213,6 +213,14 @@ void PSApplyCorrection (int channel, int size, double* in, double* out)
 	LeaveCriticalSection (&ch[channel].csDSP);
 }
 
+// AetherSDR patch 23: whether the stage is correcting at all. calcc's info[14]
+// reads 1 after a restore even when reading the file failed; this does not.
+PORT
+int PSCorrectionRunning (int channel)
+{
+	return _InterlockedAnd (&txa[channel].iqc.p->run, 1);
+}
+
 // AetherSDR patch 23: whether a start, swap or end ramp is still in progress.
 PORT
 int PSCorrectionBusy (int channel)
