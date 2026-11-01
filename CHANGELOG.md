@@ -8,6 +8,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.10.10] — 2026-10-31
+
+A small release for the Hermes-Lite 2. The Power meter no longer jumps to full
+scale at the start of a TUNE, and the groundwork for PureSignal begins.
+
+### Hermes-Lite 2
+
+- **The Power meter no longer jumps to full scale when you press TUNE
+  (#110).** On some presses the radio reported one bad forward-power reading
+  at key-down. The meter held it at full scale for about two seconds. On the
+  bench, an outside receiver showed the transmitted carrier itself stayed
+  steady: this was only a bad reading. The meter now ignores a single reading
+  that stands alone above the rest. A voice peak shorter than about 10 ms now
+  reads slightly low.
+- **First step toward PureSignal (#111).** AetherSDR can now set the HL2's
+  receive gain to a separate value while transmitting (register `0x0e`).
+  PureSignal needs this to keep its feedback signal in range. There's no
+  control for it on screen yet; it's set only through the automation bridge
+  (`txlnagain`), and nothing changes unless that is used. It hasn't been
+  measured on the radio yet.
+- **Radio Health shows two new HL2 readings (#111):** the receive gain while
+  transmitting, and RX1's raw IQ peak. The raw IQ peak still reads while you
+  transmit.
+
+### Not in this release
+
+- PureSignal itself. The plan for it is in
+  `docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`.
+- The items still tracked in #98: upstream's RTL-SDR receive work, three Flex
+  items, the release-pipeline rewrite and Qt 6.12.
+
 ## [v26.10.9] — 2026-10-30
 
 This release fixes AetherSDR staying open on Windows after you close it, and
