@@ -43,6 +43,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMap>
+#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QImage>
@@ -3440,6 +3441,13 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
             parseActionValue,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 return s.doTxLnaGain(a.action);
+            });
+
+        add("ioboard", {},
+            "ioboard <register> [value] — read or write a Hermes-Lite 2 I/O board register over I2C (bench use; never keys)",
+            parseActionValue,
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doIoBoard(a.action, a.value);
             });
 
         add("ps", {},
@@ -8368,6 +8376,62 @@ QJsonObject AutomationServer::doBandscope(const QString& action)
 // applies it while the radio is transmitting. Reported from the health snapshot
 // after the call, like bandscope, so the reply is what the backend holds (the
 // clamp included), never an echo of the request.
+QJsonObject AutomationServer::doIoBoard(const QString& reg, const QString& value)
+{
+    RadioModel* radio = m_radioModel;
+    if (!radio)
+        return err(QStringLiteral("no radio model available"));
+    IRadioBackend* backend = radio->backend();
+    if (!backend || !radio->backendDeclaresExtension(QStringLiteral("hl2")))
+        return err(QStringLiteral("ioboard: this is a Hermes-Lite 2 feature"));
+
+    bool regOk = false;
+    const int regNum = reg.toInt(&regOk);
+    if (!regOk || regNum < 0 || regNum > 255)
+        return err(QStringLiteral("ioboard: expected a register, 0..255"));
+    QVariantMap arg{{QStringLiteral("bus"), 2},
+                    {QStringLiteral("address"), 0x1D},
+                    {QStringLiteral("control"), regNum}};
+    const bool write = !value.trimmed().isEmpty();
+    if (write) {
+        bool valueOk = false;
+        const int data = value.toInt(&valueOk);
+        if (!valueOk || data < 0 || data > 255)
+            return err(QStringLiteral("ioboard: expected a value, 0..255"));
+        arg[QStringLiteral("data")] = data;
+    }
+
+    // The reply is the board's, off the telemetry stream, so it arrives later.
+    QEventLoop wait;
+    QTimer::singleShot(1500, &wait, &QEventLoop::quit);
+    QVariantMap reply;
+    bool answered = false;
+    const quint64 rid = ++m_extensionRequestId;
+    auto conn = connect(backend, &IRadioBackend::extensionResult, this,
+                        [&](quint64 id, const QVariant& result) {
+        if (id != rid)
+            return;
+        reply = result.toMap();
+        answered = true;
+        wait.quit();
+    });
+    backend->invokeExtension(QStringLiteral("hl2"),
+                             write ? QStringLiteral("ioboard.i2cWrite")
+                                   : QStringLiteral("ioboard.i2cRead"),
+                             rid, arg);
+    if (!answered)
+        wait.exec();
+    disconnect(conn);
+    if (!answered)
+        return err(QStringLiteral("ioboard: no reply from the radio"));
+    if (reply.value(QStringLiteral("error")).toBool())
+        return err(QStringLiteral("ioboard: the board did not acknowledge"));
+    QJsonObject out = QJsonObject::fromVariantMap(reply);
+    out[QStringLiteral("ok")] = true;
+    out[QStringLiteral("ioboard")] = regNum;
+    return out;
+}
+
 QJsonObject AutomationServer::doPureSignal(const QString& action)
 {
     RadioModel* radio = m_radioModel;

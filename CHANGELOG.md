@@ -10,16 +10,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Hermes-Lite 2
 
-- **PureSignal, on a PS button (built, bench results to follow).** A **PS**
-  button beside TUNE and MOX corrects the amplifier's distortion while you
-  transmit, with a status line showing what it's doing and the feedback level.
-  It needs a sampler on the I/O board's PURE input. While it's on, two of the
-  HL2's four receivers carry feedback, so at most two slices are available, and
-  it can't run on the widest span. The button remembers its state, and each
-  band keeps its own correction. CW and a single-carrier TUNE stay uncorrected.
+- **PureSignal, on a PS button. It doesn't correct an external amplifier yet.** A
+  **PS** button beside TUNE and MOX corrects transmit distortion, with a status
+  line showing what it's doing and the feedback level. On the air at 5% drive it
+  lowered third-order products from -32 to -43.5 dBc on the HL2's own stage. A
+  sampler on the I/O board's PURE input isn't reaching the receiver yet, so an
+  amplifier's distortion isn't seen or corrected. While PS is on, two of the HL2's
+  four receivers carry feedback, so at most two slices are available, and it can't
+  run on the widest span. The button remembers its state, and each band keeps its
+  own correction. CW and a single-carrier TUNE stay uncorrected.
 - **`ps [status|on|off]` on the automation bridge,** showing the state,
   feedback level, calibration counts, last failure and peak levels. The same
   values are in Radio Health.
+- **`ioboard <register> [value]` on the automation bridge** reads or writes an I/O
+  board register, for bench work.
 - **TUNE's Two Tone now works on the HL2,** at 700 and 1903 Hz.
 
 ## [v26.10.10] — 2026-10-31

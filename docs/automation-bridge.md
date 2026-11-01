@@ -4379,7 +4379,7 @@ socket-free production-router tests; live firmware, visible GUI meters and
 audio devices require separate hardware validation.
 
 <!-- BEGIN GENERATED VERB TABLE (tools/gen_bridge_docs.py) -->
-<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 79 verbs. -->
+<!-- Do not edit by hand — run tools/gen_bridge_docs.py. 80 verbs. -->
 
 | Verb | Aliases | Description |
 |---|---|---|
@@ -4422,6 +4422,7 @@ audio devices require separate hardware validation.
 | `freqcal` | — | freqcal [get\|set <ppb>\|from_vfo <reference_mhz>\|reset] — manual frequency calibration (radios that cannot calibrate themselves) |
 | `bandscope` | — | bandscope [status\|on\|off] — Hermes-Lite 2 wideband bandscope gate (endpoint 0x04); uncalibrated pre-DDC ADC headroom, reported in `health` |
 | `txlnagain` | — | txlnagain [status\|off\|<dB>] — Hermes-Lite 2 receive LNA gain while transmitting (register 0x0e, -12..+48 dB); reports it and RX1's raw IQ peak from `health` |
+| `ioboard` | — | ioboard <register> [value] — read or write a Hermes-Lite 2 I/O board register over I2C (bench use; never keys) |
 | `ps` | — | ps [status\|on\|off] — PureSignal on a Hermes-Lite 2: state, feedback level, calibrations (never keys) |
 | `droopcal` | — | droopcal [status\|start\|stop\|apply\|discard] — ANAN-G2 DDC0 droop calibration sweep (radios with a measured DDC edge droop) |
 | `targettune` | — | targettune <mhz> — absolute tune through band-stack preselection |

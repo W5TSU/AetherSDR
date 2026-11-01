@@ -135,8 +135,9 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   Designed in
   [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md)
   and built, with the PS button, its status line, the `ps` bridge verb and
-  TUNE's two-tone. It works against a software amplifier. Measuring it on the
-  radio and through the XPA125B is still to do. Out of scope for the HL2 "supported"
+  TUNE's two-tone. It lowers IMD3 by about 12 dB on the HL2's own stage, measured
+  on the air. It can't yet correct the XPA125B: the sampler on PURE isn't reaching
+  the receiver, and that has to be solved at the bench. Out of scope for the HL2 "supported"
   milestone
   ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md)).
 - **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`

@@ -121,6 +121,20 @@ int main(int argc, char** argv)
         check(waveform() == QStringLiteral("carrier"), "the menu's choice is for one tune only");
         tx.stopTune();
     }
+    {
+        const auto ioboard = [&server](const char* action, const char* value) {
+            QJsonObject request{{QStringLiteral("cmd"), QStringLiteral("ioboard")},
+                                {QStringLiteral("action"), QString::fromLatin1(action)},
+                                {QStringLiteral("value"), QString::fromLatin1(value)}};
+            return AutomationServerTestAccess::handleLine(
+                server, QJsonDocument(request).toJson(QJsonDocument::Compact));
+        };
+        check(!ioboard("nonsense", "").value(QStringLiteral("ok")).toBool(), "ioboard: a bad register is an error");
+        check(!ioboard("300", "").value(QStringLiteral("ok")).toBool(), "ioboard: a register past a byte is refused");
+        check(!ioboard("11", "300").value(QStringLiteral("ok")).toBool(), "ioboard: a value past a byte is refused");
+        check(!ioboard("11", "").value(QStringLiteral("ok")).toBool(),
+              "ioboard: no radio answering is an error, not an empty success");
+    }
     check(!ps(server, QStringLiteral("loud")).value(QStringLiteral("ok")).toBool(),
           "an unknown action is an error");
 
