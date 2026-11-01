@@ -25,8 +25,8 @@ struct Hl2PsActions {
 // that keeps the feedback in its working range. Hl2PureSignal carries the results
 // out.
 //
-// The level rules are deskHPSDR's auto-attenuate (ps_menu.c), with the sign turned
-// round, because `0x0e` is a gain where it has an attenuator.
+// The level rules are deskHPSDR's auto-attenuate (ps_menu.c), with a wider dead
+// band and the sign turned round, because `0x0e` is a gain where it has an attenuator.
 class Hl2PsController {
 public:
     static constexpr int kMinGainDb = -12;

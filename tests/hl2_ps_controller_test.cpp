@@ -74,6 +74,16 @@ int main()
         check(next.resume && !next.reset && !next.newGainDb, "the next tick resumes");
     }
     {
+        // Seen on the radio: the first calibration of each transmission read 143,
+        // the next 166. Chasing those reset correction on every key-down.
+        Hl2PsController d = enabledAt(0);
+        check(!d.tick(snap(143, 1), true).reset, "level 143: in the green band, left alone");
+        check(!d.tick(snap(166, 2), true).reset, "level 166: left alone too");
+        check(!d.tick(snap(129, 3), true).reset && !d.tick(snap(181, 4), true).reset,
+              "the band's edges are left alone");
+        check(d.tick(snap(182, 5), true).newGainDb == -2, "182 aims back at 152: down 2 dB");
+    }
+    {
         Hl2PsController c = enabledAt(0);
         const Hl2PsActions a = c.tick(snap(152, 1), true);
         check(!a.newGainDb && !a.reset && !a.resume, "level 152: nothing changes");

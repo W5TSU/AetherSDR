@@ -7,8 +7,11 @@ namespace AetherSDR::hl2 {
 namespace {
 
 constexpr double kTargetLevel = 152.293;
-constexpr int kDeadBandLow = 150;
-constexpr int kDeadBandHigh = 155;
+// Thetis's green band, wider than deskHPSDR's 150..155. On the radio the first
+// calibration of each transmission reads a little off the settled level, and each
+// gain change costs a reset, so the narrow band reset correction on every key-down.
+constexpr int kDeadBandLow = 128;
+constexpr int kDeadBandHigh = 181;
 constexpr int kVeryStrongLevel = 275;
 constexpr int kVeryWeakLevel = 25;
 constexpr int kLargeStepDb = 15;

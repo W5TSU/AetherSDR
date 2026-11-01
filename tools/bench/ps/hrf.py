@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """HackRF, receive only, by pickup: record while keyed, report the two-tone products."""
+import os
 import subprocess
 import numpy as np
 
@@ -7,7 +8,7 @@ RATE = 2_000_000
 CENTER = 14_250_000.0  # off the signal, away from the HackRF's DC spike
 
 
-def record(path, seconds, lna=16, vga=20):
+def record(path, seconds, lna=int(os.environ.get("HRF_LNA", 16)), vga=int(os.environ.get("HRF_VGA", 20))):
     return subprocess.Popen(
         ["hackrf_transfer", "-r", path, "-f", str(int(CENTER)), "-s", str(RATE), "-a", "0",
          "-l", str(lna), "-g", str(vga), "-n", str(int(RATE * seconds))],
