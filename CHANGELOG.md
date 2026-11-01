@@ -8,23 +8,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.11.1] — 2026-11-01
+
+PureSignal arrives on the Hermes-Lite 2 as a PS button. **It doesn't correct an
+external amplifier yet.** It corrects the HL2's own stage. If you run an amplifier,
+this release won't clean up its distortion.
+
 ### Hermes-Lite 2
 
-- **PureSignal, on a PS button. It doesn't correct an external amplifier yet.** A
-  **PS** button beside TUNE and MOX corrects transmit distortion, with a status
-  line showing what it's doing and the feedback level. On the air at 5% drive it
-  lowered third-order products from -32 to -43.5 dBc on the HL2's own stage. A
-  sampler on the I/O board's PURE input isn't reaching the receiver yet, so an
-  amplifier's distortion isn't seen or corrected. While PS is on, two of the HL2's
-  four receivers carry feedback, so at most two slices are available, and it can't
-  run on the widest span. The button remembers its state, and each band keeps its
-  own correction. CW and a single-carrier TUNE stay uncorrected.
-- **`ps [status|on|off]` on the automation bridge,** showing the state,
-  feedback level, calibration counts, last failure and peak levels. The same
-  values are in Radio Health.
-- **`ioboard <register> [value]` on the automation bridge** reads or writes an I/O
-  board register, for bench work.
-- **TUNE's Two Tone now works on the HL2,** at 700 and 1903 Hz.
+- **PureSignal, on a PS button (#113).** A **PS** button beside TUNE and MOX
+  corrects transmit distortion, with a status line showing what it's doing and the
+  feedback level. On the air at 5% drive, with the HL2 alone, it lowered
+  third-order products from -32 to -43.5 dBc.
+- **Amplifier correction doesn't work yet.** A sampler on the I/O board's PURE
+  input isn't showing up in the feedback, which comes from leakage inside the HL2,
+  so PureSignal can't see an amplifier's distortion. The cause is still open.
+- **What changes while PS is on.** Two of the HL2's four receivers carry feedback,
+  so at most two slices are available, and PS can't run on the widest span. Signal
+  peaks can be up to 1.3 dB higher than with PS off, except in a fault, because
+  calibration needs them. The button remembers its state. Each band keeps its own
+  correction, restored only at the RF power it was measured at. CW and a
+  single-carrier TUNE stay uncorrected.
+- **Not tested yet:** PS on speech, pulling the sampler cable while correcting, and
+  PS on Windows. The last round of fixes hasn't been run on the radio.
+- **TUNE's Two Tone now works on the HL2,** at 700 and 1903 Hz (#113).
+- **The receive gain while transmitting (`0x0e`) is now measured.** It came within
+  0.2 dB of the expected 32 dB difference between -12 and +20 dB.
+
+### Automation bridge
+
+- **`ps [status|on|off]`** shows the state, feedback level, calibration counts, last
+  failure and peak levels. The same values are in Radio Health (#113).
+- **`ioboard <register> [value]`** reads or writes an I/O board register, for bench
+  work. It isn't blocked while transmitting (#113).
 
 ## [v26.10.10] — 2026-10-31
 
