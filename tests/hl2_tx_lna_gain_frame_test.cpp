@@ -7,11 +7,13 @@
 // closed localhost port; nothing listens and nothing is keyed. Same packet
 // builder and friend seam as hl2_band_filter_frame_test.
 
+#include "core/backends/hl2/Hl2Backend.h"
 #include "core/backends/hl2/MetisClient.h"
 #include "core/backends/hl2/MetisProtocol.h"
 
 #include <QCoreApplication>
 #include <QHostAddress>
+#include <QVariantMap>
 
 #include <array>
 #include <cstdio>
@@ -128,6 +130,50 @@ int main(int argc, char** argv)
         check(rotationTxGainBank(c) == kUnset,
               "restart without a gain: the bank is all zero again, not the last session's");
         c.stop();
+    }
+
+    // ---- the backend: the hl2/txlnagain.set verb and its health rows ----
+    //
+    // Default-constructed, no link: the verb is answered locally (like the
+    // options.* verbs), and the row reports what the backend will hand
+    // MetisClient, whether or not a session is up.
+    {
+        AetherSDR::hl2::Hl2Backend backend;
+        int results = 0;
+        int errors = 0;
+        quint64 lastId = 0;
+        QObject::connect(&backend, &AetherSDR::IRadioBackend::extensionResult, &backend,
+                         [&](quint64 id, const QVariant&) { ++results; lastId = id; });
+        QObject::connect(&backend, &AetherSDR::IRadioBackend::extensionError, &backend,
+                         [&](quint64, const QString&) { ++errors; });
+        auto row = [&backend](const char* key) {
+            return backend.healthSnapshot().values.value(QString::fromLatin1(key));
+        };
+
+        check(row("txLnaGainDb").toString() == QStringLiteral("off"),
+              "backend: the transmit gain is reported, and reported off, before anything asks");
+        check(!row("rx1IqPeakDbfs").isValid(),
+              "backend: no raw IQ peak row before any telemetry, not a fabricated 0 dBFS");
+
+        backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("txlnagain.set"),
+                                71, QVariant(-6));
+        check(errors == 0 && results == 1 && lastId == 71u,
+              "backend: txlnagain.set is an implemented verb that answers its requestId");
+        check(row("txLnaGainDb").toInt() == -6, "backend: the row reads the gain set (-6 dB)");
+
+        backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("txlnagain.set"),
+                                72, QVariant(100));
+        check(row("txLnaGainDb").toInt() == 48, "backend: an out-of-range gain is clamped to +48");
+
+        backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("txlnagain.set"),
+                                73, QVariant());
+        check(errors == 0 && results == 3, "backend: an invalid argument means off, not an error");
+        check(row("txLnaGainDb").toString() == QStringLiteral("off"),
+              "backend: off after a value reads off again");
+
+        backend.invokeExtension(QStringLiteral("hl2"), QStringLiteral("txlnagain.set"),
+                                74, QVariant(QStringLiteral("loud")));
+        check(errors == 1, "backend: a non-numeric argument is an error, not off");
     }
 
     if (g_failures == 0)

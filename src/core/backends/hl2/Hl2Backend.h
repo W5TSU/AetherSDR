@@ -939,6 +939,15 @@ private:
     // one preamp setting and one filter selection; see applyBandFilter() for
     // what happens when they disagree.
     int m_lnaGainDb = hl2::kLnaDefaultGainDb;
+    // The receive LNA gain while transmitting (register 0x0e), set through the
+    // hl2/txlnagain.set extension verb; nullopt is off, the gateware's default.
+    // Kept for the app session and handed to MetisClient on every connect, so a
+    // reconnect restores it. Not persisted: PureSignal will own it.
+    std::optional<int> m_txLnaGainDb;
+    // Last raw RX1 IQ peak from telemetry (Hl2Telemetry::rx1IqPeakDbfs), and
+    // when it arrived, so a stale reading drops out of Radio Health.
+    std::optional<double> m_rx1IqPeakDbfs;
+    QElapsedTimer m_rx1IqPeakClock;
     // Last J16 open-collector filter byte commanded. 0xFF is "nothing sent yet"
     // rather than a real selection — kOcNone (0x00) is a legitimate value
     // meaning "every relay released", so it cannot double as the sentinel.
