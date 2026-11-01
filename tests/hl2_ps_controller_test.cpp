@@ -121,6 +121,17 @@ int main()
         check(c.state() != Hl2PsState::FeedbackWeak, "and the fault clears");
     }
     {
+        // Found on the radio: at minimum gain the feedback starts 40 dB under the
+        // reference, which is low gain and not a pulled cable. The level loop has
+        // to get its turn.
+        Hl2PsController c = enabledAt(-12);
+        Hl2PsSnapshot s = snap(2, 1);
+        s.feedbackPeakDbfs = -53.2;
+        const Hl2PsActions a = c.tick(s, true);
+        check(a.newGainDb == 3, "a weak first calibration raises the gain");
+        check(c.state() != Hl2PsState::FeedbackWeak, "and is not a fault");
+    }
+    {
         // A pause in speech: no reference, so a quiet feedback means nothing.
         Hl2PsController c = enabledAt(0);
         c.tick(snap(152, 1), true);

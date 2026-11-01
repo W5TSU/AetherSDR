@@ -55,6 +55,7 @@ Hl2PsActions Hl2PsController::setEnabled(bool on, bool correctionRestored)
     m_faulted = false;
     m_pendingResume = false;
     m_recalibrate = false;
+    m_levelSettled = correctionRestored;
     m_failedFitsInARow = 0;
     m_attemptsSinceSuccess = 0;
     if (on) {
@@ -151,8 +152,11 @@ Hl2PsActions Hl2PsController::tick(const Hl2PsSnapshot& s, bool keyedModulated)
     }
 
     // The sampler gone: the feedback falls away from the reference at once, long
-    // before a calibration cycle could report it.
-    if (correcting && s.feedbackPeakDbfs && s.referencePeakDbfs
+    // before a calibration cycle could report it. Only once the level has been in
+    // its working range: until then, a big gap is just a gain still on its way up.
+    if (newAttempt || newSuccess)
+        m_levelSettled = s.info[4] >= kDeadBandLow && s.info[4] <= kDeadBandHigh;
+    if (m_levelSettled && correcting && s.feedbackPeakDbfs && s.referencePeakDbfs
         && *s.referencePeakDbfs > kReferencePresentDbfs
         && *s.feedbackPeakDbfs < *s.referencePeakDbfs - kFeedbackGoneGapDb) {
         return fault(Hl2PsState::FeedbackWeak);

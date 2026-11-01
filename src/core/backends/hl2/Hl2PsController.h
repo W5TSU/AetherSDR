@@ -60,6 +60,7 @@ private:
     bool m_faulted = false;
     bool m_pendingResume = false;
     bool m_recalibrate = false;
+    bool m_levelSettled = false;
     int m_lastSuccesses = 0;
     int m_lastAttempts = 0;
     int m_failedFitsInARow = 0;
