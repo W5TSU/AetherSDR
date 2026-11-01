@@ -751,13 +751,18 @@ struct Hl2Telemetry {
     std::optional<int>  biasCurrentRaw;
     bool ptt = false;
 
-    // The LOUDEST RADDR-1 forward-power reading since the previous telemetry
-    // emit, and how many readings that window held (upstream #6019). The radio
-    // reports forward power ~190 times a second at 48 kHz; the 10 Hz emit kept
-    // only the last one, which almost never lands on a speech peak, so SSB read
-    // ~4 dB under true PEP. Filled by MetisClient at each emit, not by apply().
-    // ForwardPowerWindow::observe skips responses that carry no measurement.
+    // The window's forward-power reading for the peak hold, and how many readings
+    // that window held. The radio reports forward power ~190 times a second at
+    // 48 kHz; the 10 Hz emit kept only the last one, which almost never lands on
+    // a speech peak, so SSB read ~4 dB under true PEP (upstream 75d00ae2). This
+    // is the window's SECOND-highest reading (ForwardPowerWindow::reading), so a
+    // single bad word cannot pin the gauge. Filled by MetisClient at each emit,
+    // not by apply(). ForwardPowerWindow::observe skips responses that carry no
+    // measurement.
     std::optional<int>  forwardPowerPeakRaw;
+    // The window's highest reading, logged beside the one above so an outlier
+    // the reading left out stays visible. Nothing displays it.
+    std::optional<int>  forwardPowerWindowMaxRaw;
     int forwardPowerSamples = 0;
     // The window's RADDR-1 responses skipped as isNonMeasurementRaddr1(). A unit
     // whose temperature word is always 0 has every response here and no peak.
@@ -784,13 +789,29 @@ struct Hl2Telemetry {
     return !r.ack && r.raddr == 0x01 && (r.data >> 16) == 0;
 }
 
-// Accumulator for Hl2Telemetry::forwardPowerPeakRaw: the maximum of DATA[15:0]
-// over non-ACK RADDR-1 responses that carry a measurement. Kept here so the
-// rule is testable without a socket.
+// Accumulator for Hl2Telemetry::forwardPowerPeakRaw over non-ACK RADDR-1
+// responses that carry a measurement. Kept here so the rule is testable without
+// a socket.
+//
+// reading() is the window's SECOND-highest DATA[15:0], not its maximum. Not every
+// bad word is marked: upstream dfd52741 counted 7 key-on responses with a wrong
+// but non-zero temperature word that isNonMeasurementRaddr1() lets through. On
+// the bench (2026-10-31, TUNE at 10% into a dummy load) one forward word of ~3800
+// counts on a 1550-count carrier arrived in 2 of 10 key-ons, within 300 ms of
+// key-down, and pinned the gauge for its ~2 s release. A HackRF watching the same
+// carrier saw nothing above +3 dB at 20 us, so the word was not RF. At ~19
+// readings per window, ~5 ms apart, a peak of 10 ms or more shows in two; a
+// shorter one now reads at its neighbour's level, which is the cost.
 struct ForwardPowerWindow {
-    std::optional<int> peak;
+    std::optional<int> peak;      // highest reading, for the log
+    std::optional<int> runnerUp;  // second-highest; equals peak when the maximum repeats
     int samples = 0;
     int skipped = 0;
+
+    [[nodiscard]] std::optional<int> reading() const noexcept
+    {
+        return samples >= 2 ? runnerUp : peak;
+    }
 
     void observe(const Ep6Response& r) noexcept
     {
@@ -803,13 +824,18 @@ struct ForwardPowerWindow {
             return;
         }
         const int v = static_cast<int>(r.data & 0xFFFF);
-        if (!peak || v > *peak)
+        if (!peak || v > *peak) {
+            runnerUp = peak;
             peak = v;
+        } else if (!runnerUp || v > *runnerUp) {
+            runnerUp = v;
+        }
         ++samples;
     }
     void clear() noexcept
     {
         peak.reset();
+        runnerUp.reset();
         samples = 0;
         skipped = 0;
     }

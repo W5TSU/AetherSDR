@@ -1186,8 +1186,8 @@ private:
     // Forward-power peak hold: a PEP ESTIMATE. The HL2 has no peak detector: forward
     // power is one 12-bit slow_adc I2C conversion, round-robined with reverse power,
     // temperature and bias (rtl/slow_adc.v, rtl/control.v ~L262), reported in RADDR 1
-    // up to ~190 times a second. Keyed, the input is each publish window's maximum
-    // (Hl2Telemetry::forwardPowerPeakRaw); the hold carries it across windows:
+    // up to ~190 times a second. Keyed, the input is each publish window's second-highest
+    // reading (Hl2Telemetry::forwardPowerPeakRaw); the hold carries it across windows:
     // instant attack, release 0.05 per kTelemetryMinIntervalMs window (~2 s, like an
     // outboard PEP meter), in WATTS because the calibration curve is non-linear. Raw
     // counts are still logged and published. TxApplet's PEP tick (#2561) therefore

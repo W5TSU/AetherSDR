@@ -119,8 +119,11 @@ int main(int argc, char** argv)
         check(emitted.size() == 1, "the due datagram emits exactly once");
         if (emitted.size() == 1) {
             const Hl2Telemetry& t = emitted.back();
-            check(t.forwardPowerPeakRaw.value_or(-1) == 3200,
-                  "the emit carries the window PEAK (3200), not the last value (450)");
+            check(t.forwardPowerPeakRaw.value_or(-1) == 900,
+                  "the emit carries the window's second-highest reading (900): not the "
+                  "lone 3200, and not the last value (450)");
+            check(t.forwardPowerWindowMaxRaw.value_or(-1) == 3200,
+                  "the window maximum (3200) rides the emit beside it, for the log");
             check(t.forwardPowerRaw.value_or(-1) == 450,
                   "forwardPowerRaw keeps its last-value meaning beside the peak");
             check(t.forwardPowerSamples == 4,
@@ -151,8 +154,9 @@ int main(int argc, char** argv)
         check(emitted.size() == 3, "the next window emits once");
         if (emitted.size() == 3) {
             const Hl2Telemetry& t = emitted.back();
-            check(t.forwardPowerPeakRaw.value_or(-1) == 120,
-                  "the quiet window reports its own peak, not the earlier 3200");
+            check(t.forwardPowerPeakRaw.value_or(-1) == 100
+                      && t.forwardPowerWindowMaxRaw.value_or(-1) == 120,
+                  "the quiet window reports its own readings, not the earlier 3200");
             check(t.forwardPowerSamples == 2, "and counts only its own responses");
         }
     }
@@ -186,8 +190,9 @@ int main(int argc, char** argv)
             const Hl2Telemetry& t = emitted.back();
             check(t.forwardPowerSkipped == 2 && t.forwardPowerSamples == 2,
                   "two marked responses are reported as skipped, beside the two kept");
-            check(t.forwardPowerPeakRaw.value_or(-1) == 450,
-                  "and the peak is over the kept ones (450), not the marked 2944");
+            check(t.forwardPowerPeakRaw.value_or(-1) == 300
+                      && t.forwardPowerWindowMaxRaw.value_or(-1) == 450,
+                  "and both readings are over the kept ones (300, 450), not the marked 2944");
         }
         due(fwd(100), raddr(0x02, 0));
         check(emitted.size() == 6 && emitted.back().forwardPowerSkipped == 0
