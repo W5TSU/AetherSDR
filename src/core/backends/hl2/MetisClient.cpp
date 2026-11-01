@@ -292,7 +292,7 @@ bool MetisClient::start(const Params& params)
     m_port = params.port;
     m_ccConfig = ccConfig(m_params.sampleRate, effectiveNumRx(), m_params.ocFilterByte,
                          m_params.adcDither, m_params.adcRandom);
-    m_ccGain = ccRxGain(m_params.lnaGainDb);
+    m_ccGain = ccRxGain(m_params.lnaGainDb, m_params.pureSignal);
     m_ccAdcAssignOrTxGain = ccAdcAssignOrTxGain(m_params.txLnaGainDb);
     // Every receiver starts on RX1's frequency; Hl2Backend moves the rest as it
     // brings each slice up. The BANK COUNT is fixed here and never re-derived
@@ -1040,7 +1040,14 @@ void MetisClient::advanceReceiverCountRestart()
 void MetisClient::setLnaGainDb(int db)
 {
     m_params.lnaGainDb = db;
-    m_ccGain = ccRxGain(db);
+    m_ccGain = ccRxGain(db, m_params.pureSignal);
+}
+
+void MetisClient::setPureSignalEnabled(bool on)
+{
+    m_params.pureSignal = on;
+    m_ccGain = ccRxGain(m_params.lnaGainDb, on);
+    queueOneShotIfRunning(m_ccGain);
 }
 
 void MetisClient::setTxLnaGainDb(int db)
@@ -1463,11 +1470,34 @@ void MetisClient::setTxTestTone(double offsetHz, double amplitude)
     m_toneAmp = amplitude < 0.0 ? 0.0 : (amplitude > 1.0 ? 1.0 : amplitude);
     if (m_toneAmp == 0.0)
         m_tonePhase = 0.0;
+    m_twoToneAmp = 0.0;
+}
+
+void MetisClient::setTxTwoTone(double f1Hz, double f2Hz, double amplitudeEach)
+{
+    m_toneAmp = 0.0;
+    m_twoToneHz[0] = f1Hz;
+    m_twoToneHz[1] = f2Hz;
+    m_twoTonePhase[0] = 0.0;
+    m_twoTonePhase[1] = 0.0;
+    m_twoToneAmp = std::clamp(amplitudeEach, 0.0, 0.5);
 }
 
 void MetisClient::flushTxIq()
 {
     m_txIq.clear();
+    m_twoToneAmp = 0.0;
+}
+
+void MetisClient::runCorrectorDiscarding(std::span<const std::complex<float>> block) noexcept
+{
+    if (!m_txIqCorrector)
+        return;
+    // On a copy, so what is not to be corrected cannot be. The call only lets a
+    // start or end ramp in the correction stage finish.
+    std::array<std::complex<float>, kTxSamplesPerPacket> copy{};
+    std::copy_n(block.begin(), std::min(block.size(), copy.size()), copy.begin());
+    m_txIqCorrector->correct(std::span(copy).first(std::min(block.size(), copy.size())), false);
 }
 
 std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
@@ -1556,7 +1586,28 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
             const double shaped = 0.5 - 0.5 * std::cos(kPi * m_cwEnvelope);
             sample = {static_cast<float>(kHl2CarrierAmplitude * shaped), 0.0f};
         }
+        runCorrectorDiscarding(block);
         ep2WriteTxIq(pkt, block);
+        return pkt;
+    } else if (keyed && m_twoToneAmp > 0.0) {
+        constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
+        std::vector<std::complex<float>> block(kTxSamplesPerPacket);
+        for (std::complex<float>& sample : block) {
+            // Negative sine for the wire's handedness, as in the single tone below.
+            sample = {static_cast<float>(m_twoToneAmp * (std::cos(m_twoTonePhase[0])
+                                                         + std::cos(m_twoTonePhase[1]))),
+                      static_cast<float>(-m_twoToneAmp * (std::sin(m_twoTonePhase[0])
+                                                          + std::sin(m_twoTonePhase[1])))};
+            for (int t = 0; t < 2; ++t) {
+                m_twoTonePhase[t] += kTwoPi * m_twoToneHz[t] / kEp2AudioRateHz;
+                if (m_twoTonePhase[t] > kTwoPi)
+                    m_twoTonePhase[t] -= kTwoPi;
+            }
+        }
+        if (m_txIqCorrector)
+            m_txIqCorrector->correct(block, true);
+        ep2WriteTxIq(pkt, block);
+        return pkt;
     } else if (keyed && m_toneAmp > 0.0) {
         // EP2 is clocked at a fixed 48 kHz regardless of the RX sample rate.
         std::vector<std::complex<float>> block(kTxSamplesPerPacket);
@@ -1576,7 +1627,9 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
         // Keep the accumulator bounded without introducing a phase step.
         while (m_tonePhase > 2.0 * 3.14159265358979323846)
             m_tonePhase -= 2.0 * 3.14159265358979323846;
+        runCorrectorDiscarding(block);
         ep2WriteTxIq(pkt, block);
+        return pkt;
     } else if (keyed && !m_txIq.empty()) {
         std::vector<std::complex<float>> block;
         const std::size_t n = std::min<std::size_t>(kTxSamplesPerPacket, m_txIq.size());
@@ -1585,8 +1638,13 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
             block.push_back(m_txIq.front());
             m_txIq.pop_front();
         }
+        if (m_txIqCorrector)
+            m_txIqCorrector->correct(block, true);
         ep2WriteTxIq(pkt, block);   // a short block leaves the rest as silence
+        return pkt;
     }
+    // Silence, keyed or not.
+    runCorrectorDiscarding(std::array<std::complex<float>, kTxSamplesPerPacket>{});
     return pkt;
 }
 

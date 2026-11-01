@@ -164,12 +164,13 @@ Cc ccRx1Freq(std::uint32_t hz) noexcept
     return ccRxFreq(0, hz);
 }
 
-Cc ccRxGain(int db) noexcept
+Cc ccRxGain(int db, bool pureSignal) noexcept
 {
     // Clamp before adding the bias, which would overflow for INT_MAX.
     // Bit 6 selects the native six-bit path in ad9866.v (gateware 883a338).
     const int code = clampDb(kLnaGainMinDb, db, kLnaGainMaxDb) - kLnaGainMinDb;
-    return {kC0AdcGain, 0x00, 0x00, 0x00, static_cast<std::uint8_t>(0x40 | code)};
+    return {kC0AdcGain, 0x00, static_cast<std::uint8_t>(pureSignal ? 0x40 : 0x00), 0x00,
+            static_cast<std::uint8_t>(0x40 | code)};
 }
 
 Cc ccAdcAssignOrTxGain(std::optional<int> txGainDb) noexcept

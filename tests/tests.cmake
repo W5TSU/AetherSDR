@@ -4847,6 +4847,12 @@ target_include_directories(hl2_tx_lna_gain_frame_test PRIVATE src)
 target_link_libraries(hl2_tx_lna_gain_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_lna_gain_frame_test COMMAND hl2_tx_lna_gain_frame_test)
 
+# PureSignal on the wire: 0x0a bit 22, the corrector hook, the two-tone signal.
+add_executable(hl2_ps_wire_test tests/hl2_ps_wire_test.cpp)
+target_include_directories(hl2_ps_wire_test PRIVATE src)
+target_link_libraries(hl2_ps_wire_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ps_wire_test COMMAND hl2_ps_wire_test)
+
 # HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
 # socket. Binds nothing: recorded datagrams go straight into MetisClient's
 # drain path through the MetisClientTestAccess friend seam.

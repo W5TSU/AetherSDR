@@ -33,6 +33,15 @@ namespace AetherSDR::hl2 {
 //
 // TX remains fail-closed: enableTransmit() must explicitly open the final wire
 // gate before either MOX or transmit samples can leave this object.
+// Whatever corrects transmit IQ before it reaches the wire. `applyToOutput` false
+// means the block goes out as it was (silence, CW, a single carrier) and the
+// corrector is handed a copy. The call still happens, because PureSignal's start
+// and end ramps only advance here.
+struct ITxIqCorrector {
+    virtual ~ITxIqCorrector() = default;
+    virtual void correct(std::span<std::complex<float>> block, bool applyToOutput) noexcept = 0;
+};
+
 class MetisClient : public QObject {
     Q_OBJECT
 
@@ -58,6 +67,8 @@ public:
         // or nullopt for none -- the all-zero bank, gain disabled. Session state:
         // Hl2Backend owns it and hands it over on every start().
         std::optional<int> txLnaGainDb;
+        // 0x0a bit 22, see ccRxGain. Survives setReceiverCount()'s restart.
+        bool pureSignal = false;
         // How many receivers to actually RUN. Phase 1 runs one. This is the
         // value the config register must carry -- not the board's capability.
         int numRx = 1;
@@ -503,7 +514,21 @@ public:
     // NEVER enabled implicitly. A radio that emits a carrier because a default
     // said so is an unintended transmission, so this is opt-in only.
     Q_INVOKABLE void setTxTestTone(double offsetHz, double amplitude);
-    [[nodiscard]] bool txTestToneEnabled() const noexcept { return m_toneAmp > 0.0; }
+    [[nodiscard]] bool txTestToneEnabled() const noexcept
+    {
+        return m_toneAmp > 0.0 || m_twoToneAmp > 0.0;
+    }
+    // The two-tone test signal: a modulated envelope, so unlike the single tone it
+    // can calibrate PureSignal and show intermodulation. Same opt-in rule, and
+    // setTxTestTone(0, 0) or flushTxIq() ends it. The sum of the two amplitudes is
+    // limited to full scale.
+    Q_INVOKABLE void setTxTwoTone(double f1Hz, double f2Hz, double amplitudeEach);
+
+    // PureSignal's correction, run on every EP2 block just before the wire. Null
+    // (the default) means no call. Not owned; set on this object's thread.
+    void setTxIqCorrector(ITxIqCorrector* corrector) noexcept { m_txIqCorrector = corrector; }
+    // 0x0a bit 22. Off is the wire as it always was.
+    Q_INVOKABLE void setPureSignalEnabled(bool on);
 
     // I/O Board accessory (ticket #11): the manual read/write panel and its
     // startup reset. All three funnel through ONE internal queue (m_i2cJobs)
@@ -895,6 +920,11 @@ private:
     double m_toneHz = 0.0;
     double m_toneAmp = 0.0;
     double m_tonePhase = 0.0;   // radians, carried across packets
+    double m_twoToneHz[2] = {0.0, 0.0};
+    double m_twoTonePhase[2] = {0.0, 0.0};
+    double m_twoToneAmp = 0.0;  // each tone; 0 is off
+    ITxIqCorrector* m_txIqCorrector = nullptr;
+    void runCorrectorDiscarding(std::span<const std::complex<float>> block) noexcept;
     bool m_cwMode = false;      // while true, CW owns TX IQ (silence between elements)
     bool m_cwKeyDown = false;
     double m_cwEnvelope = 0.0;  // 0..1 raised-cosine ramp position
