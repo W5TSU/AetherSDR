@@ -411,6 +411,8 @@ struct RadioCapabilities {
         QString selectionCommand;
     };
     std::optional<TwoToneGenerator> twoToneGenerator;
+    // A PS button works here: the backend can predistort against its own feedback.
+    bool hasPureSignal = false;
     FmTonePresentation fmTonePresentation = FmTonePresentation::Hidden;
     QStringList fmToneModes;
     QList<int> fmDtcsCodes;

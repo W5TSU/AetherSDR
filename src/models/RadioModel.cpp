@@ -2646,6 +2646,10 @@ RadioModel::RadioModel(QObject* parent)
             }
             // Hand the backend the operator's TUNE power. A host-modulated
             // backend has no other path to it — see IRadioBackend::setTune().
+            if (on) {
+                m_backend->setTuneTwoTone(m_transmitModel.tuneMode()
+                                          == QLatin1String("two_tone"));
+            }
             m_backend->setTune(on, m_transmitModel.tunePower());
             m_backendTuneKeyed = on;
             // A tune carrier is a transmission. Hl2Backend::setTune() calls

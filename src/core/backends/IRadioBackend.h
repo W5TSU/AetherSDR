@@ -626,6 +626,11 @@ public:
         Q_UNUSED(tunePowerPercent);
     }
 
+    // The next setTune(true) raises a two-tone test signal rather than a carrier,
+    // for a backend declaring RadioCapabilities::twoToneGenerator that generates
+    // its own. Sent just before setTune().
+    virtual void setTuneTwoTone(bool twoTone) { Q_UNUSED(twoTone); }
+
     // Transmit power as a percentage, 0..100.
     //
     // Flex takes this as a text command from TransmitModel, so FlexBackend has
@@ -1065,6 +1070,11 @@ signals:
     void configurationWarning(const QString& message);
 
     void capabilitiesChanged();
+    // PureSignal's state as the operator reads it, for RadioCapabilities::hasPureSignal.
+    // `feedbackLevel` is -1 when there is none to show. `refusal` is why a request
+    // to turn it on did not take, and is otherwise empty.
+    void pureSignalStatusChanged(bool on, const QString& state, int feedbackLevel,
+                                 const QString& refusal);
 
     // Radio-authoritative state for the momentary transmit-frequency monitor.
     void transmitFrequencyCheckChanged(bool on);

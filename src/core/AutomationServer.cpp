@@ -3442,6 +3442,13 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
                 return s.doTxLnaGain(a.action);
             });
 
+        add("ps", {},
+            "ps [status|on|off] — PureSignal on a Hermes-Lite 2: state, feedback level, calibrations (never keys)",
+            parseActionValue,
+            [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
+                return s.doPureSignal(a.action);
+            });
+
         add("droopcal", {},
             "droopcal [status|start|stop|apply|discard] — ANAN-G2 DDC0 droop calibration sweep (radios with a measured DDC edge droop)",
             parseActionValue,
@@ -8363,6 +8370,59 @@ QJsonObject AutomationServer::doBandscope(const QString& action)
 // applies it while the radio is transmitting. Reported from the health snapshot
 // after the call, like bandscope, so the reply is what the backend holds (the
 // clamp included), never an echo of the request.
+QJsonObject AutomationServer::doPureSignal(const QString& action)
+{
+    RadioModel* radio = m_radioModel;
+    if (!radio)
+        return err(QStringLiteral("no radio model available"));
+    IRadioBackend* backend = radio->backend();
+    if (!backend)
+        return err(QStringLiteral("no backend attached"));
+    if (!radio->backendDeclaresExtension(QStringLiteral("hl2")))
+        return err(QStringLiteral("ps: PureSignal is a Hermes-Lite 2 feature"));
+
+    const QString verb = action.trimmed().isEmpty() ? QStringLiteral("status")
+                                                    : action.trimmed().toLower();
+    if (verb != QLatin1String("status")) {
+        if (verb != QLatin1String("on") && verb != QLatin1String("off"))
+            return err(QStringLiteral("ps: expected status, on or off"));
+        QString failure;
+        const quint64 rid = ++m_extensionRequestId;
+        auto errConn = connect(backend, &IRadioBackend::extensionError, this,
+                               [&](quint64 id, const QString& msg) {
+            if (id == rid)
+                failure = msg;
+        }, Qt::DirectConnection);
+        backend->invokeExtension(QStringLiteral("hl2"), QStringLiteral("ps.set"), rid,
+                                 QVariant(verb == QLatin1String("on")));
+        disconnect(errConn);
+        if (!failure.isEmpty())
+            return err(failure);
+    }
+
+    const auto values = backend->healthSnapshot().values;
+    const auto number = [&values](const char* key) -> QJsonValue {
+        const QVariant v = values.value(QString::fromLatin1(key));
+        bool ok = false;
+        const double d = v.toDouble(&ok);
+        return ok ? QJsonValue(d) : QJsonValue();
+    };
+    return QJsonObject{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("ps"), verb},
+        {QStringLiteral("state"), values.value(QStringLiteral("psState")).toString()},
+        {QStringLiteral("feedbackLevel"), number("psFeedbackLevel")},
+        {QStringLiteral("calibrations"), number("psCalibrations")},
+        {QStringLiteral("attempts"), number("psAttempts")},
+        {QStringLiteral("lastFailure"), values.value(QStringLiteral("psLastFailure")).toString()},
+        {QStringLiteral("maxTx"), number("psMaxTx")},
+        {QStringLiteral("hwPeak"), number("psHwPeak")},
+        {QStringLiteral("feedbackPeakDbfs"), number("psFeedbackPeakDbfs")},
+        {QStringLiteral("referencePeakDbfs"), number("psReferencePeakDbfs")},
+        {QStringLiteral("gainDb"), number("txLnaGainDb")},
+    };
+}
+
 QJsonObject AutomationServer::doTxLnaGain(const QString& action)
 {
     RadioModel* radio = m_radioModel;

@@ -5994,6 +5994,15 @@ add_executable(automation_txlnagain_verb_test tests/automation_txlnagain_verb_te
 target_include_directories(automation_txlnagain_verb_test PRIVATE src tests)
 target_link_libraries(automation_txlnagain_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME automation_txlnagain_verb_test COMMAND automation_txlnagain_verb_test)
+add_executable(automation_ps_verb_test tests/automation_ps_verb_test.cpp)
+target_include_directories(automation_ps_verb_test PRIVATE src tests)
+target_link_libraries(automation_ps_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME automation_ps_verb_test COMMAND automation_ps_verb_test)
+add_executable(hl2_ps_backend_test tests/hl2_ps_backend_test.cpp)
+target_include_directories(hl2_ps_backend_test PRIVATE src tests)
+target_link_libraries(hl2_ps_backend_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_ps_backend_test COMMAND hl2_ps_backend_test)
+set_tests_properties(hl2_ps_backend_test PROPERTIES TIMEOUT 120)
 # Ordinary RX lifecycle through production model/backend bindings and an
 # injected command/reply sink. No sockets, firmware peer, DSP or USB access.
 add_executable(backend_slice_lifecycle_test tests/backend_slice_lifecycle_test.cpp)
@@ -6955,6 +6964,7 @@ set(AETHER_AUTOMATION_SERVER_TESTS
     connect_state_model_test
     automation_dsp_backend_readback_test
     automation_txlnagain_verb_test
+    automation_ps_verb_test
     backend_slice_lifecycle_test
     tci_automation_test
     reroute_dead_controls_test

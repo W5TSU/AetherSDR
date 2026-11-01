@@ -661,6 +661,7 @@ private:
     QJsonObject doFreqCal(const QString& action, const QString& value);
     QJsonObject doBandscope(const QString& action);
     QJsonObject doTxLnaGain(const QString& action);
+    QJsonObject doPureSignal(const QString& action);
     QJsonObject doDroopCal(const QString& action, const QString& value);
     QJsonObject doTargetTune(const QString& value);
     QJsonObject doMemory(const QString& action, const QString& arg);
