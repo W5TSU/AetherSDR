@@ -840,6 +840,44 @@ int main()
                   "a window of marked responses only has no peak, so the last value is used");
         }
 
+        // What the window publishes is its SECOND-highest reading: one forward
+        // word far above every other in the window is not shown. On the bench
+        // (2026-10-31, TUNE at 10% into a dummy load) the radio reported 3800
+        // counts once in each of 2 of 10 key-ons on a 1550-count carrier, and a
+        // HackRF watching the same carrier saw no excursion above +3 dB at
+        // 20 us. `peak` still holds the maximum, for the log.
+        {
+            ForwardPowerWindow w;
+            check(!w.reading().has_value(), "reading: an empty window has none");
+            w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | 900u).data()));
+            check(w.reading().value_or(-1) == 900,
+                  "reading: a window of one reading publishes it");
+            w.clear();
+            for (unsigned v : {1550u, 1552u, 3800u, 1560u, 1549u})
+                w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | v).data()));
+            check(w.reading().value_or(-1) == 1560 && w.peak.value_or(-1) == 3800,
+                  "reading: a lone high word on a steady carrier is not published; peak keeps it");
+            w.clear();
+            for (unsigned v : {300u, 3200u, 3150u, 450u})
+                w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | v).data()));
+            check(w.reading().value_or(-1) == 3150,
+                  "reading: a peak in two readings is published at the lower of the two");
+            w.clear();
+            for (unsigned v : {3200u, 300u, 3200u})
+                w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | v).data()));
+            check(w.reading().value_or(-1) == 3200,
+                  "reading: a maximum seen twice is published in full");
+            w.clear();
+            w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | 3800u).data()));
+            w.observe(*parseEp6Response(frame(0x08, 2944u).data()));
+            check(w.reading().value_or(-1) == 3800,
+                  "reading: a skipped non-measurement is not a second reading");
+            w.clear();
+            w.observe(*parseEp6Response(frame(0x08, (1234u << 16) | 3800u).data()));
+            w.clear();
+            check(!w.reading().has_value(), "reading: clear() leaves none for the next window");
+        }
+
         // The skipped count rises on a marked response and on nothing else.
         {
             ForwardPowerWindow w;

@@ -1814,7 +1814,8 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
         && (!m_telemetryEmitClock.isValid()
             || m_telemetryEmitClock.elapsed() >= kTelemetryMinIntervalMs)) {
         m_telemetryEmitClock.restart();
-        m_telemetry.forwardPowerPeakRaw = m_fwdWindow.peak;
+        m_telemetry.forwardPowerPeakRaw = m_fwdWindow.reading();
+        m_telemetry.forwardPowerWindowMaxRaw = m_fwdWindow.peak;
         m_telemetry.forwardPowerSamples = m_fwdWindow.samples;
         m_telemetry.forwardPowerSkipped = m_fwdWindow.skipped;
         m_fwdWindow.clear();

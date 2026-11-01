@@ -170,9 +170,10 @@ inline constexpr int kMicLevelCurve = 2;
 
 // One step of the TX forward-power peak hold, in watts. Forward power is one
 // unaveraged 12-bit I2C ADC sample (rtl/slow_adc.v), re-sampled every other EP6
-// response (control.v:261); the input is each publish window's maximum. Instant
-// attack and exponential release carry the max across an over. Unkeyed, the
-// reading follows the instant sample so the gauge drops when TX stops.
+// response (control.v:261); the input is each publish window's second-highest
+// reading (ForwardPowerWindow::reading). Instant attack and exponential release
+// carry the max across an over. Unkeyed, the reading follows the instant sample
+// so the gauge drops when TX stops.
 [[nodiscard]] constexpr double fwdPeakHoldStep(double previousPeakW,
                                                double instantW,
                                                bool keyed,

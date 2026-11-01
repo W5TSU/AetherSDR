@@ -7745,8 +7745,9 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
     // MetisClient paces telemetry at kTelemetryMinIntervalMs. Forward power is
     // published through the peak hold; see kFwdPeakReleaseAlpha.
     if (t.forwardPowerRaw) {
-        // Keyed: the window's loudest RADDR-1 sample, since the radio reports
-        // ~190 a second and the last one misses speech peaks. Unkeyed: the
+        // Keyed: the window's second-highest RADDR-1 sample (ForwardPowerWindow::
+        // reading), since the radio reports ~190 a second and the last one misses
+        // speech peaks, and one bad word must not pin the gauge. Unkeyed: the
         // last value, because a maximum of noise samples would sit above the
         // no-carrier floor MeterModel snaps to zero on.
         const int fwdRaw = (m_keyed && t.forwardPowerPeakRaw)
@@ -7772,7 +7773,8 @@ void Hl2Backend::publishTelemetry(const Hl2Telemetry& t)
                          << "rev" << t.reversePowerRaw.value_or(-1)
                          << "-> fwd" << directionalWatts(*t.forwardPowerRaw) << "W"
                          << "(uncalibrated reference curve);"
-                         << "window peak" << t.forwardPowerPeakRaw.value_or(-1)
+                         << "reading" << t.forwardPowerPeakRaw.value_or(-1)
+                         << "window max" << t.forwardPowerWindowMaxRaw.value_or(-1)
                          << "of" << t.forwardPowerSamples << "RADDR-1 samples ("
                          << t.forwardPowerSkipped << "skipped)";
     }
