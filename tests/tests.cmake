@@ -5963,6 +5963,12 @@ target_link_libraries(automation_dsp_backend_readback_test PRIVATE
 )
 add_test(NAME automation_dsp_backend_readback_test
          COMMAND automation_dsp_backend_readback_test)
+# `txlnagain` bridge verb against a real, unconnected Hl2Backend: nothing
+# binds, nothing keys. aetherdesktop_support comes from the loop below.
+add_executable(automation_txlnagain_verb_test tests/automation_txlnagain_verb_test.cpp)
+target_include_directories(automation_txlnagain_verb_test PRIVATE src tests)
+target_link_libraries(automation_txlnagain_verb_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME automation_txlnagain_verb_test COMMAND automation_txlnagain_verb_test)
 # Ordinary RX lifecycle through production model/backend bindings and an
 # injected command/reply sink. No sockets, firmware peer, DSP or USB access.
 add_executable(backend_slice_lifecycle_test tests/backend_slice_lifecycle_test.cpp)
@@ -6923,6 +6929,7 @@ set(AETHER_AUTOMATION_SERVER_TESTS
     automation_rn2_probe_test
     connect_state_model_test
     automation_dsp_backend_readback_test
+    automation_txlnagain_verb_test
     backend_slice_lifecycle_test
     tci_automation_test
     reroute_dead_controls_test
