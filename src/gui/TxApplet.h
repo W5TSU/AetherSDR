@@ -47,6 +47,17 @@ public:
     void setRadioModel(RadioModel* radio);
     void setBandPlanManager(BandPlanManager* bandPlan);
 
+    // The PS button, for a radio declaring RadioCapabilities::hasPureSignal. It
+    // shows what the backend reports, never just what was clicked.
+    void setPureSignalAvailable(bool available);
+    void showPureSignalStatus(bool on, const QString& state, int feedbackLevel,
+                              const QString& refusal);
+
+signals:
+    void pureSignalRequested(bool on);
+
+public:
+
     // Building a context menu is split from showing it so the actions, their
     // enabled state and their explanatory tooltips can be asserted without
     // entering the modal QMenu::exec() loop. The show* slots build then exec.
@@ -129,6 +140,10 @@ private:
     // Buttons
     QPushButton* m_tuneBtn{nullptr};
     QPushButton* m_moxBtn{nullptr};
+    QPushButton* m_psBtn{nullptr};
+    QLabel* m_psStatus{nullptr};
+    bool m_psOn{false};
+    QMetaObject::Connection m_psStatusConnection;
     QPushButton* m_atuBtn{nullptr};
     QPushButton* m_memBtn{nullptr};
     QPushButton* m_apdBtn{nullptr};

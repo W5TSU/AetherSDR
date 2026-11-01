@@ -975,6 +975,7 @@ private:
     std::uint32_t m_psTxCommandHz = 0;
     QString m_psState = QStringLiteral("off");
     Hl2PsSnapshot m_psSnapshot;
+    int m_psPublishedLevel = -1;
     std::optional<int> m_psGainDb;
     std::optional<int> m_operatorTxLnaGainDb;
 

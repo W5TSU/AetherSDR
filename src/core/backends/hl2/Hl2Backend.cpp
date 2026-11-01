@@ -1330,8 +1330,9 @@ void Hl2Backend::psTickOnIoThread()
         m_psSnapshot = snap;
         m_psGainDb = gain;
         m_txLnaGainDb = gain;
-        if (state != m_psState) {
+        if (state != m_psState || snap.info[4] != m_psPublishedLevel) {
             m_psState = state;
+            m_psPublishedLevel = snap.info[4];
             publishPureSignal();
         }
     }, Qt::QueuedConnection);

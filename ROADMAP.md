@@ -134,11 +134,9 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   driving an amplifier with a sampler on the N2ADR I/O board's PURE input.
   Designed in
   [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md)
-  as five steps. Step 1, the receive gain while transmitting (register
-  `0x0e`), shipped in v26.10.10
-  ([#111](https://github.com/W5TSU/AetherSDR/pull/111)) and still needs its
-  bench check. Next: the feedback level, the PureSignal receivers, the PS
-  button, and a two-tone generator. Out of scope for the HL2 "supported"
+  and built, with the PS button, its status line, the `ps` bridge verb and
+  TUNE's two-tone. It works against a software amplifier. Measuring it on the
+  radio and through the XPA125B is still to do. Out of scope for the HL2 "supported"
   milestone
   ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md)).
 - **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`

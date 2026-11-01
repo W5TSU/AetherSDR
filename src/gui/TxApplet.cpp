@@ -263,6 +263,23 @@ void TxApplet::buildUI()
         m_moxBtn->setAccessibleDescription("Toggle manual transmit on or off");
         row->addWidget(m_moxBtn);
 
+        // Beside TUNE and MOX, but it keys nothing: PureSignal only works on what
+        // the operator transmits anyway. So no markTxKeying().
+        m_psBtn = new QPushButton("PS");
+        AetherSDR::ThemeManager::instance().applyStyleSheet(m_psBtn, kMoxIdleStyle);
+        m_psBtn->setCheckable(true);
+        m_psBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_psBtn->setFixedHeight(22);
+        m_psBtn->setAccessibleName("PureSignal");
+        m_psBtn->setAccessibleDescription("Turn PureSignal amplifier correction on or off");
+        m_psBtn->setToolTip(tr("PureSignal: corrects the amplifier's distortion while you transmit"));
+        m_psBtn->hide();
+        connect(m_psBtn, &QPushButton::clicked, this, [this](bool checked) {
+            m_psBtn->setChecked(m_psOn);   // lit by the backend's report, not the click
+            emit pureSignalRequested(checked);
+        });
+        row->addWidget(m_psBtn);
+
         m_atuBtn = new QPushButton("ATU");
         markTxKeying(m_atuBtn);    // starts ATU tune — keys TX (#3646)
         m_atuBtn->setStyleSheet(btnStyle);
@@ -288,6 +305,13 @@ void TxApplet::buildUI()
         row->addWidget(m_memBtn);
 
         vbox->addLayout(row);
+
+        m_psStatus = new QLabel;
+        m_psStatus->setAccessibleName("PureSignal status");
+        m_psStatus->setAlignment(Qt::AlignCenter);
+        m_psStatus->setWordWrap(true);
+        m_psStatus->hide();
+        vbox->addWidget(m_psStatus);
     }
 
     // ── APD button + Active / Cal / Avail indicators ────────────────────────
@@ -711,7 +735,19 @@ void TxApplet::setRadioModel(RadioModel* radio)
         disconnect(m_capabilitiesConnection);
         m_capabilitiesConnection = {};
     }
+    if (m_psStatusConnection) {
+        disconnect(m_psStatusConnection);
+        m_psStatusConnection = {};
+    }
+    disconnect(this, &TxApplet::pureSignalRequested, nullptr, nullptr);
     m_radioModel = radio;
+    setPureSignalAvailable(radio && radio->isConnected()
+                           && radio->backendCapabilities().hasPureSignal);
+    if (radio) {
+        m_psStatusConnection = connect(radio, &RadioModel::pureSignalStatusChanged,
+                                       this, &TxApplet::showPureSignalStatus);
+        connect(this, &TxApplet::pureSignalRequested, radio, &RadioModel::setPureSignal);
+    }
     m_forwardPowerRequiresSmoothing = !radio || !radio->isConnected()
         || radio->backendCapabilities().forwardPowerRequiresSmoothing;
     m_forwardPowerScaleFollowsBandRating = radio && radio->isConnected()
@@ -720,6 +756,7 @@ void TxApplet::setRadioModel(RadioModel* radio)
         m_capabilitiesConnection = connect(
             radio, &RadioModel::capabilitiesChanged, this,
             [this](bool connected, const RadioCapabilities& caps) {
+                setPureSignalAvailable(connected && caps.hasPureSignal);
                 m_forwardPowerRequiresSmoothing = !connected
                     || caps.forwardPowerRequiresSmoothing;
                 const bool followsBandRating = connected
@@ -735,6 +772,46 @@ void TxApplet::setRadioModel(RadioModel* radio)
                 }
             });
     }
+}
+
+void TxApplet::setPureSignalAvailable(bool available)
+{
+    m_psBtn->setVisible(available);
+    m_psStatus->setVisible(available);
+}
+
+void TxApplet::showPureSignalStatus(bool on, const QString& state, int feedbackLevel,
+                                    const QString& refusal)
+{
+    m_psOn = on;
+    m_psBtn->setChecked(on);
+
+    QString band = QStringLiteral("none");
+    QString color = QStringLiteral("#8090a0");
+    if (on && feedbackLevel >= 0) {
+        // Thetis's and deskHPSDR's bands for the feedback meter.
+        if (feedbackLevel > 128 && feedbackLevel <= 181) {
+            band = QStringLiteral("good");
+            color = QStringLiteral("#40c060");
+        } else if (feedbackLevel > 90 && feedbackLevel <= 200) {
+            band = QStringLiteral("warn");
+            color = QStringLiteral("#d0a030");
+        } else {
+            band = QStringLiteral("bad");
+            color = QStringLiteral("#d05040");
+        }
+    }
+    m_psStatus->setProperty("psBand", band);
+    AetherSDR::ThemeManager::instance().applyStyleSheet(
+        m_psStatus, QStringLiteral("QLabel { color: %1; font-size: 9px; }").arg(color));
+
+    QString text = QStringLiteral("PS: %1").arg(state);
+    if (on && feedbackLevel >= 0)
+        text += QStringLiteral(" · %1").arg(feedbackLevel);
+    if (!refusal.isEmpty())
+        text = refusal;
+    m_psStatus->setText(text);
+    m_psStatus->setToolTip(text);
 }
 
 void TxApplet::setBandPlanManager(BandPlanManager* bandPlan)
