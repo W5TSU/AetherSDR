@@ -293,6 +293,7 @@ bool MetisClient::start(const Params& params)
     m_ccConfig = ccConfig(m_params.sampleRate, effectiveNumRx(), m_params.ocFilterByte,
                          m_params.adcDither, m_params.adcRandom);
     m_ccGain = ccRxGain(m_params.lnaGainDb);
+    m_ccAdcAssignOrTxGain = ccAdcAssignOrTxGain(m_params.txLnaGainDb);
     // Every receiver starts on RX1's frequency; Hl2Backend moves the rest as it
     // brings each slice up. The BANK COUNT is fixed here and never re-derived
     // per packet, so the round robin and the EP6 demux cannot disagree about how
@@ -313,6 +314,7 @@ bool MetisClient::start(const Params& params)
     m_ep4Drops = 0;
     m_ep4Rewinds = 0;
     m_fwdWindow.clear();
+    m_rxIqPeak.clear();
     m_telemetry.forwardPowerPeakRaw.reset();
     m_telemetry.forwardPowerSamples = 0;
     m_telemetry.forwardPowerSkipped = 0;
@@ -1041,6 +1043,20 @@ void MetisClient::setLnaGainDb(int db)
     m_ccGain = ccRxGain(db);
 }
 
+void MetisClient::setTxLnaGainDb(int db)
+{
+    m_params.txLnaGainDb = db;
+    m_ccAdcAssignOrTxGain = ccAdcAssignOrTxGain(db);
+    queueOneShotIfRunning(m_ccAdcAssignOrTxGain);
+}
+
+void MetisClient::clearTxLnaGain()
+{
+    m_params.txLnaGainDb.reset();
+    m_ccAdcAssignOrTxGain = ccAdcAssignOrTxGain(std::nullopt);
+    queueOneShotIfRunning(m_ccAdcAssignOrTxGain);
+}
+
 void MetisClient::setBandFilter(int ocFilterByte)
 {
     const std::uint8_t oc = static_cast<std::uint8_t>(ocFilterByte & 0x7F);
@@ -1456,7 +1472,6 @@ void MetisClient::flushTxIq()
 
 std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
 {
-    static const Cc kCcAdc = ccAdcAssignOrTxGain(std::nullopt);
     // Cleared here rather than only on confirmation: a packet built and then
     // thrown away (a test, or a caller that inspects the bytes) must not leave
     // a stale claim that some later packet carried the request.
@@ -1488,7 +1503,7 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
         // it goes out on the next EP2 frame.
         m_requestOnBuiltPacket = true;
     } else {
-        // The rotation is every receiver's NCO, then gain, ADC assignment,
+        // The rotation is every receiver's NCO, then gain, ADC assignment / TX LNA gain (0x0e),
         // TX latency/PTT hang, then reset-on-disconnect: numRx + 4 slots.
         // Each bank is RE-ASSERTED rather than sent once, for the same reason
         // the config bank is — a radio that resets or reconnects mid-session
@@ -1505,7 +1520,7 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
         else if (slot == nFreq)
             b = m_ccGain;
         else if (slot == nFreq + 1)
-            b = kCcAdc;
+            b = m_ccAdcAssignOrTxGain;
         else if (slot == nFreq + 2)
             b = m_ccTxLatencyPttHang;
         else
@@ -1818,6 +1833,8 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
         m_telemetry.forwardPowerSamples = m_fwdWindow.samples;
         m_telemetry.forwardPowerSkipped = m_fwdWindow.skipped;
         m_fwdWindow.clear();
+        m_telemetry.rx1IqPeakDbfs = m_rxIqPeak.peakDbfs();
+        m_rxIqPeak.clear();
         emit telemetryUpdated(m_telemetry);
     }
 
@@ -1832,6 +1849,7 @@ void MetisClient::handleDatagram(std::span<const std::uint8_t> bytes)
         b.clear();
 
     if (ep6SamplesMulti(bytes, m_blocks) > 0) {
+        m_rxIqPeak.observe(m_blocks[0]);
         // RX1 goes out on both signals: iqBlockReady for the single-receiver
         // consumers, iqBlocksReady for the multi-receiver ones. Emitting the
         // first receiver twice is deliberate -- the alternative is every

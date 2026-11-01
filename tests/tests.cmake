@@ -4834,6 +4834,13 @@ target_include_directories(hl2_band_filter_frame_test PRIVATE src)
 target_link_libraries(hl2_band_filter_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_band_filter_frame_test COMMAND hl2_band_filter_frame_test)
 
+# HL2 receive LNA gain while transmitting (0x0e): one-shot, round robin and
+# start() seeding, on the exact bytes buildNextControlPacket() emits.
+add_executable(hl2_tx_lna_gain_frame_test tests/hl2_tx_lna_gain_frame_test.cpp)
+target_include_directories(hl2_tx_lna_gain_frame_test PRIVATE src)
+target_link_libraries(hl2_tx_lna_gain_frame_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tx_lna_gain_frame_test COMMAND hl2_tx_lna_gain_frame_test)
+
 # HL2 wideband bandscope ingest — EP4 and EP6 accounted separately on one
 # socket. Binds nothing: recorded datagrams go straight into MetisClient's
 # drain path through the MetisClientTestAccess friend seam.
