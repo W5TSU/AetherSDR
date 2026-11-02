@@ -1,6 +1,7 @@
 #include "MainWindowHelpers.h"
 
 #include "SpectrumWidget.h"
+#include "SpectrumPreviewLogic.h"
 #include "core/PanadapterStream.h"
 #include "core/RadioDiscovery.h"
 #include "core/SmartLinkClient.h"
@@ -451,19 +452,13 @@ constexpr int kDefaultPanXpixels = 1024;
 constexpr int kDefaultPanYpixels = 700;
 constexpr int kMinPanXpixels = 100;
 constexpr int kMinPanYpixels = 20;
-// FLEX radios cap panadapter FFT frames at a 4096-bin boundary. Requesting
-// that boundary (or more) leaves the right edge malformed on firmware
-// 4.2.18/4.2.20, so stay one bin below it.
-constexpr int kMaxRadioPanXPixels = 4095;
 constexpr int kMaxRadioPanYPixels = 8192;
 
 int radioPixelsFor(const SpectrumWidget* spectrum, int logicalPixels, int maximumPixels)
 {
-    const double ratio = spectrum ? spectrum->devicePixelRatioF() : 1.0;
-    const double dpr = std::isfinite(ratio) && ratio > 0.0 ? ratio : 1.0;
-    return std::clamp(static_cast<int>(std::lround(logicalPixels * dpr)),
-                      1,
-                      maximumPixels);
+    return panDevicePixels(logicalPixels,
+                           spectrum ? spectrum->devicePixelRatioF() : 1.0,
+                           maximumPixels);
 }
 } // namespace
 
@@ -472,7 +467,7 @@ int panXpixelsFor(const SpectrumWidget* spectrum)
     if (!spectrum || spectrum->width() < kMinPanXpixels) {
         return kDefaultPanXpixels;
     }
-    return radioPixelsFor(spectrum, spectrum->width(), kMaxRadioPanXPixels);
+    return panRadioXpixels(spectrum->width(), spectrum->devicePixelRatioF());
 }
 
 int panYpixelsFor(const SpectrumWidget* spectrum)
