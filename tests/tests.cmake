@@ -2069,86 +2069,6 @@ if(ENABLE_NVIDIA_AFX AND ((UNIX AND NOT APPLE) OR WIN32) AND CMAKE_SYSTEM_PROCES
     add_test(NAME nvidia_afx_filter_test COMMAND nvidia_afx_filter_test)
 endif()
 
-# Exact qWAVE DSCP request/rollback, with injected native operations; no sockets.
-add_executable(vita_dscp_flow_test tests/vita_dscp_flow_test.cpp)
-target_include_directories(vita_dscp_flow_test PRIVATE src)
-add_test(NAME vita_dscp_flow_test COMMAND vita_dscp_flow_test)
-
-# Socket-free: unbound native IPv4/IPv6 UDP descriptors (no bind, send or connect);
-# checks the marker sets the option that marks each family. Exit 77 without IPv6.
-add_executable(vita_dscp_family_test tests/vita_dscp_family_test.cpp
-    src/core/backends/flex/VitaDscpMarker.cpp)
-target_include_directories(vita_dscp_family_test PRIVATE src)
-target_link_libraries(vita_dscp_family_test PRIVATE Qt6::Core Qt6::Network)
-add_test(NAME vita_dscp_family_test COMMAND vita_dscp_family_test)
-set_tests_properties(vita_dscp_family_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
-
-# SOCKETS: two ephemeral IPv4 UDP sockets on 127.0.0.1, our own sender/sink.
-# Tests the native marker across close/rebind; no firmware peer or RF.
-add_executable(vita_dscp_socket_test tests/vita_dscp_socket_test.cpp
-    src/core/backends/flex/VitaDscpMarker.cpp)
-target_include_directories(vita_dscp_socket_test PRIVATE src)
-target_link_libraries(vita_dscp_socket_test PRIVATE Qt6::Core Qt6::Network)
-add_test(NAME vita_dscp_socket_test COMMAND vita_dscp_socket_test)
-set_tests_properties(vita_dscp_socket_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
-
-# SOCKETS: production ephemeral IPv4 VITA socket (LAN uses AnyIPv4, WAN too)
-# plus our own ephemeral loopback sink. Cold RadioConnection never dials;
-# no radio/firmware peer. Injected QoS denial must leave all bind paths usable.
-add_executable(vita_dscp_stream_test tests/vita_dscp_stream_test.cpp)
-target_include_directories(vita_dscp_stream_test PRIVATE src tests)
-target_link_libraries(vita_dscp_stream_test PRIVATE aethercore Qt6::Core Qt6::Network)
-add_test(NAME vita_dscp_stream_test COMMAND vita_dscp_stream_test)
-set_tests_properties(vita_dscp_stream_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
-
-# Socket-free production WAN cadence, encoding, qualification and lifecycle.
-# Only terminal bind/write operations are injected; QTimer delivery stays real.
-add_executable(wan_udp_keepalive_test tests/wan_udp_keepalive_test.cpp)
-target_include_directories(wan_udp_keepalive_test PRIVATE src tests)
-target_link_libraries(wan_udp_keepalive_test PRIVATE aethercore Qt6::Core)
-add_test(NAME wan_udp_keepalive_test COMMAND wan_udp_keepalive_test)
-set_tests_properties(wan_udp_keepalive_test PROPERTIES TIMEOUT 25)
-
-# Socket-free: injected LAN bind/write; drives start(), rebind, receive and the keepalive timer.
-add_executable(lan_udp_keepalive_test tests/lan_udp_keepalive_test.cpp)
-target_include_directories(lan_udp_keepalive_test PRIVATE src tests)
-target_link_libraries(lan_udp_keepalive_test PRIVATE aethercore Qt6::Core Qt6::Network)
-add_test(NAME lan_udp_keepalive_test COMMAND lan_udp_keepalive_test)
-set_tests_properties(lan_udp_keepalive_test PROPERTIES TIMEOUT 25)
-
-# SOCKETS: manual check of the production ephemeral IPv4 VITA socket and two
-# own loopback UDP sinks. No firmware peer or RF. Build/run explicitly.
-# not registered: opt-in real socket wiring; default coverage above is socket-free.
-add_executable(wan_udp_keepalive_socket_test EXCLUDE_FROM_ALL tests/wan_udp_keepalive_socket_test.cpp)
-target_include_directories(wan_udp_keepalive_socket_test PRIVATE src tests)
-target_link_libraries(wan_udp_keepalive_socket_test PRIVATE aethercore Qt6::Core Qt6::Network)
-
-# PanadapterStream's rate-limited VITA-49 sequence-error line and its text, which
-# the docs Log Analyzer matches (#6285). Socket-free: meter packets are fed to
-# processDatagram() on a stream that never binds.
-add_executable(vita_sequence_loss_log_test tests/vita_sequence_loss_log_test.cpp)
-target_include_directories(vita_sequence_loss_log_test PRIVATE src)
-target_link_libraries(vita_sequence_loss_log_test PRIVATE aethercore Qt6::Core)
-add_test(NAME vita_sequence_loss_log_test COMMAND vita_sequence_loss_log_test)
-
-# RadioModel restarts remote_audio_rx's VITA-49 sequence tracking when the radio
-# reports the stream adopted or removed (#6285). Socket-free: status lines go to
-# the model's router and packets straight to processDatagram().
-add_executable(remote_audio_rx_sequence_restart_test tests/remote_audio_rx_sequence_restart_test.cpp)
-target_include_directories(remote_audio_rx_sequence_restart_test PRIVATE src tests)
-target_link_libraries(remote_audio_rx_sequence_restart_test PRIVATE aethercore Qt6::Core)
-add_test(NAME remote_audio_rx_sequence_restart_test COMMAND remote_audio_rx_sequence_restart_test)
-
-# The start-up "Platform: Qt platform plugin" line and its fallback line (#6285).
-# Pure: no QGuiApplication.
-add_executable(qt_platform_choice_test
-    tests/qt_platform_choice_test.cpp
-    src/QtPlatformChoice.cpp
-)
-target_include_directories(qt_platform_choice_test PRIVATE src)
-target_link_libraries(qt_platform_choice_test PRIVATE Qt6::Core)
-add_test(NAME qt_platform_choice_test COMMAND qt_platform_choice_test)
-
 # Pure, headless, hardware-free golden matrix for the consolidated audio
 # format/rate negotiation policy (#3306). TargetOs is data, so this one binary
 # exercises the Windows/macOS/Linux ladders regardless of the CI host.
@@ -4316,15 +4236,6 @@ add_executable(ax25_replay EXCLUDE_FROM_ALL
 target_include_directories(ax25_replay PRIVATE src)
 target_link_libraries(ax25_replay PRIVATE Qt6::Core aether_libmodem_core aether_afskdemod)
 
-# File-only parser coverage; no modem, settings, or radio transport.
-add_executable(ax25_replay_wav_test
-    tests/ax25_replay_wav_test.cpp
-    tools/Ax25ReplayWav.cpp
-)
-target_include_directories(ax25_replay_wav_test PRIVATE tools)
-target_link_libraries(ax25_replay_wav_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME ax25_replay_wav_test COMMAND ax25_replay_wav_test)
-
 add_executable(ax25_session_analyze EXCLUDE_FROM_ALL
     tools/ax25_session_analyze.cpp
     tools/Ax25SessionWav.cpp
@@ -4340,15 +4251,6 @@ add_executable(ax25_session_analyze EXCLUDE_FROM_ALL
 )
 target_include_directories(ax25_session_analyze PRIVATE src)
 target_link_libraries(ax25_session_analyze PRIVATE Qt6::Core aether_libmodem_core aether_afskdemod)
-
-# File-only parser coverage; no modem, settings, or radio transport.
-add_executable(ax25_session_wav_test
-    tests/ax25_session_wav_test.cpp
-    tools/Ax25SessionWav.cpp
-)
-target_include_directories(ax25_session_wav_test PRIVATE tools)
-target_link_libraries(ax25_session_wav_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME ax25_session_wav_test COMMAND ax25_session_wav_test)
 
 # AX.25 airtime model + link-liveness behaviour (T3 idle poll, bounded REJ
 # recovery, SABME refusal, Karn-safe RTT sampling). See docs/HFMODEM.md.
@@ -4538,27 +4440,6 @@ target_link_libraries(reroute_dead_controls_test PRIVATE
     aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME reroute_dead_controls_test COMMAND reroute_dead_controls_test)
 
-# The AGC-T auto sweep stops when no audio reaches this computer. Socket-free,
-# nothing keyed.
-add_executable(agc_t_no_audio_test tests/agc_t_no_audio_test.cpp)
-target_include_directories(agc_t_no_audio_test PRIVATE src tests)
-target_link_libraries(agc_t_no_audio_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
-add_test(NAME agc_t_no_audio_test COMMAND agc_t_no_audio_test)
-
-# #6653: SmartSDR 4.3 FDVU/FDVL over SmartCAT and rigctld. Injected stub
-# backend, protocol objects fed command text. Socket-free, nothing keyed.
-add_executable(cat_freedv_mode_tokens_test tests/cat_freedv_mode_tokens_test.cpp)
-target_include_directories(cat_freedv_mode_tokens_test PRIVATE src tests)
-target_link_libraries(cat_freedv_mode_tokens_test PRIVATE aethercore Qt6::Core Qt6::Network)
-add_test(NAME cat_freedv_mode_tokens_test COMMAND cat_freedv_mode_tokens_test)
-
-# TCI rx_volume in the spec form (trx,channel,dB). Injected stub backend,
-# TciProtocol fed command text. Socket-free, nothing keyed.
-add_executable(tci_rx_volume_test tests/tci_rx_volume_test.cpp)
-target_include_directories(tci_rx_volume_test PRIVATE src tests)
-target_link_libraries(tci_rx_volume_test PRIVATE aethercore Qt6::Core Qt6::Network)
-add_test(NAME tci_rx_volume_test COMMAND tci_rx_volume_test)
-
 # #6142: a band-stack recall into DIGU/DIGL leaves the HL2's data-mode AGC
 # alone. A real, unconnected Hl2Backend behind RadioModel. Socket-free.
 add_executable(hl2_bandstack_digital_agc_test tests/hl2_bandstack_digital_agc_test.cpp)
@@ -4713,12 +4594,6 @@ add_executable(vu_meter_settings_test
 target_include_directories(vu_meter_settings_test PRIVATE src)
 target_link_libraries(vu_meter_settings_test PRIVATE Qt6::Core)
 add_test(NAME vu_meter_settings_test COMMAND vu_meter_settings_test)
-
-# LAN source-family selection, without binding sockets or contacting a radio.
-add_executable(flex_lan_bind_address_test tests/flex_lan_bind_address_test.cpp)
-target_include_directories(flex_lan_bind_address_test PRIVATE src)
-target_link_libraries(flex_lan_bind_address_test PRIVATE Qt6::Core Qt6::Network)
-add_test(NAME flex_lan_bind_address_test COMMAND flex_lan_bind_address_test)
 
 # aetherd RFC step 2.2b regression guard: FlexBackend ctor/dtor thread ownership
 # + #502 teardown ordering. FlexBackend pulls RadioConnection/PanadapterStream
@@ -6784,41 +6659,6 @@ add_test(NAME radio_setup_max_power_field_test COMMAND radio_setup_max_power_fie
 set_tests_properties(radio_setup_max_power_field_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
-# Mouse events ignored by overlay descendants stop at the floating panel,
-# including rebuilt Band/XVTR panels. Socket-free QWidget parent records leaks.
-add_executable(spectrum_overlay_mouse_boundary_test
-    tests/spectrum_overlay_mouse_boundary_test.cpp
-    src/gui/SpectrumOverlayMenu.cpp
-    src/gui/SpectrumOverlayWheelGuard.cpp
-    src/gui/MemoryBrowsePanel.cpp
-    src/gui/DragValuePopup.cpp
-    src/gui/DspParamPopup.cpp
-)
-target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE src tests)
-if(DEBIAN_GPU_FIX_REQUIRED)
-    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
-        "${DEBIAN_PRIVATE_INC}"
-        "${DEBIAN_PRIVATE_INC}/QtGui"
-    )
-endif()
-if(QT_FRAMEWORK_PRIVATE_INC)
-    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
-        "${QT_FRAMEWORK_PRIVATE_INC}"
-        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
-    )
-endif()
-target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE
-    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
-)
-if(TARGET Qt6::GuiPrivate)
-    target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE Qt6::GuiPrivate)
-endif()
-set_target_properties(spectrum_overlay_mouse_boundary_test PROPERTIES AUTOMOC ON)
-add_test(NAME spectrum_overlay_mouse_boundary_test
-         COMMAND spectrum_overlay_mouse_boundary_test)
-set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
-
 # The overlay DAX button stays hidden across expand/collapse on a radio with no
 # DAX plane (updateLayout() used to re-show it). Same link set and shape as
 # spectrum_overlay_band_highlight_test above.
@@ -6982,11 +6822,102 @@ add_test(NAME nrs_level_range_test COMMAND nrs_level_range_test)
 set_tests_properties(nrs_level_range_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Socket-free: injected LAN bind/write; drives start(), rebind, receive and the keepalive timer.
+add_executable(lan_udp_keepalive_test tests/lan_udp_keepalive_test.cpp)
+target_include_directories(lan_udp_keepalive_test PRIVATE src tests)
+target_link_libraries(lan_udp_keepalive_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME lan_udp_keepalive_test COMMAND lan_udp_keepalive_test)
+set_tests_properties(lan_udp_keepalive_test PROPERTIES TIMEOUT 25)
+
+# File-only parser coverage; no modem, settings, or radio transport.
+add_executable(ax25_replay_wav_test
+    tests/ax25_replay_wav_test.cpp
+    tools/Ax25ReplayWav.cpp
+)
+target_include_directories(ax25_replay_wav_test PRIVATE tools)
+target_link_libraries(ax25_replay_wav_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME ax25_replay_wav_test COMMAND ax25_replay_wav_test)
+
+# File-only parser coverage; no modem, settings, or radio transport.
+add_executable(ax25_session_wav_test
+    tests/ax25_session_wav_test.cpp
+    tools/Ax25SessionWav.cpp
+)
+target_include_directories(ax25_session_wav_test PRIVATE tools)
+target_link_libraries(ax25_session_wav_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME ax25_session_wav_test COMMAND ax25_session_wav_test)
+
+# The AGC-T auto sweep stops when no audio reaches this computer. Socket-free,
+# nothing keyed.
+add_executable(agc_t_no_audio_test tests/agc_t_no_audio_test.cpp)
+target_include_directories(agc_t_no_audio_test PRIVATE src tests)
+target_link_libraries(agc_t_no_audio_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME agc_t_no_audio_test COMMAND agc_t_no_audio_test)
+
+# #6653: SmartSDR 4.3 FDVU/FDVL over SmartCAT and rigctld. Injected stub
+# backend, protocol objects fed command text. Socket-free, nothing keyed.
+add_executable(cat_freedv_mode_tokens_test tests/cat_freedv_mode_tokens_test.cpp)
+target_include_directories(cat_freedv_mode_tokens_test PRIVATE src tests)
+target_link_libraries(cat_freedv_mode_tokens_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME cat_freedv_mode_tokens_test COMMAND cat_freedv_mode_tokens_test)
+
+# TCI rx_volume in the spec form (trx,channel,dB). Injected stub backend,
+# TciProtocol fed command text. Socket-free, nothing keyed.
+add_executable(tci_rx_volume_test tests/tci_rx_volume_test.cpp)
+target_include_directories(tci_rx_volume_test PRIVATE src tests)
+target_link_libraries(tci_rx_volume_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME tci_rx_volume_test COMMAND tci_rx_volume_test)
+
+# LAN source-family selection, without binding sockets or contacting a radio.
+add_executable(flex_lan_bind_address_test tests/flex_lan_bind_address_test.cpp)
+target_include_directories(flex_lan_bind_address_test PRIVATE src)
+target_link_libraries(flex_lan_bind_address_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME flex_lan_bind_address_test COMMAND flex_lan_bind_address_test)
+
+# Mouse events ignored by overlay descendants stop at the floating panel,
+# including rebuilt Band/XVTR panels. Socket-free QWidget parent records leaks.
+add_executable(spectrum_overlay_mouse_boundary_test
+    tests/spectrum_overlay_mouse_boundary_test.cpp
+    src/gui/SpectrumOverlayMenu.cpp
+    src/gui/SpectrumOverlayWheelGuard.cpp
+    src/gui/MemoryBrowsePanel.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/DspParamPopup.cpp
+)
+target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE src tests)
+if(DEBIAN_GPU_FIX_REQUIRED)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${DEBIAN_PRIVATE_INC}"
+        "${DEBIAN_PRIVATE_INC}/QtGui"
+    )
+endif()
+if(QT_FRAMEWORK_PRIVATE_INC)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${QT_FRAMEWORK_PRIVATE_INC}"
+        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
+    )
+endif()
+target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+)
+if(TARGET Qt6::GuiPrivate)
+    target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE Qt6::GuiPrivate)
+endif()
+set_target_properties(spectrum_overlay_mouse_boundary_test PROPERTIES AUTOMOC ON)
+add_test(NAME spectrum_overlay_mouse_boundary_test
+         COMMAND spectrum_overlay_mouse_boundary_test)
+set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    agc_t_no_audio_test
+    cat_freedv_mode_tokens_test
+    tci_rx_volume_test
+    spectrum_overlay_mouse_boundary_test
     nrs_level_range_test
     cwx_quote_test
     hl2_tune_memory_test
@@ -6994,9 +6925,6 @@ set(AETHER_SETTINGS_CONSUMERS
     gps_fix_state_test
     hl2_discovery_logging_test
     reroute_dead_controls_test
-    agc_t_no_audio_test
-    cat_freedv_mode_tokens_test
-    tci_rx_volume_test
     hl2_bandstack_digital_agc_test
     shortcut_passthrough_test
     hl2_unkey_hold_test
@@ -7108,7 +7036,6 @@ set(AETHER_SETTINGS_CONSUMERS
     vkamp_connection_test
     system_info_dialog_test
     spectrum_overlay_band_highlight_test
-    spectrum_overlay_mouse_boundary_test
     spectrum_overlay_dax_availability_test
     tgxl_panel_widgets_test
     tgxl_direct_protocol_test
