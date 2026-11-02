@@ -5806,47 +5806,6 @@ set_tests_properties(spectrum_overlay_band_highlight_test PROPERTIES
 # radio publishes it, snapped to the radio's step, emitting only real changes.
 add_executable(spectrum_overlay_if_gain_test
     tests/spectrum_overlay_if_gain_test.cpp
-# Mouse events ignored by overlay descendants stop at the floating panel,
-# including rebuilt Band/XVTR panels. Socket-free QWidget parent records leaks.
-add_executable(spectrum_overlay_mouse_boundary_test
-    tests/spectrum_overlay_mouse_boundary_test.cpp
-    src/gui/SpectrumOverlayMenu.cpp
-    src/gui/FrontEndOverloadIndicator.cpp
-    src/gui/SpectrumOverlayWheelGuard.cpp
-    src/gui/MemoryBrowsePanel.cpp
-    src/gui/DragValuePopup.cpp
-    src/gui/DspParamPopup.cpp
-)
-target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE src tests)
-if(DEBIAN_GPU_FIX_REQUIRED)
-    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
-        "${DEBIAN_PRIVATE_INC}"
-        "${DEBIAN_PRIVATE_INC}/QtGui"
-    )
-endif()
-if(QT_FRAMEWORK_PRIVATE_INC)
-    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
-        "${QT_FRAMEWORK_PRIVATE_INC}"
-        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
-    )
-endif()
-target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE
-    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
-)
-if(TARGET Qt6::GuiPrivate)
-    target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE Qt6::GuiPrivate)
-endif()
-set_target_properties(spectrum_overlay_mouse_boundary_test PROPERTIES AUTOMOC ON)
-add_test(NAME spectrum_overlay_mouse_boundary_test
-         COMMAND spectrum_overlay_mouse_boundary_test)
-set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
-
-# The overlay DAX button stays hidden across expand/collapse on a radio with no
-# DAX plane (updateLayout() used to re-show it). Same link set and shape as
-# spectrum_overlay_band_highlight_test above.
-add_executable(spectrum_overlay_dax_availability_test
-    tests/spectrum_overlay_dax_availability_test.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/SpectrumOverlayWheelGuard.cpp
     src/gui/MemoryBrowsePanel.cpp
@@ -6731,6 +6690,41 @@ target_link_libraries(radio_setup_max_power_field_test PRIVATE
 add_test(NAME radio_setup_max_power_field_test COMMAND radio_setup_max_power_field_test)
 set_tests_properties(radio_setup_max_power_field_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+# Mouse events ignored by overlay descendants stop at the floating panel,
+# including rebuilt Band/XVTR panels. Socket-free QWidget parent records leaks.
+add_executable(spectrum_overlay_mouse_boundary_test
+    tests/spectrum_overlay_mouse_boundary_test.cpp
+    src/gui/SpectrumOverlayMenu.cpp
+    src/gui/SpectrumOverlayWheelGuard.cpp
+    src/gui/MemoryBrowsePanel.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/DspParamPopup.cpp
+)
+target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE src tests)
+if(DEBIAN_GPU_FIX_REQUIRED)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${DEBIAN_PRIVATE_INC}"
+        "${DEBIAN_PRIVATE_INC}/QtGui"
+    )
+endif()
+if(QT_FRAMEWORK_PRIVATE_INC)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${QT_FRAMEWORK_PRIVATE_INC}"
+        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
+    )
+endif()
+target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+)
+if(TARGET Qt6::GuiPrivate)
+    target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE Qt6::GuiPrivate)
+endif()
+set_target_properties(spectrum_overlay_mouse_boundary_test PROPERTIES AUTOMOC ON)
+add_test(NAME spectrum_overlay_mouse_boundary_test
+         COMMAND spectrum_overlay_mouse_boundary_test)
+set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
 # The overlay DAX button stays hidden across expand/collapse on a radio with no
 # DAX plane (updateLayout() used to re-show it). Same link set and shape as
