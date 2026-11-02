@@ -581,7 +581,6 @@ void PanadapterStream::unregisterPanStream(quint32 streamId)
         QMutexLocker frameLock(&m_frameMutex);
         m_frames.remove(streamId);
     }
-    restartStreamSequence(streamId);
 }
 
 void PanadapterStream::unregisterWfStream(quint32 streamId)
@@ -593,26 +592,6 @@ void PanadapterStream::unregisterWfStream(quint32 streamId)
     {
         QMutexLocker frameLock(&m_frameMutex);
         m_wfFrames.remove(streamId);
-    }
-    restartStreamSequence(streamId);
-}
-
-void PanadapterStream::restartStreamSequence(quint32 streamId)
-{
-    QMutexLocker statsLock(&m_statsMutex);
-    const auto it = m_streamStats.find(streamId);
-    if (it != m_streamStats.end()) {
-        it->lastSeq = -1;
-        it->started = false;
-    }
-}
-
-void PanadapterStream::restartAllStreamSequences()
-{
-    QMutexLocker statsLock(&m_statsMutex);
-    for (auto it = m_streamStats.begin(); it != m_streamStats.end(); ++it) {
-        it->lastSeq = -1;
-        it->started = false;
     }
 }
 

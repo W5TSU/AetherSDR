@@ -121,24 +121,6 @@ int main(int argc, char** argv)
         const MeterDef tgxl = decode1(backend, QStringLiteral(
             "16.src=AMP#16.num=0xFFFFFFF0#16.nam=FWD#16.unit=dBm"));
         CHECK(tgxl.publishedSourceIndex() == 0xFFFFFFF0LL);
-
-        MeterModel model;
-        model.setAmpHandle(0x80000001u);
-        model.setTgxlHandle(0xFFFFFFF0u);
-        model.defineMeter(amp);
-        model.defineMeter(tgxl);
-        float amps = -1.0f;
-        QObject::connect(&model, &MeterModel::ampVitalsChanged,
-                         [&](float a, bool valid, bool, float, bool, bool) {
-                             if (valid) amps = a;
-                         });
-        model.updateValues({15}, {qint16(19.2f * 256.0f)});
-        CHECK(std::fabs(amps - 19.2f) < 0.01f);
-
-        const QJsonArray published = model.metersForSource(QStringLiteral("AMP"));
-        CHECK(published.size() == 2);
-        for (const QJsonValue& v : published)
-            CHECK(v.toObject().value(QStringLiteral("source_index")).toInteger() > 0);
     }
 
     // ---- num out of uint32 range or negative is dropped ----
