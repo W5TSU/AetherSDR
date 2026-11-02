@@ -4458,6 +4458,13 @@ target_link_libraries(reroute_dead_controls_test PRIVATE
     aethercore Qt6::Core Qt6::Network Qt6::Test)
 add_test(NAME reroute_dead_controls_test COMMAND reroute_dead_controls_test)
 
+# The AGC-T auto sweep stops when no audio reaches this computer. Socket-free,
+# nothing keyed.
+add_executable(agc_t_no_audio_test tests/agc_t_no_audio_test.cpp)
+target_include_directories(agc_t_no_audio_test PRIVATE src tests)
+target_link_libraries(agc_t_no_audio_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME agc_t_no_audio_test COMMAND agc_t_no_audio_test)
+
 # #6653: SmartSDR 4.3 FDVU/FDVL over SmartCAT and rigctld. Injected stub
 # backend, protocol objects fed command text. Socket-free, nothing keyed.
 add_executable(cat_freedv_mode_tokens_test tests/cat_freedv_mode_tokens_test.cpp)
@@ -6901,6 +6908,7 @@ set(AETHER_SETTINGS_CONSUMERS
     gps_fix_state_test
     hl2_discovery_logging_test
     reroute_dead_controls_test
+    agc_t_no_audio_test
     cat_freedv_mode_tokens_test
     tci_rx_volume_test
     hl2_bandstack_digital_agc_test
