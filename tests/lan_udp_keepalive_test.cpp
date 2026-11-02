@@ -1,8 +1,8 @@
 // Socket-free: inject the terminal LAN bind and write, then drive the production
 // start(), rebindToEphemeralPort(), receive path and keepalive timer. No firmware
 // peer or radio. 4993 is the radio's measured LAN VITA source port (fw 4.3.16).
-#include "core/backends/flex/PanadapterStream.h"
-#include "core/backends/flex/RadioConnection.h"
+#include "core/PanadapterStream.h"
+#include "core/RadioConnection.h"
 #include "TestSettingsProfile.h"
 
 #include <QByteArray>
