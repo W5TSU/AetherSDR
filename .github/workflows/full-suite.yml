@@ -81,7 +81,11 @@ jobs:
 
       - name: Configure
         run: |
+          # Every test links the whole static core, and with debug info 500+ of them
+          # outgrew the runner's disk ("No space left on device"). Stripped at link so
+          # the compile, and so the compiler cache, is unchanged.
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_NVIDIA_AFX=ON \
+            -DCMAKE_EXE_LINKER_FLAGS=-Wl,--strip-debug \
             -DAETHER_GPU_SPECTRUM=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache > configure.log 2>&1 || {
