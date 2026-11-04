@@ -101,6 +101,8 @@ FlexRadio and the Hermes-Lite 2 are supported targets; networked Icom is early.
   hardware certification gate (ADR 0001). Two costs are on the record: a
   sample-rate-boundary span change briefly rebuilds every receiver, and a deep
   50 Hz notch trades ~64 ms of receive latency while it is placed.
+  PureSignal has a window with its curves and test signals: see
+  [docs/PURESIGNAL.md](docs/PURESIGNAL.md).
 - **Networked Icom** — **early**. CI-V over the RS-BA1 UDP transport, brought up
   on the IC-705 (receive, scope, transmit, FT8) and completed against a live
   IC-7300MK2 (controls, meters, ATU, WSPR, PC Audio routing and the CW decoder).
