@@ -3451,7 +3451,7 @@ const std::vector<AutomationServer::VerbSpec>& AutomationServer::verbRegistry()
             });
 
         add("ps", {},
-            "ps [status|on|off] — PureSignal on a Hermes-Lite 2: state, feedback level, calibrations (never keys)",
+            "ps [status|on|off|curves] — PureSignal on a Hermes-Lite 2: state, feedback level, calibrations (never keys)",
             parseActionValue,
             [](AutomationServer& s, A& a, QLocalSocket*) -> QJsonObject {
                 return s.doPureSignal(a.action);
@@ -8445,9 +8445,27 @@ QJsonObject AutomationServer::doPureSignal(const QString& action)
 
     const QString verb = action.trimmed().isEmpty() ? QStringLiteral("status")
                                                     : action.trimmed().toLower();
+    if (verb == QLatin1String("curves")) {
+        const auto points = [](const QVector<QPointF>& line) {
+            QJsonArray out;
+            for (const QPointF& p : line)
+                out.append(QJsonArray{p.x(), p.y()});
+            return out;
+        };
+        const PureSignalCurves c = backend->pureSignalCurves();
+        return QJsonObject{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("ps"), verb},
+            {QStringLiteral("calibration"), c.calibration},
+            {QStringLiteral("amplitude"), points(c.amplitude)},
+            {QStringLiteral("phaseDeg"), points(c.phaseDeg)},
+            {QStringLiteral("correctionGain"), points(c.correctionGain)},
+            {QStringLiteral("correctionPhaseDeg"), points(c.correctionPhaseDeg)},
+        };
+    }
     if (verb != QLatin1String("status")) {
         if (verb != QLatin1String("on") && verb != QLatin1String("off"))
-            return err(QStringLiteral("ps: expected status, on or off"));
+            return err(QStringLiteral("ps: expected status, on, off or curves"));
         QString failure;
         const quint64 rid = ++m_extensionRequestId;
         auto errConn = connect(backend, &IRadioBackend::extensionError, this,

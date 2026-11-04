@@ -286,11 +286,18 @@ void TxApplet::buildUI()
         m_psBtn->setFixedHeight(22);
         m_psBtn->setAccessibleName("PureSignal");
         m_psBtn->setAccessibleDescription("Turn PureSignal amplifier correction on or off");
-        m_psBtn->setToolTip(tr("PureSignal: corrects the amplifier's distortion while you transmit"));
+        m_psBtn->setToolTip(tr("PureSignal: corrects the amplifier's distortion while you transmit. Right-click for its window"));
         m_psBtn->hide();
         connect(m_psBtn, &QPushButton::clicked, this, [this](bool checked) {
             m_psBtn->setChecked(m_psOn);   // lit by the backend's report, not the click
             emit pureSignalRequested(checked);
+        });
+        m_psBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_psBtn, &QPushButton::customContextMenuRequested, this, [this](const QPoint& pos) {
+            QMenu menu(this);
+            menu.addAction(tr("PureSignal window..."), this,
+                           &TxApplet::pureSignalWindowRequested);
+            menu.exec(m_psBtn->mapToGlobal(pos));
         });
         row->addWidget(m_psBtn);
 

@@ -509,6 +509,9 @@ public:
     // Discard pending transmit audio. Call on unkey: whatever is still queued
     // belongs to the transmission that just ended.
     Q_INVOKABLE void flushTxIq();
+    // Send the two-tone uncorrected, for the PureSignal window's A/B. The corrector
+    // keeps running on a copy, so it comes straight back. An unkey ends it.
+    Q_INVOKABLE void setTxCorrectionBypass(bool bypass) noexcept { m_txCorrectionBypass = bypass; }
     [[nodiscard]] std::size_t txQueueDepth() const noexcept { return m_txIq.size(); }
     // The most recent voice over that went through the queue. Also logged at unkey.
     [[nodiscard]] Hl2TxOverReport lastTxOverReport() const noexcept { return m_lastTxOver; }
@@ -927,6 +930,7 @@ private:
     bool m_txAllowed = false;   // gate; see enableTransmit()
     std::deque<std::complex<float>> m_txIq;   // pending transmit samples
     bool m_txIqPrimed = false;                // this over has reached kTxPrimeSamples
+    bool m_txCorrectionBypass = false;
     Hl2TxOverAccumulator m_txOver;
     Hl2TxOverReport m_lastTxOver;
     // Roughly a quarter second at 48 kHz. Past this the operator is hearing

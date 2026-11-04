@@ -160,6 +160,37 @@ int main()
     check(loop.runUntil([&] { return ps.snapshot().info[5] >= successes + 6; }, 30.0),
           "calibrations keep succeeding");
     const Hl2PsSnapshot snap = ps.snapshot();
+
+    // The window's curves, from a real calibration of a compressing amplifier: more
+    // output than drive partway up, because the output is scaled to its own top.
+    {
+        const AetherSDR::PureSignalCurves curves = ps.curves(snap.info[5]);
+        check(curves.valid(), "curves carry the calibration");
+        check(curves.amplitude.size() > 100, "curves have samples");
+        check(curves.correctionGain.size() == 512 && curves.correctionPhaseDeg.size() == 512,
+              "curves have the correction");
+        double bow = 0.0;
+        for (const QPointF& p : curves.amplitude) {
+            check(p.y() > 0.0 && p.y() <= 1.5, "sample level in range");
+            if (p.x() > 0.4 && p.x() < 0.6)
+                bow = std::max(bow, p.y() - p.x());
+        }
+        check(bow > 0.05, "the amplifier's compression shows on the curve");
+
+        // The amplifier here turns 5 degrees by the top. The samples and the
+        // correction are both drawn against the same reference, so they must agree.
+        double worst = 0.0;
+        double reach = 0.0;
+        for (const QPointF& p : curves.phaseDeg) {
+            const auto index = static_cast<qsizetype>(std::lround(p.x() * 511.0));
+            if (index >= 80 && index < 512) {
+                worst = std::max(worst, std::abs(p.y() - curves.correctionPhaseDeg[index].y()));
+                reach = std::max(reach, std::abs(curves.correctionPhaseDeg[index].y()));
+            }
+        }
+        check(reach > 1.0, "the correction turns the phase");
+        check(worst < 1.5, "measured phase sits on the correction");
+    }
     std::printf("  feedback level %d, maxTx %.4f, hwPeak %.4f\n", snap.info[4], snap.maxTx, snap.hwPeak);
     check(snap.info[4] > 128 && snap.info[4] < 181, "the feedback level reads in the working range");
 

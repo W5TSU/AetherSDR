@@ -1,5 +1,7 @@
 #include "core/backends/hl2/Hl2PureSignal.h"
 
+#include "core/backends/hl2/Hl2PsCurves.h"
+
 #include "core/dsp/WdspChannel.h"
 
 #include <aether_wdsp.h>
@@ -207,6 +209,43 @@ Hl2PsSnapshot Hl2PureSignal::snapshot()
     s.feedbackPeakDbfs = takePeakDb(m_feedbackPeak);
     s.referencePeakDbfs = takePeakDb(m_referencePeak);
     return s;
+}
+
+PureSignalCurves Hl2PureSignal::curves(int calibration)
+{
+    if (!m_channel)
+        return {};
+    // GetPSDisp copies with no length to check against. calcc collects 16 buckets
+    // of 256 and draws 512 correction points; these leave room if that grows.
+    constexpr std::size_t kSamples = 8192;
+    constexpr std::size_t kPoints = 1024;
+    m_disp.resize(4 * kSamples + 4 * kPoints);
+    double* const x = m_disp.data();
+    double* const ym = x + kSamples;
+    double* const yc = ym + kSamples;
+    double* const ys = yc + kSamples;
+    double* const xm = ys + kSamples;
+    double* const gain = xm + kPoints;
+    double* const xa = gain + kPoints;
+    double* const deg = xa + kPoints;
+    int samples = 0;
+    int points = 0;
+    double phaseReference = 0.0;
+    GetPSDisp(m_channelId, x, ym, yc, ys, xm, gain, xa, deg, &samples, &points, &phaseReference);
+
+    const auto n = static_cast<std::size_t>(samples);
+    const auto p = static_cast<std::size_t>(points);
+    Hl2PsDispView view;
+    view.x = {x, n};
+    view.ym = {ym, n};
+    view.yc = {yc, n};
+    view.ys = {ys, n};
+    view.correctionX = {xm, p};
+    view.correctionGain = {gain, p};
+    view.correctionPhaseX = {xa, p};
+    view.correctionPhaseDeg = {deg, p};
+    view.phaseReferenceDeg = phaseReference;
+    return hl2PsCurves(view, calibration);
 }
 
 bool Hl2PureSignal::saveCorrection(const QString& path)

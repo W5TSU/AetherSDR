@@ -1396,6 +1396,7 @@ void MetisClient::setMox(bool keyed)
         // Start the post-unkey hold-off. d83's measured transient runs
         // 178-285 ms past the falling edge; kBandscopeUnkeyHoldoffMs clears it.
         m_sinceUnkey.restart();
+        m_txCorrectionBypass = false;
     }
 }
 
@@ -1637,7 +1638,9 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
                     m_twoTonePhase[t] -= kTwoPi;
             }
         }
-        if (m_txIqCorrector)
+        if (m_txCorrectionBypass)
+            runCorrectorDiscarding(block);
+        else if (m_txIqCorrector)
             m_txIqCorrector->correct(block, true);
         ep2WriteTxIq(pkt, block);
         return pkt;

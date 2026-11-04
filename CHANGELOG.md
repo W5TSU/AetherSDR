@@ -15,6 +15,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   from the transmit queue running empty. MOX timing doesn't change, but voice and
   data reach the air 21 ms later. CW and the tones are unaffected. Not yet re-measured
   on the radio.
+- **A PureSignal window, from a right-click on the PS button (#113).** It shows the
+  state, feedback, gain and calibration counts, with plots of the amplitude and phase
+  curves PS measured and the correction it applies. **Hold curve** keeps one on the
+  plots to compare against, which is how to see whether an amplifier is in the loop:
+  if nothing moves between Standby and Operate, PS isn't seeing it. `ps curves` on the
+  bridge reads the same data. Not yet seen with data from the radio.
+- **Test signals in that window.** Calibrate (two-tone until PS settles), A/B (the
+  correction off and on every 3 s on a steady two-tone), two-tone, or single tone.
+  A press of Transmit checks the frequency is clear (under -80 dBm), runs to a limit
+  of 5 to 30 s at up to 80% power, restores the TUNE power and sends a CW ID. It goes
+  out on the antenna. Stop, closing the window or disconnecting all unkey. Not yet
+  keyed on the radio.
 - **Each voice over logs what reached the wire:** silence before the signal, and any
   gaps, split between an empty queue and zeros from the TX chain (`aether.hl2`).
 

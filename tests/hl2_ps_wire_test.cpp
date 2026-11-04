@@ -158,9 +158,34 @@ int main(int argc, char** argv)
               "two-tone: the corrector's output is what reaches the wire");
         c.setTxTestTone(0.0, 0.0);
 
+        // A/B on the PureSignal window: the same signal, uncorrected, with the
+        // corrector still running so it stays ready to come back.
+        c.setTxCorrectionBypass(true);
+        c.setTxTwoTone(700.0, 1900.0, 0.45);
+        const int appliedBefore = corrector.applied;
+        const int callsBefore = corrector.calls;
+        const auto bypassed = wireIq(c.buildNextControlPacket());
+        check(corrector.applied == appliedBefore && corrector.calls == callsBefore + 1,
+              "bypassed two-tone: the corrector runs on a copy");
+        check(peakOf(bypassed) > 0.0 && peakOf(bypassed) <= 0.9001,
+              "bypassed two-tone: the generator's own signal reaches the wire");
+        c.setTxCorrectionBypass(false);
+        const auto unbypassed = wireIq(c.buildNextControlPacket());
+        check(corrector.applied == appliedBefore + 1, "bypass off: corrected again");
+        (void)unbypassed;
+
+        // Unkey ends a bypass, whoever forgot to.
+        c.setTxCorrectionBypass(true);
+        c.setMox(false);
+        c.setMox(true);
+        const int appliedKeyed = corrector.applied;
+        c.buildNextControlPacket();
+        check(corrector.applied == appliedKeyed + 1, "an unkey clears the bypass");
+        c.setTxTestTone(0.0, 0.0);
+
         c.setCwKeyDown(true);
         c.buildNextControlPacket();
-        check(corrector.applied == 2, "CW: not corrected");
+        check(corrector.applied == appliedKeyed + 1, "CW: not corrected");
         c.clearCwKeying();
 
         c.setMox(false);

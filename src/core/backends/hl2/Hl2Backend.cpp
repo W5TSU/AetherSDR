@@ -1371,7 +1371,15 @@ void Hl2Backend::psTickOnIoThread()
     const Hl2PsState stateNow = m_psController.state();
     const QString state = hl2PsStateName(stateNow);
     const int gain = m_psController.gainDb();
-    QMetaObject::invokeMethod(this, [this, snap, stateNow, state, gain] {
+    // Only on a new calibration: the data doesn't change between them.
+    const int calibrations = snap.info[5];
+    std::optional<PureSignalCurves> curves;
+    if (calibrations > 0 && calibrations != m_psCurvesSeen)
+        curves = m_ps->curves(calibrations);
+    m_psCurvesSeen = calibrations;
+    QMetaObject::invokeMethod(this, [this, snap, stateNow, state, gain, curves] {
+        if (curves)
+            m_psCurves = *curves;
         if (!m_psActive)
             return;
         applyPureSignalAlcTarget(stateNow);
@@ -5840,6 +5848,13 @@ void Hl2Backend::invokeExtension(const QString& ns, const QString& verb, quint64
         // locally like freqcal.*: an int dB sets it (clamped to the AD9866's
         // -12..+48), an invalid/null argument turns it off, anything else is an
         // error rather than a silent off. Keys nothing, so it is not TX-gated.
+        if (verb == QLatin1String("ps.bypass")) {
+            if (m_metis) {
+                QMetaObject::invokeMethod(m_metis, "setTxCorrectionBypass", Qt::QueuedConnection,
+                                          Q_ARG(bool, arg.toBool()));
+            }
+            return;
+        }
         if (verb == QLatin1String("ps.set")) {
             const QString refusal = setPureSignal(arg.toBool());
             if (!refusal.isEmpty()) {
