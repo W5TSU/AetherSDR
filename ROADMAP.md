@@ -229,8 +229,8 @@ Highlights from the last 30 days — full list in
 - **PureSignal on HL2** — TX predistortion from an RX feedback path, on one PS
   button, for an HL2 alone or driving an amplifier with a sampler on the N2ADR
   I/O board's PURE input (v26.11.1). Measured on the HL2's own stage: IMD3 about
-  12 dB lower. The operator has since confirmed it working on their station.
-  Design:
+  12 dB lower. The operator has since seen the correction on the waterfall when
+  toggling PS; through the amplifier it hasn't been measured yet. Design:
   [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md).
 - **HackRF One — receive and transmit (experimental)** — a new backend that
   went from source-only to usable in a week: in the AppImages and DMGs
