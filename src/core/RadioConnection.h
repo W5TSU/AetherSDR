@@ -26,6 +26,7 @@ enum class ConnectionState {
 // Call init() after moveToThread() to create the socket and timer.
 class RadioConnection : public QObject {
     Q_OBJECT
+    friend class LanUdpKeepaliveTestAccess;
 
 public:
     explicit RadioConnection(QObject* parent = nullptr);

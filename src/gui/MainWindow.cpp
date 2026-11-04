@@ -916,12 +916,17 @@ void MainWindow::startWanRadioConnect(const WanRadioInfo& info, bool promptForCl
     // Pre-bind UDP socket for VITA-49 reception BEFORE requesting
     // connection, so we can pass our port to the SmartLink server.
     // The server tells the radio our public IP:port for UDP streaming.
-    // SmartLink is a Flex service, so in practice this path only runs with a
-    // PanadapterStream present -- but it dereferenced it bare, and "in practice"
-    // is what the HL2 bring-up kept disproving. Decline instead of crashing.
-    if (!m_radioModel.panStream()) {
+    // SmartLink is a Flex service, but the session may still hold the backend
+    // of the last non-Flex radio (IC-705, HL2), which has no PanadapterStream.
+    // Swap to Flex first; decline rather than dereference null if that fails.
+    if (!m_radioModel.prepareFlexBackendForWan()) {
         qWarning() << "MainWindow: WAN connect requested with no PanadapterStream"
-                   << "— backend does not use VITA-49 transport";
+                   << "— Flex backend unavailable";
+        m_connPanel->setStatusText("SmartLink connection failed");
+        setPanadapterConnectionAnimation(false);
+        // From requestWanReconnect(), let the next tick try again rather than
+        // re-arm forever behind an attempt that never started.
+        m_wanReconnectAttemptInProgress = false;
         return;
     }
     quint16 udpPort = m_radioModel.panStream()->localPort();
@@ -1830,6 +1835,22 @@ MainWindow::MainWindow(QWidget* parent)
     // TX-decode is on, so calling it on every phoneStateChanged is cheap.
     connect(&m_radioModel.transmitModel(), &TransmitModel::phoneStateChanged,
             this, [this]() { refreshCwDecodeState(); });
+
+    // The receive decoder's pitch range follows the CW pitch: a range that
+    // contains the pitch is kept, one that misses it is re-centred on it
+    // (CwDecodeSettings::pitchRangeFor). cwPitchReported also carries a
+    // reported pitch the model already held, which cwPitchChanged skips.
+    // The pitch itself is only read here, never stored or sent.
+    const auto followCwPitch = [this](int hz) {
+        if (const auto range = CwDecodeSettings::pitchRangeFor(hz, CwDecodeSettings::pitchRange())) {
+            CwDecodeSettings::setPitchRange(range->low, range->high);
+            if (m_cwDecoderApplet) {
+                m_cwDecoderApplet->restoreCwRanges();
+            }
+        }
+    };
+    connect(&m_radioModel.transmitModel(), &TransmitModel::cwPitchReported, this, followCwPitch);
+    connect(&m_radioModel.transmitModel(), &TransmitModel::cwPitchChanged, this, followCwPitch);
 
     // RTTY decoder audio feed is wired in wireRxDemodAudioSinks() above,
     // gated on the decoder being running.
@@ -4242,24 +4263,22 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     // Save per-slice DAX channel assignments for restore on next launch.
     // Keyed by slice index (A=0, B=1, ...) since radio-assigned IDs change.
+    // #4558: the write also drops keys beyond the slice count, so a config
+    // poisoned by an earlier multi-slice quit self-heals. A radio without DAX
+    // writes nothing, keeping the saved Flex assignment. DaxRestorePolicy::
+    // quitWrite() carries why, and the unit test pins each case.
     {
-        const QList<SliceModel*> slices = m_radioModel.slices();
-        for (int i = 0; i < slices.size(); ++i) {
-            const QString key = DaxRestorePolicy::keyForIndex(i);
-            if (slices[i]->daxChannel() > 0) {
-                s.setValue(key, QString::number(slices[i]->daxChannel()));
-            } else {
-                s.remove(key);
-            }
+        QList<int> channels;
+        for (SliceModel* slice : m_radioModel.slices()) {
+            channels << slice->daxChannel();
         }
-        // #4558: also drop keys beyond the slice count at quit, so a config
-        // poisoned by an earlier multi-slice quit self-heals instead of staying
-        // armed forever. Both preconditions — connected AND holding a populated
-        // slice list — are load-bearing; DaxRestorePolicy::staleKeysToPrune()
-        // carries why, and the unit test pins both.
-        for (const QString& key :
-             DaxRestorePolicy::staleKeysToPrune(m_radioModel.isConnected(),
-                                                slices.size())) {
+        const DaxRestorePolicy::QuitWrite write = DaxRestorePolicy::quitWrite(
+            m_radioModel.backendCapabilities().hasDaxStreams,
+            m_radioModel.isConnected(), channels);
+        for (const auto& [key, channel] : write.set) {
+            s.setValue(key, QString::number(channel));
+        }
+        for (const QString& key : write.remove) {
             s.remove(key);
         }
     }

@@ -33,7 +33,7 @@ Thread names: Qt propagates `QThread::objectName()` to the OS thread name when i
 │                                                                     │
 │  Radio UDP 4992 ──→ RadioDiscovery ──→ ConnectionPanel    [MAIN]    │
 │  Radio TCP 4992 ──→ RadioConnection ──→ RadioModel        [CONN]→[MAIN] │
-│  Radio UDP 4991 ──→ PanadapterStream (VITA-49 demux)      [NETWORK] │
+│  Radio UDP 4993 ──→ PanadapterStream (VITA-49 demux)      [NETWORK] │
 │  TGXL  TCP 9010 ──→ TgxlConnection ──→ TunerModel        [MAIN]    │
 │  WAN   TLS 4992 ──→ WanConnection ──→ RadioModel          [MAIN]    │
 │  WAN   UDP 4993 ──→ PanadapterStream                      [NETWORK] │

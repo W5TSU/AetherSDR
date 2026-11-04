@@ -86,15 +86,18 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
   the same RF Power). Both were ported from upstream and haven't yet been
   checked on this fork's HL2: the CW carrier against TUNE on a power meter
   into a dummy load, and receive audio level at AF 100.
-- **Upstream bug-fix sync (batch 7)** — batch 6 shipped in v26.10.9
-  ([#105](https://github.com/W5TSU/AetherSDR/pull/105)), with the HL2
-  receiver and notch memory. Still deferred, tracked in
+- **Upstream bug-fix sync (batch 8)** — batch 7 carries 20 fixes from the
+  2026-11-02 review. Still deferred, tracked in
   [#98](https://github.com/W5TSU/AetherSDR/issues/98):
   - upstream's RTL-SDR receive work (M1, WFM, multi-RX, SSB/AM, live PPM),
     which builds on the typed receive-intent seam the fork doesn't have;
   - three Flex items that need live verification: nickname confirm,
     per-slice Auto squelch, and SmartSDR 4.3 per-band RCA suppression;
-  - the release-pipeline rewrite and Qt 6.12, which need a dry-run tag.
+  - the release-pipeline rewrite and Qt 6.12, which need a dry-run tag;
+  - fixes from the 2026-11-02 review not yet ported: TCI AGC gain, squelch level,
+    receive metering and GUI change reports; pan rate restore; the SmartSDR 4.3
+    APD state; SmartSDR+ license retention; the transmit DAX flag owner; and the
+    HL2 TX-filter-loss card.
 
   **Open upstream HL2 bugs likely shared here:**
   - [#6052](https://github.com/aethersdr/AetherSDR/issues/6052): each over
@@ -129,17 +132,6 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 - **macOS VirtualAudioBridge audit** ([#2940](https://github.com/aethersdr/AetherSDR/issues/2940))
   — focused security review of the macOS shared-memory audio bridge.
   (The RigctlPty side is resolved — RigctlPty was removed in #3380.)
-- **PureSignal on HL2** — TX predistortion/linearization using an RX
-  feedback path to correct amplifier nonlinearity: one PS button, for an HL2
-  driving an amplifier with a sampler on the N2ADR I/O board's PURE input.
-  Designed in
-  [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md)
-  and built, with the PS button, its status line, the `ps` bridge verb and
-  TUNE's two-tone. It lowers IMD3 by about 12 dB on the HL2's own stage, measured
-  on the air. It can't yet correct the XPA125B: the sampler on PURE isn't reaching
-  the receiver, and that has to be solved at the bench. Out of scope for the HL2 "supported"
-  milestone
-  ([`docs/adr/0001-hermes-lite-2-supported.md`](docs/adr/0001-hermes-lite-2-supported.md)).
 - **Decouple RADE from DAX** — `RADEEngine::feedRxAudio`/`feedTxAudio`
   already take plain PCM (`QByteArray`), but the integration wiring in
   `MainWindow_DigitalModes.cpp` sources that PCM exclusively from Flex's
@@ -234,6 +226,12 @@ Substantial features requested on the
 Highlights from the last 30 days — full list in
 [`CHANGELOG.md`](CHANGELOG.md):
 
+- **PureSignal on HL2** — TX predistortion from an RX feedback path, on one PS
+  button, for an HL2 alone or driving an amplifier with a sampler on the N2ADR
+  I/O board's PURE input (v26.11.1). Measured on the HL2's own stage: IMD3 about
+  12 dB lower. The operator has since seen the correction on the waterfall when
+  toggling PS; through the amplifier it hasn't been measured yet. Design:
+  [`docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md`](docs/superpowers/specs/2026-10-31-hl2-puresignal-design.md).
 - **HackRF One — receive and transmit (experimental)** — a new backend that
   went from source-only to usable in a week: in the AppImages and DMGs
   (v26.9.11); a connect that no longer freezes the app while DSP is prepared,

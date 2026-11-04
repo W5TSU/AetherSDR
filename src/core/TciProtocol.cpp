@@ -351,28 +351,17 @@ QString TciProtocol::generateInitBurst()
     // over the PDF.
     burst += QStringLiteral("channels_count:2;");
 
-    // Identity chosen to bypass WSJT-X's TCI gain-reduction code path.
-    // WSJT-X's TCITransceiver halves TX sample amplitude (K2 = 0.499/0x7FFF
-    // vs K1 = 0.999/0x7FFF, ~-6 dB) when BOTH conditions hold:
-    //   device  == "SunSDR2DX" or "SunSDR2PRO"
-    //   protocol != starts-with "ExpertSDR3"
-    // Either branch alone keeps the K1 (full-amplitude) path; both branches
-    // satisfied makes it doubly safe.
-    //   - device: literal "AetherSDR" avoids the SunSDR-specific gain trap
-    //     AND avoids the leading-space bug in the older "<name> <model>"
-    //     form when the radio's nickname is empty.
-    //   - protocol: "ExpertSDR3,1.5" sets WSJT-X's ESDR3 flag, which both
-    //     gates the gain reduction off and selects WSJT-X command formats
-    //     that AetherSDR already handles correctly (proven in v26.5.1).
-    // RF2K-S amp whitelist (which keyed on SunSDR2DX + ExpertSDR2) is
-    // regressed by this change; a configurable / adaptive identity is
-    // tracked in #2806.  Everything else from #2597 (init-burst order,
-    // vfo_limits, if_limits, channels_count, split_enable) is preserved
-    // and is what the RF2K-S TCI parser actually needs to engage.
+    // Identity chosen so WSJT-X's TCITransceiver keeps full TX amplitude: it
+    // halves samples (K2 = 0.499/0x7FFF vs K1 = 0.999/0x7FFF) only when device is
+    // "SunSDR2DX"/"SunSDR2PRO" AND protocol doesn't start with "ExpertSDR3"; we fail
+    // both. Any "ExpertSDR3" protocol selects WSJT-X's ESDR3 command formats;
+    // WSJT-X, JTDX and eesdr-tci read the name, not the version. The
+    // RF2K-S whitelist (SunSDR2DX + ExpertSDR2) is not matched; a configurable
+    // identity is #2806.
     burst += QStringLiteral("device:AetherSDR;");
     burst += QStringLiteral("receive_only:false;");
     burst += QStringLiteral("modulations_list:usb,lsb,cw,cwr,am,sam,fm,nfm,digu,digl,rtty;");
-    burst += QStringLiteral("protocol:ExpertSDR3,1.5;");
+    burst += QStringLiteral("protocol:ExpertSDR3,2.1;");
 
     // ── Phase 2: Current state notifications ──────────────────────────
     // Identical in syntax to the events fired by a live tuning
@@ -1860,28 +1849,53 @@ QString TciProtocol::cmdRxChannelEnable(const QStringList& args, bool isSet)
     return {};
 }
 
-QString TciProtocol::cmdRxVolume(const QStringList& args, bool isSet)
+// RX_VOLUME is per receiver and per channel per TCI v2.0, on the same dB scale
+// as `volume:` (-60..0; -60 = silence).
+//   GET = `rx_volume:trx,channel;`   SET = `rx_volume:trx,channel,dB;`
+// Channel 0 is the receiver's slice; channel 1 is the route's TX slice
+// (tci-receivers.md rule 5), resolved by sliceForVfo() as `vfo:` does.
+// Before this, the channel was read as the gain, so every spec SET muted the
+// slice. Older builds took `rx_volume:trx,N;` with N as percent; a second
+// argument that cannot be a channel (>= 2) is still read that way.
+QString TciProtocol::cmdRxVolume(const QStringList& args, bool /*isSet*/)
 {
-    // Per-receiver volume — maps to slice audioGain
     if (args.isEmpty()) return {};
     int trx = 0;
     if (!argToInt(args, 0, trx)) return {};
     auto* s = sliceForTrx(trx);
     if (!s) return {};
 
-    if (!isSet) {
-        return QStringLiteral("rx_volume:%1,%2;")
-                   .arg(trx).arg(static_cast<int>(s->audioGain()));
+    int channel = 0;
+    int pct = -1;   // -1 = GET
+    if (args.size() >= 3) {
+        if (!argToInt(args, 1, channel) || channel < 0 || channel > 1) return {};
+        double db = 0.0;
+        if (!argToDouble(args, 2, db)) return {};
+        pct = volumePercentFromDb(db);
+    } else if (args.size() == 2) {
+        int second = 0;
+        if (!argToInt(args, 1, second) || second < 0) return {};
+        if (second >= 2) {
+            pct = std::min(second, 100);   // legacy percent
+        } else {
+            channel = second;
+        }
     }
 
-    if (args.size() < 2) return {};
-    int gainPct = 0;
-    if (!argToInt(args, 1, gainPct)) return {};
-    const float gain = static_cast<float>(gainPct);
-    QMetaObject::invokeMethod(s, [s, gain]() { s->setAudioGain(gain); },
+    SliceModel* target = sliceForVfo(trx, channel);
+    if (!target) return {};
+
+    if (pct < 0) {
+        return QStringLiteral("rx_volume:%1,%2,%3;")
+                   .arg(trx).arg(channel)
+                   .arg(volumeDbFromPercent(qRound(target->audioGain())));
+    }
+
+    const float gain = static_cast<float>(pct);
+    QMetaObject::invokeMethod(target, [target, gain]() { target->setAudioGain(gain); },
                               Qt::QueuedConnection);
-    m_pendingNotification = QStringLiteral("rx_volume:%1,%2;")
-                                .arg(trx).arg(static_cast<int>(gain));
+    m_pendingNotification = QStringLiteral("rx_volume:%1,%2,%3;")
+                                .arg(trx).arg(channel).arg(volumeDbFromPercent(pct));
     return {};
 }
 

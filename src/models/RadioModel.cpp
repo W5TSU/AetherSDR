@@ -4168,6 +4168,17 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     }
 }
 
+bool RadioModel::prepareFlexBackendForWan()
+{
+    cancelRadioWake();
+    if (m_family != QLatin1String("flex") || !m_backend) {
+        qCInfo(lcProtocol) << "RadioModel: switching backend family" << m_family
+                           << "-> flex for SmartLink";
+        rebuildBackendForFamily(QStringLiteral("flex"));
+    }
+    return m_panStream != nullptr;
+}
+
 void RadioModel::connectViaWan(WanConnection* wan, const QString& publicIp, quint16 udpPort)
 {
     cancelRadioWake();
@@ -7738,7 +7749,8 @@ void RadioModel::registerAsGuiClient(const QString& clientId)
                                       << "udpSeen=" << firstUdpPacketSeen();
                 emit connectionError(
                     tr("No spectrum data received from %1. Source mode: %2. TCP: %3. UDP: %4. "
-                       "UDP traffic from the radio may be blocked, or the wrong source path may be selected.")
+                       "UDP traffic from the radio may be blocked by a firewall on this computer "
+                       "or on the network path, or the wrong source path may be selected.")
                         .arg(targetRadioIp(), selectedSourceMode(),
                              localTcpEndpoint(), localUdpEndpoint()));
             }
@@ -9626,6 +9638,16 @@ void RadioModel::requestLocalPtt()
 
 void RadioModel::createRxAudioStream()
 {
+    // A pre-connect PC Audio toggle must not leave a request pending when no
+    // registered GUI session can send it. The connect handshake retries it.
+    if (!hasCommandPlane() || !isConnected()
+        || m_guiClientRegistrationState.phase() != GuiClientRegistrationState::Phase::Registered) {
+        logRemoteAudioRxSummary(hasCommandPlane()
+            ? QStringLiteral("create deferred: GUI session not ready")
+            : QStringLiteral("create skipped: backend has no command plane"));
+        return;
+    }
+
     if (m_rxAudio.streamId != 0) {
         logRemoteAudioRxSummary(QStringLiteral("create skipped: stream already known"));
         return;

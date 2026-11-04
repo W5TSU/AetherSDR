@@ -9,16 +9,10 @@
 #include <QVariantMap>
 #include <QtGlobal>   // qBound
 
-// aetherd RFC 2.3 / #4070 — one home for the present-only + fail-closed decode
-// contract shared by the Flex status decoders (pan/slice/meter/transmit). Every
-// carrier reads a key out of a Flex status kv-set and applies it ONLY when the
-// wire reported it. Numeric parses are ok-guarded (a malformed present value is
-// dropped, not applied as 0/0.0) — for an std::optional target that leaves the
-// field disengaged (the model keeps its previous value); for a plain field or a
-// map entry the value is simply not written. `carry()` is overloaded on the
-// target type so every call site reads uniformly, and the guarded parse lives in
-// exactly one place (parseInt/parseReal), so a future tweak (base-0 parse,
-// whitespace trim) can't be applied to one copy and skipped in another.
+// Present-only, fail-closed decode for the Flex status decoders (#4070): a key
+// is applied ONLY when the wire reported it, and a malformed numeric value is
+// dropped, not applied as 0 (an optional target stays disengaged; a plain field
+// or map entry is not written). Keep the guarded parse in parseInt/parseUInt/parseReal only.
 namespace AetherSDR::flexkv {
 
 using Kv = QMap<QString, QString>;
@@ -29,6 +23,15 @@ inline std::optional<int> parseInt(const Kv& kvs, const char* wire, int base = 1
     if (kvs.contains(QLatin1String(wire))) {
         bool ok = false;
         const int v = kvs.value(QLatin1String(wire)).toInt(&ok, base);
+        if (ok) return v;
+    }
+    return std::nullopt;
+}
+inline std::optional<quint32> parseUInt(const Kv& kvs, const char* wire, int base = 10)
+{
+    if (kvs.contains(QLatin1String(wire))) {
+        bool ok = false;
+        const uint v = kvs.value(QLatin1String(wire)).toUInt(&ok, base);
         if (ok) return v;
     }
     return std::nullopt;
@@ -67,9 +70,9 @@ inline void carry(const Kv& kvs, const char* wire, QString& f)
 {
     if (kvs.contains(QLatin1String(wire))) f = kvs.value(QLatin1String(wire));
 }
-inline void carry(const Kv& kvs, const char* wire, int& f, int base = 10)
+inline void carry(const Kv& kvs, const char* wire, int& f)
 {
-    if (auto v = parseInt(kvs, wire, base)) f = *v;
+    if (auto v = parseInt(kvs, wire)) f = *v;
 }
 inline void carry(const Kv& kvs, const char* wire, double& f)
 {

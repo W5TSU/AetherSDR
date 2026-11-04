@@ -4224,6 +4224,7 @@ add_test(NAME hid_device_parser_test COMMAND hid_device_parser_test)
 # Not a ctest (needs an input file); built on demand for troubleshooting.
 add_executable(ax25_replay EXCLUDE_FROM_ALL
     tools/ax25_replay.cpp
+    tools/Ax25ReplayWav.cpp
     src/core/tnc/AetherAx25LibmodemShim.cpp
     src/core/tnc/Ax25FrameFormatter.cpp
     src/core/tnc/HdlcCodec.cpp
@@ -4237,6 +4238,7 @@ target_link_libraries(ax25_replay PRIVATE Qt6::Core aether_libmodem_core aether_
 
 add_executable(ax25_session_analyze EXCLUDE_FROM_ALL
     tools/ax25_session_analyze.cpp
+    tools/Ax25SessionWav.cpp
     src/core/tnc/AetherAx25LibmodemShim.cpp
     src/core/tnc/Ax25FrameFormatter.cpp
     src/core/tnc/HdlcCodec.cpp
@@ -6820,11 +6822,109 @@ add_test(NAME nrs_level_range_test COMMAND nrs_level_range_test)
 set_tests_properties(nrs_level_range_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Socket-free: injected LAN bind/write; drives start(), rebind, receive and the keepalive timer.
+add_executable(lan_udp_keepalive_test tests/lan_udp_keepalive_test.cpp)
+target_include_directories(lan_udp_keepalive_test PRIVATE src tests)
+target_link_libraries(lan_udp_keepalive_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME lan_udp_keepalive_test COMMAND lan_udp_keepalive_test)
+set_tests_properties(lan_udp_keepalive_test PROPERTIES TIMEOUT 25)
+
+# File-only parser coverage; no modem, settings, or radio transport.
+add_executable(ax25_replay_wav_test
+    tests/ax25_replay_wav_test.cpp
+    tools/Ax25ReplayWav.cpp
+)
+target_include_directories(ax25_replay_wav_test PRIVATE tools)
+target_link_libraries(ax25_replay_wav_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME ax25_replay_wav_test COMMAND ax25_replay_wav_test)
+
+# File-only parser coverage; no modem, settings, or radio transport.
+add_executable(ax25_session_wav_test
+    tests/ax25_session_wav_test.cpp
+    tools/Ax25SessionWav.cpp
+)
+target_include_directories(ax25_session_wav_test PRIVATE tools)
+target_link_libraries(ax25_session_wav_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME ax25_session_wav_test COMMAND ax25_session_wav_test)
+
+# The AGC-T auto sweep stops when no audio reaches this computer. Socket-free,
+# nothing keyed.
+add_executable(agc_t_no_audio_test tests/agc_t_no_audio_test.cpp)
+target_include_directories(agc_t_no_audio_test PRIVATE src tests)
+target_link_libraries(agc_t_no_audio_test PRIVATE aethercore Qt6::Core Qt6::Network Qt6::Test)
+add_test(NAME agc_t_no_audio_test COMMAND agc_t_no_audio_test)
+
+# #6653: SmartSDR 4.3 FDVU/FDVL over SmartCAT and rigctld. Injected stub
+# backend, protocol objects fed command text. Socket-free, nothing keyed.
+add_executable(cat_freedv_mode_tokens_test tests/cat_freedv_mode_tokens_test.cpp)
+target_include_directories(cat_freedv_mode_tokens_test PRIVATE src tests)
+target_link_libraries(cat_freedv_mode_tokens_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME cat_freedv_mode_tokens_test COMMAND cat_freedv_mode_tokens_test)
+
+# TCI rx_volume in the spec form (trx,channel,dB). Injected stub backend,
+# TciProtocol fed command text. Socket-free, nothing keyed.
+add_executable(tci_rx_volume_test tests/tci_rx_volume_test.cpp)
+target_include_directories(tci_rx_volume_test PRIVATE src tests)
+target_link_libraries(tci_rx_volume_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME tci_rx_volume_test COMMAND tci_rx_volume_test)
+
+# LAN source-family selection, without binding sockets or contacting a radio.
+add_executable(flex_lan_bind_address_test tests/flex_lan_bind_address_test.cpp)
+target_include_directories(flex_lan_bind_address_test PRIVATE src)
+target_link_libraries(flex_lan_bind_address_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME flex_lan_bind_address_test COMMAND flex_lan_bind_address_test)
+
+# Mouse events ignored by overlay descendants stop at the floating panel,
+# including rebuilt Band/XVTR panels. Socket-free QWidget parent records leaks.
+add_executable(spectrum_overlay_mouse_boundary_test
+    tests/spectrum_overlay_mouse_boundary_test.cpp
+    src/gui/SpectrumOverlayMenu.cpp
+    src/gui/SpectrumOverlayWheelGuard.cpp
+    src/gui/MemoryBrowsePanel.cpp
+    src/gui/DragValuePopup.cpp
+    src/gui/DspParamPopup.cpp
+)
+target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE src tests)
+if(DEBIAN_GPU_FIX_REQUIRED)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${DEBIAN_PRIVATE_INC}"
+        "${DEBIAN_PRIVATE_INC}/QtGui"
+    )
+endif()
+if(QT_FRAMEWORK_PRIVATE_INC)
+    target_include_directories(spectrum_overlay_mouse_boundary_test PRIVATE
+        "${QT_FRAMEWORK_PRIVATE_INC}"
+        "${QT_FRAMEWORK_PRIVATE_INC}/QtGui"
+    )
+endif()
+target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+)
+if(TARGET Qt6::GuiPrivate)
+    target_link_libraries(spectrum_overlay_mouse_boundary_test PRIVATE Qt6::GuiPrivate)
+endif()
+set_target_properties(spectrum_overlay_mouse_boundary_test PROPERTIES AUTOMOC ON)
+add_test(NAME spectrum_overlay_mouse_boundary_test
+         COMMAND spectrum_overlay_mouse_boundary_test)
+set_tests_properties(spectrum_overlay_mouse_boundary_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
+add_executable(panadapter_late_packet_test tests/panadapter_late_packet_test.cpp)
+target_include_directories(panadapter_late_packet_test PRIVATE src)
+target_link_libraries(panadapter_late_packet_test PRIVATE aethercore Qt6::Core)
+set_target_properties(panadapter_late_packet_test PROPERTIES AUTOMOC ON)
+add_test(NAME panadapter_late_packet_test COMMAND panadapter_late_packet_test)
+
 # ── Settings store (RFC #4603) ───────────────────────────────────────────────
 # Every standalone test/tool target that compiles ${AETHER_SETTINGS_SOURCES}
 # directly (rather than linking aethercore) needs the vendored SQLite engine.
 # Conditional targets are guarded with if(TARGET ...).
 set(AETHER_SETTINGS_CONSUMERS
+    panadapter_late_packet_test
+    agc_t_no_audio_test
+    cat_freedv_mode_tokens_test
+    tci_rx_volume_test
+    spectrum_overlay_mouse_boundary_test
     nrs_level_range_test
     cwx_quote_test
     hl2_tune_memory_test
