@@ -146,7 +146,7 @@ int main(int argc, char** argv)
               "single test tone: the corrector runs but the carrier goes out untouched");
         c.setTxTestTone(0.0, 0.0);
 
-        std::vector<std::complex<float>> voice(kTxSamplesPerPacket, {0.8f, 0.0f});
+        std::vector<std::complex<float>> voice(MetisClient::kTxPrimeSamples, {0.8f, 0.0f});
         c.queueTxIq(voice);
         const auto queued = wireIq(c.buildNextControlPacket());
         check(corrector.applied == 1 && std::abs(peakOf(queued) - 0.4) < 0.001,

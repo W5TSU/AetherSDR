@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Hermes-Lite 2
+
+- **Voice and data overs wait for 21 ms of audio before the first sample goes out.**
+  On the bench a steady tone had short keyed gaps in every over, up to 12.8 ms, all
+  from the transmit queue running empty. MOX timing doesn't change, but voice and
+  data reach the air 21 ms later. CW and the tones are unaffected. Not yet re-measured
+  on the radio.
+- **Each voice over logs what reached the wire:** silence before the signal, and any
+  gaps, split between an empty queue and zeros from the TX chain (`aether.hl2`).
+
 ## [v26.11.1] — 2026-11-01
 
 PureSignal arrives on the Hermes-Lite 2 as a PS button. **It doesn't correct an

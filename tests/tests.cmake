@@ -4751,6 +4751,13 @@ target_include_directories(hl2_tx_gate_test PRIVATE src)
 target_link_libraries(hl2_tx_gate_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_gate_test COMMAND hl2_tx_gate_test)
 
+# Per-over figures for keyed silence and mid-over gaps (upstream #6052). Socket-
+# free, through the real packet builder; nothing is keyed.
+add_executable(hl2_tx_over_report_test tests/hl2_tx_over_report_test.cpp)
+target_include_directories(hl2_tx_over_report_test PRIVATE src)
+target_link_libraries(hl2_tx_over_report_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tx_over_report_test COMMAND hl2_tx_over_report_test)
+
 # #5386: RIT shifts the transmit receiver's receive path, XIT the TX NCO register,
 # each without touching the other. Constructed backend only — no socket, no
 # DSP, nothing keyed.

@@ -1379,6 +1379,8 @@ void MetisClient::setMox(bool keyed)
     // transmits and hears its own PA at enormous strength, so a block taken
     // under MOX is a picture of us, at a level with no relation to the band.
     if (m_mox) {
+        m_txOver.begin();
+        m_txIqPrimed = false;
         // Abandon whatever cycle was in flight rather than let it finish: the
         // packets still to come would be transmit-contaminated, and half a
         // clean block merged with half a keyed one is worse than no block.
@@ -1390,10 +1392,34 @@ void MetisClient::setMox(bool keyed)
         if (m_bsState != BandscopeState::Idle)
             bandscopeDisarm(/*expectTrailing=*/m_bsState != BandscopeState::Arming);
     } else {
+        publishTxOverReport();
         // Start the post-unkey hold-off. d83's measured transient runs
         // 178-285 ms past the falling edge; kBandscopeUnkeyHoldoffMs clears it.
         m_sinceUnkey.restart();
     }
+}
+
+void MetisClient::publishTxOverReport()
+{
+    const Hl2TxOverReport& r = m_txOver.report();
+    // No queued-path packet went out: a TUNE, a test tone or CW, which synthesise
+    // their own samples and say nothing about the queue.
+    if (r.keyedSamples == 0)
+        return;
+    m_lastTxOver = r;
+    const auto ms = [](int samples) { return samples * 1000.0 / kEp2AudioRateHz; };
+    qCInfo(lcHl2).nospace()
+        << "HL2 tx over: " << ms(r.keyedSamples) << " ms keyed, first signal at "
+        << (r.firstSignalSample < 0 ? -1.0 : ms(r.firstSignalSample))
+        << " ms (empty queue " << ms(r.leadingDrySamples)
+        << " ms, zeros delivered " << ms(r.leadingDeliveredZeroSamples)
+        << " ms), gaps " << r.gapCount << " totalling " << ms(r.gapSamples)
+        << " ms, longest " << ms(r.longestGapSamples)
+        << " ms, empty queue " << ms(r.gapDrySamples)
+        << " ms; reached -60 dBFS at " << ms(r.riseSample(-60))
+        << " ms, -20 at " << ms(r.riseSample(-20))
+        << " ms, -10 at " << ms(r.riseSample(-10))
+        << " ms, peak " << r.peakDbfs << " dBFS";
 }
 
 void MetisClient::setTxFrequencyHz(std::uint32_t hz)
@@ -1487,6 +1513,13 @@ void MetisClient::flushTxIq()
 {
     m_txIq.clear();
     m_twoToneAmp = 0.0;
+}
+
+bool MetisClient::txQueueReady() noexcept
+{
+    if (m_txIq.size() >= static_cast<std::size_t>(kTxPrimeSamples))
+        m_txIqPrimed = true;
+    return m_txIqPrimed && !m_txIq.empty();
 }
 
 void MetisClient::runCorrectorDiscarding(std::span<const std::complex<float>> block) noexcept
@@ -1630,7 +1663,7 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
         runCorrectorDiscarding(block);
         ep2WriteTxIq(pkt, block);
         return pkt;
-    } else if (keyed && !m_txIq.empty()) {
+    } else if (keyed && txQueueReady()) {
         std::vector<std::complex<float>> block;
         const std::size_t n = std::min<std::size_t>(kTxSamplesPerPacket, m_txIq.size());
         block.reserve(n);
@@ -1638,12 +1671,15 @@ std::array<std::uint8_t, kUsbPacketSize> MetisClient::buildNextControlPacket()
             block.push_back(m_txIq.front());
             m_txIq.pop_front();
         }
+        m_txOver.addKeyedPacket(block, kTxSamplesPerPacket);
         if (m_txIqCorrector)
             m_txIqCorrector->correct(block, true);
         ep2WriteTxIq(pkt, block);   // a short block leaves the rest as silence
         return pkt;
     }
-    // Silence, keyed or not.
+    // Silence, keyed or not. Keyed, this is the queue with nothing in it.
+    if (keyed)
+        m_txOver.addKeyedPacket({}, kTxSamplesPerPacket);
     runCorrectorDiscarding(std::array<std::complex<float>, kTxSamplesPerPacket>{});
     return pkt;
 }
