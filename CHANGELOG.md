@@ -8,6 +8,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.11.2] — 2026-11-04
+
+A window that shows what PureSignal is doing and sends its own test signals, a
+fix for clipped starts on Hermes-Lite 2 voice overs, and 20 fixes from upstream,
+mostly for Flex radios. **PureSignal still hasn't been shown to correct an external
+amplifier.** None of this release's changes have been run on a radio yet.
+
+### Hermes-Lite 2
+
+- **PureSignal window (#116).** Choose **Help → PureSignal...**, or right-click the
+  **PS** button. It shows PS's state, feedback level, receive gain and calibration
+  counts, with plots of amplitude, phase and the correction being applied. **Hold
+  curve** keeps a curve in grey to compare against, such as amplifier in Standby
+  against Operate. See [Using PureSignal](https://github.com/W5TSU/AetherSDR/blob/main/docs/PURESIGNAL.md).
+- **Test signals, from the same window (#116).** Calibrate, A/B compare, two-tone or
+  single tone, at 1 to 80% power, for 5 to 30 s, with an optional CW ID at the end.
+  **These go out on your antenna.** The window listens for 1.5 s first and refuses
+  if the frequency reads above -80 dBm or it has no reading. Stop, closing the
+  window or disconnecting unkeys straight away.
+- **Voice and data overs now start about 21 ms later (#116).** On the air, every test
+  over had 3 to 8 short gaps at key-down, up to 12.8 ms long, because the radio's
+  transmit queue had run empty. Audio now waits for one DSP block before it's sent,
+  so that the queue starts full. MOX timing doesn't change. This hasn't yet been
+  re-measured on the radio.
+- **Each over is logged at unkey (#116).** The `aether.hl2` log category records how
+  the over's transmit queue behaved.
+
+### Automation bridge
+
+- **`ps curves`** returns the data behind the PureSignal window's plots (#116).
+
+### Flex radios (#115)
+
+- **Pan width is capped at 3840 pixels.** At 4093 or more, a radio stops sending FFT
+  and waterfall data to every client until it's rebooted.
+- **LAN spectrum, audio and meters now get through stateful firewalls** such as UFW,
+  and the LAN bind matches the radio's address family. If you run a Flex on a LAN,
+  this is the change to try first.
+- **SmartLink no longer hangs on connect** after a session on a non-Flex radio.
+- **SmartSDR 4.3 meter handles parse correctly,** and FDVU and FDVL map in SmartCAT
+  and rigctld.
+
+### Panadapter (#115)
+
+- Late FFT packets and waterfall tiles no longer drop the frame in progress, and a
+  race when closing a pan is fixed.
+- Live FFT repaints are shared between views, clicks in overlay panels stay in the
+  panel, and macOS resize grips work over a pan view.
+
+### Receive, CW and TCI (#115)
+
+- The AGC-T sweep stops if no audio reaches the computer.
+- The CW decoder's pitch range follows the radio's pitch.
+- TCI `rx_volume` and `audio_stream_sample_type` follow the spec, and the init burst
+  announces TCI 2.1.
+
+### Other fixes (#115)
+
+- A saved DAX channel is no longer restored onto a radio without DAX.
+- An unreadable `midi.settings` is no longer overwritten.
+- The replay tools reject partial WAV samples.
+- The HL2 ALC gauge description is corrected.
+
+### Not tested yet
+
+- **On a radio:** the PureSignal window with real curves, the test signals, the 21 ms
+  wait and all of the upstream fixes. The Flex fixes rely on upstream's testing, and
+  the plots have only been tested with data made up for the tests.
+- **Automated tests:** `vkamp_connection_test` and
+  `gui_client_registration_recovery_test` fail locally, and failed before this
+  release's changes. `channel_strip_presets_comp_test` crashes now and then in local
+  runs, cause unknown. Some upstream test cases didn't come over, because the fork
+  lacks their test files: FFT presents, the TCI sample type, and the LAN bind's
+  session and sequence handling.
+
 ## [v26.11.1] — 2026-11-01
 
 PureSignal arrives on the Hermes-Lite 2 as a PS button. **It doesn't correct an
