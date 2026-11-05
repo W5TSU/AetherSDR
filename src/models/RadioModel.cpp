@@ -582,6 +582,15 @@ void RadioModel::setPureSignal(bool on)
                                QVariant(on));
 }
 
+void RadioModel::setPureSignalBypass(bool bypass)
+{
+    if (!m_backend || !m_backend->capabilities().hasPureSignal) {
+        return;
+    }
+    m_backend->invokeExtension(backendCapabilities().family, QStringLiteral("ps.bypass"), 0,
+                               QVariant(bypass));
+}
+
 void RadioModel::setPcAudioEnabled(bool on)
 {
     // Gated on the DECLARED NAMESPACE, not on the family string (#5262 M1).

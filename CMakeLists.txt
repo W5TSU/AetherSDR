@@ -781,6 +781,7 @@ set(CORE_SOURCES
     src/core/backends/hl2/Hl2RxDsp.cpp       # aetherd HL2 Phase 1a (IQ -> WdspChannel demod + spectrum)
     src/core/backends/hl2/Hl2TxDsp.cpp       # SSB transmit chain (TX audio -> baseband IQ)
     src/core/backends/hl2/Hl2PureSignal.cpp  # PureSignal: the only code that talks to WDSP's calcc/iqc
+    src/core/PureSignalTestRun.cpp
     src/core/backends/hl2/Hl2PsController.cpp # PureSignal: every decision, no WDSP
     src/core/backends/hl2/Hl2Backend.cpp     # aetherd HL2 Phase 1b (IRadioBackend impl)
     src/core/backends/hl2/Hl2Discovery.cpp   # aetherd HL2 Phase 1c (HPSDR discovery -> picker)
@@ -1284,6 +1285,8 @@ set(GUI_SOURCES
     src/gui/SupportDialog.cpp
     src/gui/SliceTroubleshootingDialog.cpp
     src/gui/RadioHealthDialog.cpp
+    src/gui/PureSignalCurveWidget.cpp
+    src/gui/PureSignalDialog.cpp
     src/gui/KeyboardMapWidget.cpp
     src/gui/ShortcutDialog.cpp
     src/gui/MultiFlexDialog.cpp

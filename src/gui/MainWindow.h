@@ -121,6 +121,7 @@ namespace AetherSDR {
 enum class RadioSliceSelectionSource;
 
 class AetherClockApplet;
+class PureSignalDialog;
 class AetherClockEngine;
 class AetherClockModel;
 class AutomationServer;
@@ -948,6 +949,7 @@ private:
     void showNetworkDiagnosticsDialog();
     void showSystemInfoDialog();
     void showAgcCalibrationDialog(int sliceId);
+    void showPureSignalDialog();
     void showAx25HfPacketDecodeDialog();
     // Construct the AetherModem window hidden if it does not exist yet, and
     // return it. The window hosts the KISS TNC, the mailbox, and the terminal,
@@ -1511,6 +1513,7 @@ private:
     QPointer<NetworkDiagnosticsDialog> m_networkDiagnosticsDialog;
     QPointer<SystemInfoDialog> m_systemInfoDialog;
     QPointer<AgcCalibrationDialog> m_agcCalibrationDialog;
+    QPointer<PureSignalDialog> m_pureSignalDialog;
     QPointer<PropDashboardDialog> m_propDashboardDialog;
     QPointer<TxBandDialog> m_txBandDialog;
     QPointer<MemoryDialog> m_memoryDialog;

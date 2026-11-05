@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/backends/PureSignalCurves.h"
 #include "core/backends/hl2/MetisClient.h"
 
 #include <QString>
@@ -59,6 +60,9 @@ public:
 
     // Reading takes the peaks seen since the previous read.
     [[nodiscard]] Hl2PsSnapshot snapshot();
+    // What the last good calibration measured, for the window. `calibration` is
+    // the successes count to stamp it with.
+    [[nodiscard]] PureSignalCurves curves(int calibration);
 
     // Waits for the correction thread, for at most a second (it may be in the middle
     // of a calibration), because a stop() queued behind it would run first. False when nothing could be written.
@@ -86,6 +90,7 @@ private:
     float m_referencePeak = -1.0f;
 
     std::vector<double> m_correctBuffer;
+    std::vector<double> m_disp;         // GetPSDisp's buffers, see curves()
 };
 
 }  // namespace AetherSDR::hl2

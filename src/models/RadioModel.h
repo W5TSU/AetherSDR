@@ -693,6 +693,8 @@ public:
     void setPcAudioEnabled(bool on);
     // The PS button. The answer comes back on pureSignalStatusChanged.
     void setPureSignal(bool on);
+    // Send the two-tone uncorrected while PS stays running, for an A/B comparison.
+    void setPureSignalBypass(bool bypass);
     // The client's PC Audio state, published so the backend can ADVISE on a
     // mismatch. Writes nothing: Principle III owns DATA OFF MOD to the radio,
     // so a connect must never replay this client-persisted flag onto it.

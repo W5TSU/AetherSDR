@@ -278,6 +278,9 @@ void PSSaveCorr(int channel, char* filename);
 void GetPSInfo(int channel, int* info);
 void GetPSHWPeak(int channel, double* peak);
 void GetPSMaxTX(int channel, double* maxtx);
+void GetPSDisp(int channel, double* x, double* ym, double* yc, double* ys,
+               double* xm_cor, double* ym_cor, double* xa_cor, double* ya_cor,
+               int* nsamps_out, int* cpts_out, double* phs_ref_deg_out);
 void SetPSControl(int channel, int reset, int mancal, int automode, int turnon);
 void SetPSMox(int channel, int mox);
 void SetPSHWPeak(int channel, double peak);

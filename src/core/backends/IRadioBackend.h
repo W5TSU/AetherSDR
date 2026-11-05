@@ -14,6 +14,7 @@
 #include "core/backends/AmpDelta.h"
 #include "core/backends/GpsDelta.h"
 #include "core/backends/MemoryDelta.h"
+#include "core/backends/PureSignalCurves.h"
 #include "core/backends/ReceiveDispatch.h"
 #include "core/backends/MeterDef.h"
 #include "core/backends/NotchDelta.h"
@@ -947,6 +948,8 @@ public:
         [[nodiscard]] bool isEmpty() const { return order.isEmpty(); }
     };
     virtual HealthSnapshot healthSnapshot() const { return {}; }
+    // The last calibration's curves, for a backend with RadioCapabilities::hasPureSignal.
+    virtual PureSignalCurves pureSignalCurves() const { return {}; }
 
     // WHAT THE DSP IS ACTUALLY CONFIGURED WITH, as opposed to what the model
     // says it asked for.

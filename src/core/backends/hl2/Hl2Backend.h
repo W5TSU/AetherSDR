@@ -171,6 +171,8 @@ public:
                          const QVariant& arg) override;
 
     HealthSnapshot healthSnapshot() const override;
+
+    PureSignalCurves pureSignalCurves() const override { return m_psCurves; }
     QVariantList dspChains() const override;
 
     // dspChains()' gather, over the two things it may read.
@@ -980,6 +982,8 @@ private:
     std::uint32_t m_psTxCommandHz = 0;
     QString m_psState = QStringLiteral("off");
     Hl2PsSnapshot m_psSnapshot;
+    PureSignalCurves m_psCurves;
+    int m_psCurvesSeen = 0;        // I/O thread: the calibration last read
     int m_psPublishedLevel = -1;
     std::optional<int> m_psGainDb;
     std::optional<int> m_operatorTxLnaGainDb;

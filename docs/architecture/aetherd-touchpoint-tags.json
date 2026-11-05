@@ -1,4 +1,12 @@
 {
+ "core/PureSignalTestRun.h": {
+  "tag": "ui-support",
+  "note": "The PureSignal window's test-signal run: when it keys and how it ends, for the dialog to carry out. No radio or wire knowledge."
+ },
+ "core/backends/PureSignalCurves.h": {
+  "tag": "universal",
+  "note": "Backend-neutral PureSignal curves returned through IRadioBackend: measured amplitude and phase, and the correction applied."
+ },
  "core/control/RadioConnectionTarget.h": {
   "tag": "universal",
   "note": "Typed non-TX connection lifecycle seam; trusted target receives only catalogue observations after service authorization.",

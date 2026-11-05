@@ -88,12 +88,14 @@ jobs:
       # the app compiles the HackRF backend out; retain the three small tests
       # that are the only consumers of its pure-DSP sources (HackRfDdc,
       # HackRfIq, HackRfTxRxArbiter). The coverage check guards this list.
+      # The two AX.25 WAV tests are the targets that build those tools' WAV readers.
       # This Linux configuration uses ENABLE_RADE=ON and the current vendored
       # snapshot, which defines rade_demod_wav. If coverage fails after a
       # merge, add the target owning the named input here and dispatch a run.
       CODEQL_BUILD_TARGETS: >-
         AetherSDR aetherd kiwi_directory_poc rade_demod_wav
         hackrf_ddc_test hackrf_iq_test hackrf_arbiter_test
+        ax25_replay_wav_test ax25_session_wav_test
 
     strategy:
       matrix:

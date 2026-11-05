@@ -4751,6 +4751,50 @@ target_include_directories(hl2_tx_gate_test PRIVATE src)
 target_link_libraries(hl2_tx_gate_test PRIVATE aethercore Qt6::Core Qt6::Network)
 add_test(NAME hl2_tx_gate_test COMMAND hl2_tx_gate_test)
 
+# Per-over figures for keyed silence and mid-over gaps (upstream #6052). Socket-
+# free, through the real packet builder; nothing is keyed.
+add_executable(hl2_tx_over_report_test tests/hl2_tx_over_report_test.cpp)
+target_include_directories(hl2_tx_over_report_test PRIVATE src)
+target_link_libraries(hl2_tx_over_report_test PRIVATE aethercore Qt6::Core Qt6::Network)
+add_test(NAME hl2_tx_over_report_test COMMAND hl2_tx_over_report_test)
+
+# WDSP's PureSignal display data as the window draws it. No WDSP, no radio.
+add_executable(hl2_ps_curves_test tests/hl2_ps_curves_test.cpp)
+target_include_directories(hl2_ps_curves_test PRIVATE src)
+target_link_libraries(hl2_ps_curves_test PRIVATE Qt6::Core)
+add_test(NAME hl2_ps_curves_test COMMAND hl2_ps_curves_test)
+
+# When the PureSignal test signal keys and how every run ends. No radio.
+add_executable(pure_signal_test_run_test tests/pure_signal_test_run_test.cpp)
+target_include_directories(pure_signal_test_run_test PRIVATE src)
+target_link_libraries(pure_signal_test_run_test PRIVATE aethercore Qt6::Core)
+add_test(NAME pure_signal_test_run_test COMMAND pure_signal_test_run_test)
+
+# The PureSignal window's plots, offscreen.
+add_executable(pure_signal_curve_widget_test
+    tests/pure_signal_curve_widget_test.cpp
+    src/gui/PureSignalCurveWidget.cpp
+)
+target_include_directories(pure_signal_curve_widget_test PRIVATE src)
+target_link_libraries(pure_signal_curve_widget_test PRIVATE aethercore Qt6::Core Qt6::Gui Qt6::Widgets)
+add_test(NAME pure_signal_curve_widget_test COMMAND pure_signal_curve_widget_test)
+
+# The PureSignal window with no radio: what it draws, and that nothing keys.
+add_executable(pure_signal_dialog_test
+    tests/pure_signal_dialog_test.cpp
+    src/gui/PureSignalDialog.cpp
+    src/gui/PureSignalCurveWidget.cpp
+    src/gui/PersistentDialog.cpp
+    src/gui/FramelessResizer.cpp
+    src/gui/FramelessWindowTitleBar.cpp
+    src/gui/FramelessMessageBox.cpp
+)
+target_include_directories(pure_signal_dialog_test PRIVATE src tests)
+target_link_libraries(pure_signal_dialog_test PRIVATE
+    aethercore Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
+)
+add_test(NAME pure_signal_dialog_test COMMAND pure_signal_dialog_test)
+
 # #5386: RIT shifts the transmit receiver's receive path, XIT the TX NCO register,
 # each without touching the other. Constructed backend only — no socket, no
 # DSP, nothing keyed.

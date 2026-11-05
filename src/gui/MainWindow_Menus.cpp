@@ -1241,6 +1241,14 @@ void MainWindow::buildMenuBar()
         dlg->raise();
         dlg->activateWindow();
     });
+    // Only some radios have PureSignal, and whether this one does can change with
+    // every connect, so ask when the menu opens.
+    auto* pureSignalAct = helpMenu->addAction("PureSignal...", this,
+                                              &MainWindow::showPureSignalDialog);
+    connect(helpMenu, &QMenu::aboutToShow, pureSignalAct, [this, pureSignalAct]() {
+        pureSignalAct->setEnabled(m_radioModel.isConnected()
+                                  && m_radioModel.backendCapabilities().hasPureSignal);
+    });
     // Beside the other two diagnostic surfaces: Radio Health is the radio's
     // own state, Slice Troubleshooting is one slice's path, System Info is this
     // application's runtime (#2554).

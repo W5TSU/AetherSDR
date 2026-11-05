@@ -211,18 +211,19 @@ int main(int argc, char** argv)
     // from doing so with whatever happens to be in the buffer.
     {
         MetisClient c2;
-        std::vector<std::complex<float>> tone(512, std::complex<float>(0.5f, -0.5f));
+        const std::size_t kTone = MetisClient::kTxPrimeSamples;
+        std::vector<std::complex<float>> tone(kTone, std::complex<float>(0.5f, -0.5f));
 
         // Gate closed, unkeyed: queued samples must not go out.
         c2.queueTxIq(tone);
-        check(c2.txQueueDepth() == 512, "samples queue regardless of gate state");
+        check(c2.txQueueDepth() == kTone, "samples queue regardless of gate state");
         for (int i = 0; i < 4; ++i) {
             if (payloadNonZero(c2.buildNextControlPacket())) {
                 check(false, "IQ reached the wire with the gate CLOSED");
                 break;
             }
         }
-        check(c2.txQueueDepth() == 512, "an unkeyed frame consumes no samples");
+        check(c2.txQueueDepth() == kTone, "an unkeyed frame consumes no samples");
 
         // Gate open but still unkeyed: still silence.
         c2.enableTransmit(true);
@@ -233,7 +234,7 @@ int main(int argc, char** argv)
         c2.setMox(true);
         const auto keyedPkt = c2.buildNextControlPacket();
         check(payloadNonZero(keyedPkt), "keyed frames carry the queued IQ");
-        check(c2.txQueueDepth() == 512 - kTxSamplesPerPacket,
+        check(c2.txQueueDepth() == kTone - kTxSamplesPerPacket,
               "one packet consumes exactly kTxSamplesPerPacket samples");
         // 0.5 -> 16383 (0x3FFF), -0.5 -> -16383 (0xC001), big-endian.
         const std::uint8_t* pay = keyedPkt.data() + 8 + 8;
@@ -312,7 +313,8 @@ int main(int argc, char** argv)
               "ending the CW PTT envelope releases IQ ownership");
         check(!payloadNonZero(cw.buildNextControlPacket()),
               "ending CW drops microphone IQ queued during the element sequence");
-        cw.queueTxIq(voice);
+        cw.queueTxIq(std::vector<std::complex<float>>(MetisClient::kTxPrimeSamples,
+                                                      std::complex<float>(0.4f, -0.4f)));
         check(payloadNonZero(cw.buildNextControlPacket()),
               "normal transmit IQ resumes after CW mode is cleared");
     }

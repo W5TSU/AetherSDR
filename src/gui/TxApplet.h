@@ -55,6 +55,7 @@ public:
 
 signals:
     void pureSignalRequested(bool on);
+    void pureSignalWindowRequested();
 
 public:
 

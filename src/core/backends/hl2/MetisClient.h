@@ -12,6 +12,7 @@
 #include <deque>
 #include <vector>
 
+#include "core/backends/hl2/Hl2TxOverReport.h"
 #include "core/backends/hl2/Hl2ControlRequest.h"
 #include "core/backends/hl2/Hl2BandMemoryPolicy.h"
 #include "core/backends/hl2/MetisProtocol.h"
@@ -489,6 +490,13 @@ public:
     // Exists so the gate can be tested on the exact bytes that would go out.
     std::array<std::uint8_t, kUsbPacketSize> buildNextControlPacket();
 
+    // The queue depth the first audio of an over waits for: one Hl2TxDsp block at
+    // 48 kHz, 21.33 ms. Nothing pushes the depth back up once the over is running,
+    // so without this margin any late delivery is a keyed gap. MOX does not wait,
+    // so T/R timing is unchanged; every voice or data over is 21 ms later on the air.
+    // CW and the tones make their own samples and never wait.
+    static constexpr int kTxPrimeSamples = 1024;
+
     // Queue transmit IQ. Samples are consumed kTxSamplesPerPacket at a time, one
     // packet per EP2 frame, so the queue drains at the 48 kHz EP2 rate.
     //
@@ -501,7 +509,12 @@ public:
     // Discard pending transmit audio. Call on unkey: whatever is still queued
     // belongs to the transmission that just ended.
     Q_INVOKABLE void flushTxIq();
+    // Send the two-tone uncorrected, for the PureSignal window's A/B. The corrector
+    // keeps running on a copy, so it comes straight back. An unkey ends it.
+    Q_INVOKABLE void setTxCorrectionBypass(bool bypass) noexcept { m_txCorrectionBypass = bypass; }
     [[nodiscard]] std::size_t txQueueDepth() const noexcept { return m_txIq.size(); }
+    // The most recent voice over that went through the queue. Also logged at unkey.
+    [[nodiscard]] Hl2TxOverReport lastTxOverReport() const noexcept { return m_lastTxOver; }
 
     // A baseband test tone, offsetHz from the TX carrier, amplitude 0..1.
     // amplitude <= 0 disables it. Takes precedence over queued IQ.
@@ -637,6 +650,8 @@ private slots:
 
 private:
     void sendControlPacket();           // one round-robin EP2 C&C packet
+    void publishTxOverReport();         // at the falling edge of MOX
+    bool txQueueReady() noexcept;       // anything to send, and the over's hold is done
     // Append `bank` to m_oneShot only while a session is running -- the gate
     // for the live-control setters that queue a single bank (#4579). It keeps
     // a bank out of the queue while stopped; what an ended session left
@@ -914,6 +929,10 @@ private:
 
     bool m_txAllowed = false;   // gate; see enableTransmit()
     std::deque<std::complex<float>> m_txIq;   // pending transmit samples
+    bool m_txIqPrimed = false;                // this over has reached kTxPrimeSamples
+    bool m_txCorrectionBypass = false;
+    Hl2TxOverAccumulator m_txOver;
+    Hl2TxOverReport m_lastTxOver;
     // Roughly a quarter second at 48 kHz. Past this the operator is hearing
     // latency, so dropping is better than growing the backlog.
     static constexpr std::size_t kTxQueueMax = 12000;

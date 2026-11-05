@@ -104,6 +104,7 @@
 #include "ShackSwitchApplet.h"
 #include "RadioSetupDialog.h"
 #include "AgcCalibrationDialog.h"
+#include "PureSignalDialog.h"
 #include "AudioDeviceChangeDialog.h"
 #include "NetworkDiagnosticsDialog.h"
 #include "SystemInfoDialog.h"
@@ -1949,6 +1950,8 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::setActiveSlice);
     connect(m_appletPanel->rxApplet(), &RxApplet::calibrateAgcTRequested,
             this, &MainWindow::showAgcCalibrationDialog);
+    connect(m_appletPanel->txApplet(), &TxApplet::pureSignalWindowRequested,
+            this, &MainWindow::showPureSignalDialog);
     // Sync slice tab capacity after radio info/status reports actual capacity.
     // This edge runs at the START of a connect, which is what lets a Flex draw
     // its tabs before the first slice arrives (#2243).
@@ -4646,6 +4649,11 @@ void MainWindow::showAgcCalibrationDialog(int sliceId)
     if (m_agcCalibrationDialog) {
         m_agcCalibrationDialog->setSlice(slice);
     }
+}
+
+void MainWindow::showPureSignalDialog()
+{
+    showOrRaisePersistent(m_pureSignalDialog, &m_radioModel);
 }
 
 // AX.25 dialog + KISS TNC startup live in MainWindow_DigitalModes.cpp (#3351 Phase 1e).
