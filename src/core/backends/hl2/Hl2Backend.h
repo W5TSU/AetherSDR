@@ -117,6 +117,11 @@ private:
     // hand-off connectRadio() uses), and finishSpanRebuild() resumes here on the
     // GUI thread when it lands. See docs/HERMES.md §22.4 / issue #7.
     void applyPanBandwidth(double hz);
+    // Set the software zoom on every receiver's panadapter (1 = off). Only
+    // ever > 1 at the narrowest hardware rate; see kMaxDisplayZoom.
+    void applyDisplayZoom(int zoom);
+    // What the panadapters show: the hardware span divided by the zoom.
+    [[nodiscard]] int displaySpanHz() const noexcept { return m_sampleRateHz / m_displayZoom; }
 
     // GUI-thread continuation of the async span rebuild. `generation` is the
     // m_connectGeneration value captured when the rebuild was launched — a
@@ -855,6 +860,12 @@ private:
     // maxReceiversAtRate() — four receivers at 384 kHz is ~89 Mbit/s on the
     // HL2's 100BASE-T and is refused.
     int m_sampleRateHz = 48000;
+    // Software zoom below the narrowest rate: the panadapter shows
+    // m_sampleRateHz / m_displayZoom. 1 whenever m_sampleRateHz is above 48 kHz.
+    int m_displayZoom = 1;
+    // The zoom a span request wants once the rebuild it started lands at 48 kHz
+    // (a zoom-in from a wider rate). Applied only on SpanRebuildOutcome::Ok.
+    int m_zoomAfterRebuild = 1;
     // How many receivers to run. Requested by the operator (Hl2Settings),
     // clamped by what the board reports at discovery 0x13 and by the link
     // budget above. Never a hardcoded count — the skimmer gateware variants

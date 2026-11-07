@@ -360,9 +360,10 @@ int main(int argc, char** argv)
         // The zoom clamp's source. Without this the GUI falls back to a FlexLib
         // model table that resolves to 5.4 MHz for an unrecognised model, and
         // the operator could zoom 14x past the data — the black bars.
-        check(qFuzzyCompare(limitsSpy.first().at(1).toDouble(), 0.048)
+        // The floor is the software zoom's (48 kHz / 16), not the slowest rate.
+        check(qFuzzyCompare(limitsSpy.first().at(1).toDouble(), 0.003)
                   && qFuzzyCompare(limitsSpy.first().at(2).toDouble(), 0.384),
-              "reported limits are the real rate range, 48 kHz .. 384 kHz");
+              "reported limits are 3 kHz (software zoom) .. 384 kHz");
     }
 
     // ---- the pan is ANNOUNCED before it is DESCRIBED ----

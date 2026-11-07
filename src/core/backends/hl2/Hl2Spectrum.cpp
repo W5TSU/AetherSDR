@@ -13,7 +13,9 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 }
 
-Hl2Spectrum::Hl2Spectrum(int fftSize) : m_fftSize(fftSize < 2 ? 2 : fftSize)
+Hl2Spectrum::Hl2Spectrum(int fftSize, int outputBins)
+    : m_fftSize(fftSize < 2 ? 2 : fftSize)
+    , m_outputBins(outputBins <= 0 || outputBins > m_fftSize ? m_fftSize : outputBins)
 {
     m_acc.reserve(static_cast<std::size_t>(m_fftSize));
     m_window.resize(static_cast<std::size_t>(m_fftSize));
@@ -88,7 +90,9 @@ int Hl2Spectrum::process(std::span<const std::complex<float>> iq, std::vector<fl
         m_acc.push_back(s);
         if (static_cast<int>(m_acc.size()) == m_fftSize) {
             computeFrame(binsDbfs);
-            m_acc.clear();
+            // Uncropped: hop == fftSize, the old clear. Cropped: keep the
+            // newest fftSize - hop samples so the next frame is one hop away.
+            m_acc.erase(m_acc.begin(), m_acc.begin() + m_outputBins);
             ++frames;
         }
     }
@@ -126,10 +130,11 @@ void Hl2Spectrum::computeFrame(std::vector<float>& binsDbfs)
     fftw_execute(static_cast<fftw_plan>(m_plan));
 
     const auto* out = static_cast<fftw_complex*>(m_out);
-    binsDbfs.resize(static_cast<std::size_t>(m_fftSize));
+    binsDbfs.resize(static_cast<std::size_t>(m_outputBins));
     const int half = m_fftSize / 2;
-    for (int k = 0; k < m_fftSize; ++k) {
-        const int src = (k + half) % m_fftSize;                       // fftshift: DC -> centre
+    const int first = (m_fftSize - m_outputBins) / 2;                // crop: middle outputBins
+    for (int k = 0; k < m_outputBins; ++k) {
+        const int src = (k + first + half) % m_fftSize;               // fftshift: DC -> centre
         const double re = out[src][0];
         const double im = out[src][1];
         const double mag = std::sqrt(re * re + im * im) / m_coherentGain;

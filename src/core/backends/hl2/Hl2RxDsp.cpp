@@ -158,7 +158,7 @@ bool Hl2RxDsp::configure(const Config& config, std::string* error)
                "100 ms stop-and-flush timeout.";
     }
     m_channel = std::move(channel);
-    m_spectrum = std::make_unique<Hl2Spectrum>(config.fftSize);
+    m_spectrum = std::make_unique<Hl2Spectrum>(config.fftSize * m_displayZoom, config.fftSize);
     // A rebuild (rate change) makes a fresh Hl2Spectrum on the defaults;
     // replay the operator's Display → FFT AVG / detector choice so a
     // sample-rate change does not silently drop them back to an unaveraged
@@ -326,6 +326,21 @@ void Hl2RxDsp::setSpectrumPeakHold(bool on)
     if (m_spectrum) {
         m_spectrum->setPeakHold(on);
     }
+}
+
+void Hl2RxDsp::setDisplayZoom(int zoom)
+{
+    zoom = zoom < 1 ? 1 : zoom;
+    if (zoom == m_displayZoom)
+        return;
+    m_displayZoom = zoom;
+    // Before the first configure() there is nothing to rebuild; configure()
+    // picks the zoom up when it makes the spectrum.
+    if (!m_spectrum)
+        return;
+    m_spectrum = std::make_unique<Hl2Spectrum>(m_config.fftSize * zoom, m_config.fftSize);
+    m_spectrum->setAveraging(m_spectrumAvgFrames, m_spectrumAvgWeighted);
+    m_spectrum->setPeakHold(m_spectrumPeakHold);
 }
 
 void Hl2RxDsp::setShift(double shiftHz)
