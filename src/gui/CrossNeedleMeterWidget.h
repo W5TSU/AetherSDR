@@ -42,6 +42,9 @@ class CrossNeedleMeterWidget : public QWidget {
     double reflectedWatts() const { return m_reflectedWatts; }
     double swr() const { return m_swr; }
     double rangeMultiplier() const { return m_rangeMultiplier; }
+    // The number printed at a scale's major tick for the current range: the
+    // face's own label at x1 and above, real watts below x1.
+    QString printedLabel(const CrossNeedleMeterGeometry::Scale &scale, int index) const;
     bool isTransmitting() const { return m_transmitting; }
     bool reflectedPowerMeasured() const { return m_reflectedPowerMeasured; }
     bool rangeLegendVisible() const { return m_rangeLegendVisible; }
