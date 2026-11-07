@@ -2374,7 +2374,7 @@ tightest zoom. That is why the floor is 16x and not 32x (1.5 kHz, 683 ms).
 **Tested.** `hl2_spectrum_test` pins the crop (a tone 5 fine bins off DC lands
 5 bins off the centre, same level; an out-of-window tone is cropped out) and
 the overlapped frame cadence. `hl2_backend_test` pins the 3 kHz limits floor.
-On air, HL2 on 40/20 m CW and SSB, CachyOS/Omarchy x86_64 (WY6Y).
+On air with the HL2 on CW and SSB, Omarchy (Arch) x86_64 (WY6Y).
 ---
 
 ## 16. Receive handedness and tuning — the two-error trap
