@@ -13,6 +13,7 @@
 #include "core/backends/hl2/Hl2Spectrum.h"
 #include "core/dsp/WdspChannel.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -22,6 +23,7 @@
 #include <complex>
 #include <cstdint>
 #include <cstdio>
+#include <span>
 #include <vector>
 
 using namespace AetherSDR::hl2;
@@ -447,5 +449,37 @@ int main()
 
     if (g_failures == 0)
         std::fprintf(stderr, "hl2_spectrum_test: all checks passed\n");
+    // ---- software zoom: a 4x FFT cropped to N bins around DC ----
+    {
+        constexpr int Z = 4;
+        Hl2Spectrum spec(N * Z, N);
+        check(spec.outputBins() == N, "zoom: outputBins is the crop width");
+        std::vector<float> bins;
+        // Bin 5 of a 4N FFT is 5 bins right of DC in the cropped trace, where
+        // the unzoomed FFT would have put it inside DC's bin.
+        const auto s = tone(N * Z, 5, 0.5f);
+        check(spec.process(s, bins) == 1, "zoom: one frame from fftSize samples");
+        check(bins.size() == static_cast<std::size_t>(N), "zoom: N bins out");
+        check(argmax(bins) == half + 5, "zoom: tone lands 5 bins right of DC");
+        check(bins[static_cast<std::size_t>(half + 5)] > -8.0f,
+              "zoom: tone level unchanged by the crop (-6 dBFS)");
+        // Overlapped frames: after the first, every N more samples is a frame.
+        const auto more = tone(N * Z, 5, 0.5f);
+        std::span<const std::complex<float>> m(more);
+        check(spec.process(m.subspan(0, N - 1), bins) == 0, "zoom: N-1 more -> no frame");
+        check(spec.process(m.subspan(N - 1, 1), bins) == 1, "zoom: Nth sample -> next frame");
+        check(spec.process(m.subspan(N, 2 * N), bins) == 2, "zoom: 2N more -> two frames");
+    }
+    {
+        // A tone outside the cropped window does not show up inside it.
+        constexpr int Z = 4;
+        Hl2Spectrum spec(N * Z, N);
+        std::vector<float> bins;
+        spec.process(tone(N * Z, 100, 0.5f), bins);
+        float top = -999.0f;
+        for (float b : bins) top = std::max(top, b);
+        check(top < -30.0f, "zoom: off-window tone is cropped out");
+    }
+
     return g_failures == 0 ? 0 : 1;
 }

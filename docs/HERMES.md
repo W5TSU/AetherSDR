@@ -1879,7 +1879,7 @@ Fixed by making the whole loop honest:
 |---|---|
 | Down | `IRadioBackend::setPanBandwidth` — HL2 snaps to the nearest real rate and reconfigures the DDC + WDSP chain |
 | Up | `panCenterBandwidthChanged` reports the span the radio ACTUALLY took |
-| Limits | `panBandwidthLimitsChanged` reports 48–384 kHz, so the zoom clamp stops where the data stops |
+| Limits | `panBandwidthLimitsChanged` reports 3–384 kHz, so the zoom clamp stops where the data stops (below 48 kHz is the software zoom, §15.8) |
 | Default | the narrowest rate, then whatever span the operator last chose (§15.2) |
 
 The snap is **nearest by RATIO, not linear distance**. The rates are
@@ -2338,6 +2338,43 @@ value the assertion depends on, even when it looks like a constant.
   `pan_zoom_in`, the FPS slider reached through a menu, and the frame rates
   scraped from the log file — which the overload chatter above nearly made
   impossible.
+
+### 15.8 Software zoom below 48 kHz
+
+**What it is for.** 48 kHz, the slowest DDC rate, was the narrowest the pan
+could go, and at 1024 bins that is ~47 Hz per bin. A CW signal is a single
+column and an SSB signal is a few; you cannot see a station's keying, chirp or
+drift, or where an SSB voice's energy actually sits. Operators asked to zoom
+in further, the way a Flex pan narrows to a few kHz.
+
+**What it does.** The zoom continues past 48 kHz in power-of-two steps to
+**24, 12, 6 and 3 kHz** (`kMaxDisplayZoom` = 16, `kMinDisplaySpanHz` = 3 kHz).
+The radio stays at 48 kHz. Only the panadapter and waterfall narrow: no
+rebuild, no "Resampling…", no audio gap, no change to the link budget, WDSP,
+the slice's audio, TCI or the decoders.
+
+**How it works.**
+
+| Piece | Change |
+|---|---|
+| `Hl2Spectrum(fftSize, outputBins)` | Runs an `fftSize`-point FFT (1024 × zoom) and keeps only the middle `outputBins` (1024) bins around DC, i.e. around the NCO. Bin width is 48000 / (1024 × zoom): **2.9 Hz at 3 kHz**. Coherent-gain normalisation is unchanged, so a carrier reads the same dBFS at every zoom; the noise floor drops by 10·log10(zoom) because each bin is narrower, which is real |
+| Frame overlap | A 16384-point frame is 341 ms of signal. Clearing the accumulator after each frame (the unzoomed behaviour) would cap the pan at ~3 fps, so a cropped spectrum keeps the newest `fftSize − outputBins` samples and steps by `outputBins`. The display-rate shaper (§15.2.1) still decides which frames are computed. Uncropped, the hop equals `fftSize` and behaviour is exactly as before |
+| `Hl2RxDsp::setDisplayZoom` | Swaps the receiver's `Hl2Spectrum` on its I/O thread and replays FFT AVG / peak hold. Held as a member, like the detector, so a `configure()` rebuild keeps it |
+| `Hl2Backend::applyPanBandwidth` | `displayZoomForSpanHz()` snaps a request under 48 kHz to the nearest zoom **by ratio** (§15.1). At 48 kHz a zoom change goes to `applyDisplayZoom()` and nothing else. A zoom-in from a wider rate first rebuilds to 48 kHz unzoomed, then applies the zoom on `SpanRebuildOutcome::Ok` (`m_zoomAfterRebuild`); any rate above 48 kHz runs unzoomed |
+| Published span | `emitPanState` reports `displaySpanHz()` = rate / zoom, and the limits floor is 3 kHz |
+| Slice window | `setSliceFrequency` judges "outside the window" against the **displayed** span, so tuning off the edge of a zoomed view re-centres the NCO instead of leaving the slice off-screen. The restore paths still use the hardware passband |
+| Persistence | `Hl2Settings::spanMhz` stores the displayed span (e.g. 0.003). Connect snaps it to 48 kHz as before and re-derives the zoom from it |
+
+**Cost and limits.** The FFT grows to 16384 points at 3 kHz, a few hundred
+µs per frame on a desktop core, and only frames the shaper asks for are
+computed. Time resolution is the physics trade: a 3 kHz view needs ~1/3 s of
+signal per frame, so the waterfall looks slightly smeared in time at the
+tightest zoom. That is why the floor is 16x and not 32x (1.5 kHz, 683 ms).
+
+**Tested.** `hl2_spectrum_test` pins the crop (a tone 5 fine bins off DC lands
+5 bins off the centre, same level; an out-of-window tone is cropped out) and
+the overlapped frame cadence. `hl2_backend_test` pins the 3 kHz limits floor.
+On air, HL2 on 40/20 m CW and SSB, CachyOS/Omarchy x86_64 (WY6Y).
 ---
 
 ## 16. Receive handedness and tuning — the two-error trap

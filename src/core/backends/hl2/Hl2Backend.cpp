@@ -113,10 +113,30 @@ SampleRate sampleRateEnum(int hz) noexcept
 // The IQ rates the HL2's DDC can be told to run, ascending. ONE list, because
 // this is simultaneously the capability advertisement, the panadapter's zoom
 // limits, and the set a zoom request snaps to — and on this radio those are the
-// same fact. The pan span IS the sample rate (Hl2Backend::emitPanState), so a
+// same fact. The pan span IS the sample rate (Hl2Backend::emitPanState, divided
+// by the software zoom below 48 kHz; see kMaxDisplayZoom), so a
 // second list would be a way for the advertised span and the deliverable span to
 // drift apart, which is exactly the failure being fixed here.
 constexpr int kIqSampleRatesHz[] = {48000, 96000, 192000, 384000};
+
+// Software zoom below the narrowest rate (Hl2Spectrum's cropped FFT): the
+// panadapter can narrow to kIqSampleRatesHz[0] / kMaxDisplayZoom, 3 kHz, in
+// power-of-two steps. The radio stays at 48 kHz; only the display narrows, so
+// this costs no link budget and touches no audio. 16 is where a frame needs
+// 16384 samples (341 ms) and the waterfall starts to smear in time.
+constexpr int kMaxDisplayZoom = 16;
+constexpr int kMinDisplaySpanHz = kIqSampleRatesHz[0] / kMaxDisplayZoom;
+
+// The zoom that best matches a requested span at the narrowest rate, nearest
+// by ratio like nearestIqSampleRateHz(). 1 for anything at or above 48 kHz.
+int displayZoomForSpanHz(double requestedHz) noexcept
+{
+    if (!(requestedHz > 0.0) || requestedHz >= kIqSampleRatesHz[0])
+        return 1;
+    const double ratio = static_cast<double>(kIqSampleRatesHz[0]) / requestedHz;
+    int zoom = 1 << static_cast<int>(std::lround(std::log2(ratio)));
+    return std::clamp(zoom, 1, kMaxDisplayZoom);
+}
 
 // The radio's rated output, in watts, as the gauges' full-scale reference.
 //
@@ -966,6 +986,7 @@ bool Hl2Backend::openReceiverDsp(int ddc, std::string* error)
     // publishIoDsps(), once it has configured the chain. So a receiver is never
     // fed before its WDSP channel exists.
     auto* dsp = new Hl2RxDsp(nullptr);   // no parent: moveToThread refuses one
+    dsp->setDisplayZoom(m_displayZoom);  // before configure(), so just stored
     dsp->moveToThread(m_ioThread);
 
     // CAPTURE THE UI NUMBER, NOT THE DDC INDEX.
@@ -1658,7 +1679,7 @@ bool Hl2Backend::addReceiver(const Receiver& requested)
     if (ids) {
         emit panBandwidthLimitsChanged(
             ids->panId,
-            static_cast<double>(kIqSampleRatesHz[0]) / 1.0e6,
+            static_cast<double>(kMinDisplaySpanHz) / 1.0e6,
             static_cast<double>(m_sampleRateHz) / 1.0e6);
         emit panRfGainInfoChanged(ids->panId, kLnaGainMinDb, kLnaGainMaxDb, kLnaGainStepDb);
         emit panRfGainChanged(ids->panId, m_lnaGainDb);
@@ -2628,6 +2649,9 @@ void Hl2Backend::connectRadio(const RadioConnectRequest& request)
     // Optional overrides from the namespaced params.
     if (request.params.contains(QStringLiteral("sampleRateHz")))
         m_sampleRateHz = request.params.value(QStringLiteral("sampleRateHz")).toInt();
+    // The remembered span also carries a software zoom when it was under 48 kHz.
+    m_displayZoom = (m_sampleRateHz == kIqSampleRatesHz[0])
+        ? displayZoomForSpanHz(Hl2Settings::spanMhz() * 1.0e6) : 1;
     if (request.params.contains(QStringLiteral("lnaGainDb")))
         m_lnaGainDb = request.params.value(QStringLiteral("lnaGainDb")).toInt();
     // m_dbRef is synced to the final m_lnaGainDb unconditionally at the seed
@@ -3479,7 +3503,9 @@ void Hl2Backend::setSliceFrequency(int sliceId, double hz)
     // every tune and the whole display slid under the cursor on each click.
     // That also made a slice offset from centre unrepresentable, which is what
     // a Flex-shaped UI assumes it can do.
-    const double halfSpanHz = static_cast<double>(m_sampleRateHz) / 2.0;
+    // The DISPLAYED span: zoomed in, a slice tuned off the edge of the view
+    // re-centres it rather than going quiet off-screen.
+    const double halfSpanHz = static_cast<double>(displaySpanHz()) / 2.0;
     // Stay clear of the band edges: the passband rolls off there, and a slice
     // parked in the roll-off would be attenuated for no visible reason.
     const double usableHz = halfSpanHz * kUsablePassbandFraction;
@@ -4237,6 +4263,8 @@ void Hl2Backend::applyPanBandwidth(double hz)
     // snapped to the nearest and the caller is told what it actually got via
     // emitPanState() at the end.
     const int rate = nearestIqSampleRateHz(hz);
+    // Below 48 kHz the rate stays put and the display zooms instead.
+    const int zoom = displayZoomForSpanHz(hz);
 
     // A rebuild is already on the I/O thread. Hold the LATEST requested span and
     // let finishSpanRebuild() re-drive it once the current one lands. Checked
@@ -4248,6 +4276,11 @@ void Hl2Backend::applyPanBandwidth(double hz)
     // these; a wheel detent landing just after it expires still gets here.
     if (m_spanRebuildInFlight) {
         m_queuedSpanHz = hz;
+        return;
+    }
+
+    if (rate == m_sampleRateHz && zoom != m_displayZoom) {
+        applyDisplayZoom(zoom);
         return;
     }
 
@@ -4289,6 +4322,20 @@ void Hl2Backend::applyPanBandwidth(double hz)
     // and every reader see one consistent rate for the whole window.
     m_spanRebuildInFlight = true;
     const quint64 generation = m_connectGeneration;
+
+    // Any other rate runs unzoomed, and the rebuild's configure() makes each
+    // spectrum at whatever zoom its DSP holds, so drop it to 1 first (queued
+    // ahead of the rebuild on the same thread). A zoom-in from a wider rate
+    // lands at 48 kHz and then zooms: see finishSpanRebuild().
+    m_zoomAfterRebuild = zoom;
+    if (m_displayZoom != 1) {
+        m_displayZoom = 1;
+        for (Receiver& r : m_rx) {
+            if (r.dsp)
+                QMetaObject::invokeMethod(r.dsp, "setDisplayZoom", Qt::QueuedConnection,
+                                          Q_ARG(int, 1));
+        }
+    }
 
     // Put up the "Resampling…" affordance before the hand-off. Its contract
     // (IRadioBackend::resamplingChanged) is that consumers mute RX audio and
@@ -4413,6 +4460,16 @@ void Hl2Backend::finishSpanRebuild(int newRateHz, int previousRateHz,
         // failure permanent across restarts, which is why this is Ok-only.
         m_sampleRateHz = newRateHz;
         Hl2Settings::setSpanMhz(static_cast<double>(newRateHz) / 1.0e6);
+        if (m_zoomAfterRebuild > 1 && newRateHz == kIqSampleRatesHz[0]) {
+            // The loop and emitAllPanState() below re-centre and publish.
+            m_displayZoom = m_zoomAfterRebuild;
+            for (Receiver& r : m_rx) {
+                if (r.dsp)
+                    QMetaObject::invokeMethod(r.dsp, "setDisplayZoom", Qt::QueuedConnection,
+                                              Q_ARG(int, m_displayZoom));
+            }
+            Hl2Settings::setSpanMhz(static_cast<double>(displaySpanHz()) / 1.0e6);
+        }
         retryPureSignalIfWanted();
         // Protocol 1's feedback runs at the receiver rate.
         if (m_psActive) {
@@ -4474,6 +4531,27 @@ void Hl2Backend::finishSpanRebuild(int newRateHz, int previousRateHz,
         m_queuedSpanHz = 0.0;
         applyPanBandwidth(queued);
     }
+}
+
+void Hl2Backend::applyDisplayZoom(int zoom)
+{
+    // Display only: no rebuild, no "Resampling…", no audio gap. Each DSP swaps
+    // its Hl2Spectrum on the I/O thread, where its frames are produced.
+    m_displayZoom = std::clamp(zoom, 1, kMaxDisplayZoom);
+    for (Receiver& r : m_rx) {
+        if (r.dsp)
+            QMetaObject::invokeMethod(r.dsp, "setDisplayZoom", Qt::QueuedConnection,
+                                      Q_ARG(int, m_displayZoom));
+    }
+    Hl2Settings::setSpanMhz(static_cast<double>(displaySpanHz()) / 1.0e6);
+    // A narrower view may no longer contain a slice; re-running the tune
+    // re-centres the NCO on it only if it has to (as finishSpanRebuild does).
+    for (const auto& ids : m_ids.all()) {
+        if (const Receiver* r = rx(ids.ddcIndex))
+            setSliceFrequency(ids.uiNumber, r->sliceFreqHz);
+    }
+    emitAllPanState();
+    notifyOperatingStateChanged();
 }
 
 void Hl2Backend::setPanFrameRate(const QString& panId, int fps)
@@ -6822,6 +6900,7 @@ IRadioBackend::HealthSnapshot Hl2Backend::healthSnapshot() const
     section("sampleRateHz", QStringLiteral("Link"));
     put("receivers", QStringLiteral("Active receivers"), m_ids.size());
     put("sampleRateHz", QStringLiteral("IQ sample rate (Hz)"), m_sampleRateHz);
+    put("displayZoom", QStringLiteral("Panadapter software zoom"), m_displayZoom);
     // The link budget this configuration actually consumes. Dropped packets
     // below are the symptom; this is the cause, and having both side by side is
     // what turns "the audio sounds wrong" into a diagnosis (oracle §6).
@@ -7147,6 +7226,7 @@ void Hl2Backend::applyRestoredState(const RestoredRadioState& state)
     m_rfPowerPercent = 100;       // TransmitModel's session default
     m_sampleRateHz = 48000;       // construction default — radio B must not
                                   // inherit radio A's span (PR #4619 review)
+    m_displayZoom = 1;
     m_currentBandKey.clear();
     // Same rule for the TX passband: a same-family swap must not carry radio A's
     // eSSB cuts onto radio B. Back to virgin defaults, which for this pair means
@@ -8167,7 +8247,7 @@ void Hl2Backend::pushInitialState()
     for (const auto& ids : m_ids.all()) {
         emit panBandwidthLimitsChanged(
             ids.panId,
-            static_cast<double>(kIqSampleRatesHz[0]) / 1.0e6,
+            static_cast<double>(kMinDisplaySpanHz) / 1.0e6,
             static_cast<double>(widestHz) / 1.0e6);
     }
 
@@ -8762,7 +8842,7 @@ void Hl2Backend::emitPanState(int ddc)
     // The SPAN is radio-wide (0x00[25:24] is one field), so every pan reports
     // the same bandwidth and a different centre.
     emit panCenterBandwidthChanged(ids->panId, r->ncoHz / 1.0e6,
-                                   static_cast<double>(m_sampleRateHz) / 1.0e6);
+                                   static_cast<double>(displaySpanHz()) / 1.0e6);
 }
 
 void Hl2Backend::emitAllSliceState()

@@ -147,6 +147,12 @@ public:
     // configure() rebuild, exactly like the averaging pair above.
     Q_INVOKABLE void setSpectrumPeakHold(bool on);
 
+    // Software zoom below the narrowest hardware span: the panadapter FFT grows
+    // to fftSize * zoom and is cropped back to fftSize bins around the NCO, so
+    // the trace covers inputRate / zoom. Display only; audio is untouched. Kept
+    // as a member and replayed after a configure() rebuild like the detector.
+    Q_INVOKABLE void setDisplayZoom(int zoom);
+
     // Impulse noise blanker, on the raw IQ ahead of the demodulator.
     //
     // THE ONLY NOISE BLANKER THIS RADIO HAS. The HL2 ships raw IQ and runs no
@@ -567,6 +573,7 @@ private:
     int m_spectrumAvgFrames = 1;
     bool m_spectrumAvgWeighted = true;
     bool m_spectrumPeakHold = false;   // Display → FFT PEAK; replayed on rebuild
+    int  m_displayZoom = 1;            // setDisplayZoom(); replayed on rebuild
     std::vector<std::complex<float>> m_iqBuffer;   // IQ awaiting a full DSP block
     // Wire IQ conjugated into the analytic convention, for the SPECTRUM only —
     // the demodulator takes the raw wire. A member rather than a local: this

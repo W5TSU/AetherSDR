@@ -19,15 +19,23 @@ namespace AetherSDR::hl2 {
 // so construct instances off the real-time path (single-channel today).
 class Hl2Spectrum {
 public:
-    explicit Hl2Spectrum(int fftSize = 1024);
+    // `outputBins` (0 = fftSize) crops the DC-centred trace to its middle
+    // `outputBins` bins: the software zoom below the narrowest hardware span.
+    // A 16384-point FFT cropped to 1024 bins is a 3 kHz window at 48 kHz with
+    // ~3 Hz bins, where an uncropped 1024-point FFT would be 47 Hz per bin.
+    // A cropped spectrum also overlaps its frames by fftSize - outputBins
+    // samples, so a long FFT still repaints every outputBins samples instead
+    // of every fftSize (341 ms at 16x zoom).
+    explicit Hl2Spectrum(int fftSize = 1024, int outputBins = 0);
     ~Hl2Spectrum();
     Hl2Spectrum(const Hl2Spectrum&) = delete;
     Hl2Spectrum& operator=(const Hl2Spectrum&) = delete;
 
     [[nodiscard]] int fftSize() const noexcept { return m_fftSize; }
+    [[nodiscard]] int outputBins() const noexcept { return m_outputBins; }
 
     // Append IQ samples; each time a full frame accumulates, compute one
-    // spectrum. `binsDbfs` is resized to fftSize (DC at index fftSize/2) and
+    // spectrum. `binsDbfs` is resized to outputBins (DC at index outputBins/2) and
     // holds the most recent frame. Returns the number of frames produced (a
     // partial frame is carried to the next call).
     int process(std::span<const std::complex<float>> iq, std::vector<float>& binsDbfs);
@@ -147,6 +155,7 @@ private:
     }
 
     int m_fftSize;
+    int m_outputBins;                         // <= m_fftSize; also the frame hop
     std::vector<std::complex<float>> m_acc;   // accumulation buffer (< m_fftSize)
     std::vector<double> m_window;             // Hanning window
     double m_coherentGain = 1.0;              // sum(window) / 2
