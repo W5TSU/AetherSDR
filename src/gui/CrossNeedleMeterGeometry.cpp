@@ -1397,6 +1397,14 @@ double CrossNeedleMeterGeometry::rangeMultiplierFor(int maxWatts, bool amplifier
     if (maxWatts > 20) {
         return 10.0;
     }
+    // A 5 W radio (Hermes-Lite 2) on the 20 W range barely lifts either
+    // needle, so they cross down by the pivot where every SWR curve pinches
+    // together and a 2.4:1 load reads about 1.5:1. The quarter range puts
+    // 5 W forward and 1 W reflected at full scale; the widget reprints the
+    // scale numbers in real watts for it.
+    if (maxWatts > 0 && maxWatts <= 5) {
+        return 0.25;
+    }
     return 1.0;
 }
 

@@ -188,7 +188,7 @@ QString CrossNeedleMeterWidget::accessibleValueText() const {
         .arg(m_forwardWatts, 0, 'f', 1)
         .arg(m_reflectedWatts, 0, 'f', 1)
         .arg(m_swr, 0, 'f', 2)
-        .arg(m_rangeMultiplier, 0, 'f', 0);
+        .arg(m_rangeMultiplier, 0, 'g', 3);
 }
 
 void CrossNeedleMeterWidget::setTxMeters(float forwardWatts, float swr) {
@@ -230,6 +230,9 @@ void CrossNeedleMeterWidget::setPowerScale(int maxWatts, bool amplifierActive) {
         return;
     }
     m_rangeMultiplier = multiplier;
+    // Below x1 the printed numbers change with the range, so the cached face
+    // has to be repainted.
+    m_cacheValid = false;
     updateTargets(true);
 }
 
@@ -279,7 +282,7 @@ void CrossNeedleMeterWidget::updateTargets(bool snap) {
     // arrive on independent worker threads, so a late power packet after RX
     // must update the cache without bringing the needles back off their stops.
     const bool active = m_transmitting || m_automationFixture;
-    const double multiplier = std::max(1.0, m_rangeMultiplier);
+    const double multiplier = m_rangeMultiplier > 0.0 ? m_rangeMultiplier : 1.0;
     const float forwardTarget =
         active ? static_cast<float>(
                      std::clamp(m_forwardWatts / (kForwardFullScale * multiplier), 0.0, 1.0))
@@ -363,6 +366,18 @@ void CrossNeedleMeterWidget::drawRotatedText(QPainter &painter, const QPointF &c
     painter.restore();
 }
 
+QString CrossNeedleMeterWidget::printedLabel(const CrossNeedleMeterGeometry::Scale &scale,
+                                             int index) const {
+    const QString &label = scale.labels[index];
+    if (label.isEmpty() || m_rangeMultiplier >= 1.0) {
+        return label;
+    }
+    // Quarter values such as 0.25 and 0.05 crowd the dense low end of the
+    // arc, so only numbers of three characters or fewer are printed.
+    const QString scaled = QString::number(scale.values[index] * m_rangeMultiplier, 'g', 3);
+    return scaled.size() <= 3 ? scaled : QString();
+}
+
 void CrossNeedleMeterWidget::drawScale(QPainter &painter,
                                        const CrossNeedleMeterGeometry::Scale &scale,
                                        const CrossNeedleMeterGeometry::Title &title) const {
@@ -428,10 +443,11 @@ void CrossNeedleMeterWidget::drawScale(QPainter &painter,
         const QPointF radial(std::cos(angle), std::sin(angle));
         const QPointF point = scale.center + radial * scale.radius;
         painter.drawLine(point - radial * 20.0, point + radial * 14.0);
-        if (!scale.labels[i].isEmpty()) {
+        const QString label = printedLabel(scale, i);
+        if (!label.isEmpty()) {
             painter.save();
             painter.setPen(colors.text);
-            drawCenteredText(painter, point + radial * scale.labelOffset, scale.labels[i]);
+            drawCenteredText(painter, point + radial * scale.labelOffset, label);
             painter.restore();
         }
     }
@@ -561,8 +577,14 @@ void CrossNeedleMeterWidget::drawFace(QPainter &painter) const {
         rangeFont.setBold(true);
         painter.setFont(rangeFont);
         painter.setPen(colors.secondaryText);
-        drawCenteredMultilineText(painter, m_geometry.rangeLabelCenter,
-                                  m_geometry.rangeLabel);
+        // The printed legend describes the x1/x10/x100 ranges. The sub-x1
+        // range reprints the scale in real watts instead, so it gets its own.
+        const QString legend =
+            m_rangeMultiplier < 1.0
+                ? QStringLiteral("RANGE\n%1 W")
+                      .arg(m_geometry.forwardScale.values.last() * m_rangeMultiplier, 0, 'g', 3)
+                : m_geometry.rangeLabel;
+        drawCenteredMultilineText(painter, m_geometry.rangeLabelCenter, legend);
     }
 
     QFont unitFont = font();

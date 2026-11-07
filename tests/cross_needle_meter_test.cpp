@@ -1032,6 +1032,10 @@ void testMeterMathAndActiveProof() {
            CrossNeedleMeterGeometry::rangeMultiplierFor(100, false) == 10.0);
     report("amplifier output selects x100 range",
            CrossNeedleMeterGeometry::rangeMultiplierFor(100, true) == 100.0);
+    report("5 W QRP radio selects x0.25 range",
+           CrossNeedleMeterGeometry::rangeMultiplierFor(5, false) == 0.25);
+    report("unknown power class stays on x1 range",
+           CrossNeedleMeterGeometry::rangeMultiplierFor(0, false) == 1.0);
 
     const QPointF documentedIntersection = geometry.needleIntersection(10.0, 0.4, 1.0);
     const QPointF multipliedIntersection = geometry.needleIntersection(100.0, 4.0, 10.0);
@@ -1487,6 +1491,38 @@ void testWidgetStateAndRender() {
 
 } // namespace
 
+void testQrpRange() {
+    CrossNeedleMeterWidget meter;
+    meter.resize(600, 400);
+    meter.setPowerScale(5, false);
+    report("5 W radio puts the widget on the x0.25 range", meter.rangeMultiplier() == 0.25);
+
+    const CrossNeedleMeterGeometry &geometry = meter.geometry();
+    const auto &forward = geometry.forwardScale;
+    const auto &reflected = geometry.reflectedScale;
+    report("QRP range prints 5 W at forward full scale",
+           meter.printedLabel(forward, forward.labels.size() - 1) == QStringLiteral("5"));
+    report("QRP range prints 1 W at reflected full scale",
+           meter.printedLabel(reflected, reflected.labels.size() - 1) == QStringLiteral("1"));
+    report("QRP range prints half watts and drops crowded quarter watts",
+           meter.printedLabel(forward, 2) == QStringLiteral("0.5") &&
+               meter.printedLabel(forward, 1).isEmpty());
+    report("QRP range keeps labels the face leaves blank blank",
+           meter.printedLabel(reflected, 7).isEmpty());
+
+    // The tune that showed the bug: 2.0 W forward, 0.33 W reflected, SWR 2.37
+    // into a 40 m end-fed half wave.
+    double distance = 0.0;
+    const QString guide =
+        geometry.nearestGuideLabel(geometry.needleIntersection(1.993, 0.3286, 0.25), &distance);
+    report("HL2 2 W at SWR 2.37 crosses on the 2.5 guide", guide == QStringLiteral("2.5"),
+           "guide=" + guide.toStdString() + " distance=" + std::to_string(distance));
+
+    meter.setPowerScale(100, false);
+    report("leaving QRP restores the face's own labels",
+           meter.printedLabel(forward, forward.labels.size() - 1) == QStringLiteral("20"));
+}
+
 int main(int argc, char **argv) {
     TestSettingsProfile settingsProfile(QStringLiteral("aether-cross-needle-meter-test"));
     if (!settingsProfile.isValid()) {
@@ -1500,6 +1536,7 @@ int main(int argc, char **argv) {
     testResourceAndConstruction();
     testMeterMathAndActiveProof();
     testWidgetStateAndRender();
+    testQrpRange();
 
     std::printf("\n%s\n", g_failed == 0 ? "All tests passed."
                                         : (std::to_string(g_failed) + " test(s) failed.").c_str());
