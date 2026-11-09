@@ -1,16 +1,62 @@
-.TH AETHERSDR "1" "2026-06-20" "AetherSDR" "User Commands"
+.TH AETHERSDR "1" "2026-11-08" "AetherSDR" "User Commands"
 .SH NAME
-AetherSDR \- FlexRadio transceiver client
+AetherSDR \- software-defined radio transceiver client
 .SH SYNOPSIS
 .B aethersdr
+.RB [ --debug-level
+.IR level ]
+.RB [ --no-splash ]
+.br
+.B aethersdr
+.RB [ -h | --help ]
 .br
 .B aethersdr --config
 .I command
 .RI [ key ] " " [ value ]
 .SH DESCRIPTION
-AetherSDR brings FlexRadio operation to Linux without Wine or virtual machines.
-Built from the ground up with Qt6 and C++20, it speaks the SmartSDR protocol
-natively and aims to replicate the full SmartSDR experience.
+AetherSDR is a native Qt6 and C++20 client for software-defined radios. It
+speaks the SmartSDR protocol to FlexRadio transceivers, and also runs the
+Hermes-Lite 2, HackRF and RTL-SDR.
+.PP
+This build is W5TSU's fork, maintained mainly for Hermes-Lite 2 support. It is
+not an official AetherSDR release.
+.SH OPTIONS
+.TP
+.BR -h ", " --help
+Print the options and exit.
+.TP
+.BI --debug-level " level\fR, " --debug-level= level
+How much of the log to print on the terminal (stderr). Each level adds to the
+one before it:
+.RS
+.TP
+.B 0
+Nothing. This is the default.
+.TP
+.B 1
+Info.
+.TP
+.B 2
+Info, warnings and errors.
+.TP
+.B 3
+All of the above, plus debug. Debug lines appear only for the categories
+enabled in \fBHelp \(-> Support\fR.
+.RE
+.IP
+The level doesn't change the log file in \fB~/.config/AetherSDR/logs/\fR. Libraries AetherSDR loads may still print their own messages. Any other
+value prints a usage message and exits with status 1.
+.TP
+.B --no-splash
+Skip the startup splash screen. It is also skipped when \fBAETHER_AUTOMATION\fR
+is set or the Qt platform is \fBoffscreen\fR.
+.TP
+.BI --config " command"
+Inspect or change settings without starting the GUI, then exit. Must be the
+first argument. See \fBCONFIG COMMANDS\fR.
+.PP
+Standard Qt options, such as \fB-platform\fR and \fB-style\fR, also apply.
+Any other option prints a usage message and exits with status 1.
 .SH CONFIG COMMANDS
 Settings live in a SQLite store under the user config directory
 (\fB~/.config/AetherSDR/AetherSDR.db\fR). The \fB--config\fR mode
@@ -32,7 +78,22 @@ Delete a setting.
 Sanitized dump of the whole store (secrets redacted); diagnostic output,
 not a restorable backup.
 .TP
+.B features \fR[\fIfamily\fR]
+List the settings stored per radio, such as Hermes-Lite 2 state, nicknames
+and band stacks (sanitized).
+.TP
 .B path
 Print the settings database path.
+.PP
+A running AetherSDR doesn't see changes made this way until it is restarted.
+.SH FILES
+.TP
+.B ~/.config/AetherSDR/AetherSDR.db
+Settings.
+.TP
+.B ~/.config/AetherSDR/logs/aethersdr.log
+The current log file.
 .SH SEE ALSO
-Project homepage: https://github.com/aethersdr/AetherSDR
+This fork: https://github.com/W5TSU/AetherSDR
+.br
+Official project: https://github.com/aethersdr/AetherSDR

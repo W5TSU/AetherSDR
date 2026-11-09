@@ -5355,6 +5355,19 @@ endif()
 set_target_properties(async_log_writer_test PROPERTIES AUTOMOC ON)
 add_test(NAME async_log_writer_test COMMAND async_log_writer_test)
 
+# `--debug-level` filters only the terminal copy of the log (0 = none).
+add_executable(console_log_level_test
+    tests/console_log_level_test.cpp
+    src/core/AsyncLogWriter.cpp
+)
+target_include_directories(console_log_level_test PRIVATE src)
+target_link_libraries(console_log_level_test PRIVATE Qt6::Core)
+if(UNIX)
+    target_link_libraries(console_log_level_test PRIVATE pthread)
+endif()
+set_target_properties(console_log_level_test PROPERTIES AUTOMOC ON)
+add_test(NAME console_log_level_test COMMAND console_log_level_test)
+
 # Support & Diagnostics category toggle must enable Info alongside Debug
 # (#4419): most categories declare a QtWarningMsg threshold, and the filter
 # rules previously re-enabled .debug only, leaving every qCInfo on those

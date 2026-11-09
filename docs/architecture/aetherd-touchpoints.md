@@ -4,7 +4,7 @@
 
 Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine-design.md) §2, §10). One row per engine header the UI includes; converting a touchpoint means the UI reaches that surface through the versioned protocol instead of the header.
 
-**Totals:** 234 touchpoint headers (201 core, 33 models) — 234/234 tagged, 0/234 converted.
+**Totals:** 235 touchpoint headers (202 core, 33 models) — 235/235 tagged, 0/235 converted.
 
 | Header | Includers | Tag | Status |
 |---|---:|---|---|
@@ -42,6 +42,7 @@ Burndown manifest for the engine/UI decoupling ([RFC](../aetherd-headless-engine
 | `core/ClientTxTestTone.h` | 1 | universal — 1 kHz TX test-tone generator injected at head of client TX DSP chain; radio-agnostic engine DSP feature | unconverted |
 | `core/ClockAlignmentFrame.h` | 1 | universal — Frozen per-second alignment contract emitted by the AetherClock engine (cross-PR contract, PRD-A §5). Radio-agnostic decode output. | unconverted |
 | `core/ClockDiagnostics.h` | 1 | universal — AetherClock ~1 Hz acquisition-telemetry snapshot (pre-lock funnel, verdict line, debug pane). Measured decode-chain quantities only, parallel to the frozen alignment contract; no vendor ties. | unconverted |
+| `core/ConsoleLogLevel.h` | 1 | ui-support — --debug-level: which log lines are copied to the terminal. Plumbing, not radio state. | unconverted |
 | `core/CtcssTones.h` | 1 | universal — Canonical CTCSS tone vocabulary shared by operator controls and automation validation. Radio-family-neutral state and validation data. | unconverted |
 | `core/CwCallsignSpotter.h` | 1 | universal — Spots callsigns from the client-side CW decoder stream; radio-agnostic engine feature. | unconverted |
 | `core/CwDecoder.h` | 1 | universal — Client-side CW/Morse decoder (ggmorse) over generic 24kHz PCM; radio-agnostic engine DSP feature. | unconverted |

@@ -3,6 +3,7 @@
 #include <QTime>
 #include <QString>
 #include <QtCore/qlogging.h>
+#include "ConsoleLogLevel.h"
 
 #include <condition_variable>
 #include <deque>
@@ -53,6 +54,9 @@ public:
     void setRotationConfig(qint64 maxFileBytes, RotationCallback cb);
 
     bool start(const QString& path, bool mirrorToStderr);
+    // Which lines the stderr mirror copies (ConsoleLogLevel). Must be called
+    // before start(). Defaults to every line.
+    void setConsoleLevel(int level);
     void shutdown();
 
     bool isRunning() const;
@@ -105,6 +109,7 @@ private:
 
     QString m_filePath;
     bool m_mirrorToStderr{false};
+    int m_consoleLevel{ConsoleLogLevel::kMax};
     bool m_started{false};
     bool m_accepting{false};
     bool m_stopping{false};
