@@ -361,6 +361,10 @@
   "split": "",
   "confidence": "high"
  },
+ "core/ConsoleLogLevel.h": {
+  "tag": "ui-support",
+  "note": "--debug-level: which log lines are copied to the terminal. Plumbing, not radio state."
+ },
  "core/LogManager.h": {
   "tag": "ui-support",
   "note": "App-wide diagnostic logging: category registry, log file/retention, runtime toggles. Plumbing, not radio state.",

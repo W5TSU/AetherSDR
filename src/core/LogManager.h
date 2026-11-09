@@ -83,6 +83,8 @@ public:
 
     // Log file management
     bool startLogging(const QString& path, bool mirrorToStderr);
+    // See ConsoleLogLevel. Call before startLogging.
+    void setConsoleLevel(int level) { m_writer.setConsoleLevel(level); }
     void shutdownLogging();
     void enqueueMessage(QtMsgType type, const QMessageLogContext& ctx, const QString& msg);
     void flushLog() const;

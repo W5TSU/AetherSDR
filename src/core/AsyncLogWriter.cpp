@@ -383,6 +383,12 @@ void AsyncLogWriter::setRotationConfig(qint64 maxFileBytes, RotationCallback cb)
     m_rotationCallback = std::move(cb);
 }
 
+void AsyncLogWriter::setConsoleLevel(int level)
+{
+    std::lock_guard lock(m_mutex);
+    m_consoleLevel = level;
+}
+
 bool AsyncLogWriter::start(const QString& path, bool mirrorToStderr)
 {
     shutdown();
@@ -584,12 +590,14 @@ void AsyncLogWriter::run(std::promise<bool> opened)
 
     QString path;
     bool mirrorToStderr = false;
+    int consoleLevel = ConsoleLogLevel::kMax;
     qint64 maxFileBytes = 0;
     RotationCallback rotationCb;
     {
         std::lock_guard lock(m_mutex);
         path = m_filePath;
         mirrorToStderr = m_mirrorToStderr;
+        consoleLevel = m_consoleLevel;
         maxFileBytes = m_maxFileBytes;
         rotationCb = m_rotationCallback;
     }
@@ -632,7 +640,9 @@ void AsyncLogWriter::run(std::promise<bool> opened)
         QDir().mkpath(QFileInfo(reopenPath).absolutePath());
         file.setFileName(reopenPath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            // With no file, stderr is the only place left: copy everything.
             mirrorToStderr = true;
+            consoleLevel = ConsoleLogLevel::kMax;
             return false;
         }
         file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
@@ -734,7 +744,7 @@ void AsyncLogWriter::run(std::promise<bool> opened)
                     buffer.append(line);
                     ++bufferedLineCount;
                 }
-                if (mirrorToStderr) {
+                if (mirrorToStderr && ConsoleLogLevel::shows(consoleLevel, item.log.type)) {
                     fwrite(line.constData(), 1, static_cast<size_t>(line.size()), stderr);
                     if (!file.isOpen()) {
                         fflush(stderr);

@@ -76,6 +76,13 @@ For *what shipped*, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Queued (next cycle)
 
+- **Update notification** — tell the operator when a newer release is out,
+  without being asked. **Help → Check for Updates...** only runs when chosen, so
+  nothing announces a release today. It also asks upstream, not this fork: the
+  check and its **View Latest Release** button (`UpdateChecker`), the What's New
+  dialog and the outdated-version warning on feature requests all use
+  `aethersdr/AetherSDR`. Point them at `W5TSU/AetherSDR` first, or the notice
+  sends this fork's users to upstream's builds instead.
 - **Windows serial PTT — check on real hardware** — v26.10.9 fixes
   AetherSDR staying open after exit with a serial port open
   ([#99](https://github.com/W5TSU/AetherSDR/issues/99)), tested on a virtual

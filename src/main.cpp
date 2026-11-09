@@ -19,6 +19,7 @@
 #include "core/SystemInventory.h"
 #include "core/MacMicPermission.h"
 #include "core/AutomationServer.h"
+#include "core/ConsoleLogLevel.h"
 
 #ifdef Q_OS_MACOS
 #include "MacStartupAbortGuard.h"
@@ -46,11 +47,10 @@
 #include <QTimer>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 
 #ifdef _WIN32
 #include <io.h>
-#define isatty _isatty
-#define fileno _fileno
 #else
 #include <unistd.h>
 #include <cerrno>
@@ -204,6 +204,45 @@ static std::unique_ptr<QSplashScreen> showForkSplash(int argc, char* argv[])
     splash->show();
     QApplication::processEvents();
     return splash;
+}
+
+// ── `--debug-level N` — how much of the log reaches the terminal ────────────
+// The log file is unaffected. Returns nullopt for a missing or bad value, and
+// the level (0 when the option is absent) otherwise.
+static std::optional<int> consoleLogLevelFromArgs(int argc, char* argv[])
+{
+    static constexpr char kOption[] = "--debug-level";
+    int level = AetherSDR::ConsoleLogLevel::kOff;
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        QString value;
+        if (arg == QLatin1String(kOption)) {
+            if (i + 1 >= argc)
+                return std::nullopt;
+            value = QString::fromLocal8Bit(argv[++i]);
+        } else if (arg.startsWith(QLatin1String(kOption) + QLatin1Char('='))) {
+            value = arg.mid(static_cast<int>(sizeof(kOption)));
+        } else {
+            continue;
+        }
+        const auto parsed = AetherSDR::ConsoleLogLevel::parse(value);
+        if (!parsed)
+            return std::nullopt;
+        level = *parsed;
+    }
+    return level;
+}
+
+// Before the log file opens, Qt's own handler prints to the terminal. This
+// holds that early output to the same --debug-level.
+static int g_earlyConsoleLevel = AetherSDR::ConsoleLogLevel::kOff;
+static QtMessageHandler g_qtDefaultHandler = nullptr;
+
+static void earlyMessageHandler(QtMsgType type, const QMessageLogContext& ctx,
+                                const QString& msg)
+{
+    if (AetherSDR::ConsoleLogLevel::shows(g_earlyConsoleLevel, type) && g_qtDefaultHandler)
+        g_qtDefaultHandler(type, ctx, msg);
 }
 
 // ── `AetherSDR --config` — settings CLI (RFC #4603 proposal D MVO) ───────────
@@ -360,6 +399,36 @@ int main(int argc, char* argv[])
     if (argc >= 2 && qstrcmp(argv[1], "--config") == 0) {
         return runConfigCli(argc, argv);
     }
+
+    static constexpr char kUsage[] =
+        "usage: AetherSDR [--debug-level N] [--no-splash]\n"
+        "       AetherSDR --config <command>   (run AetherSDR --config for the list)\n"
+        "\n"
+        "  -h, --help         show this help and exit\n"
+        "  --debug-level N    log lines to print on the terminal; the log file is\n"
+        "                     the same at every level:\n"
+        "                       0  none (default)\n"
+        "                       1  info\n"
+        "                       2  info, warnings and errors\n"
+        "                       3  all of the above, plus debug for the categories\n"
+        "                          enabled in Help > Support\n"
+        "  --no-splash        skip the startup splash screen\n"
+        "\n"
+        "Standard Qt options such as -platform and -style also apply.\n";
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "-h") == 0 || qstrcmp(argv[i], "--help") == 0) {
+            std::fputs(kUsage, stdout);
+            return 0;
+        }
+    }
+
+    const std::optional<int> consoleLogLevel = consoleLogLevelFromArgs(argc, argv);
+    if (!consoleLogLevel) {
+        std::fputs(kUsage, stderr);
+        return 1;
+    }
+    g_earlyConsoleLevel = *consoleLogLevel;
+    g_qtDefaultHandler = qInstallMessageHandler(earlyMessageHandler);
 
     // ── Pre-QApplication environment setup ────────────────────────────────
 
@@ -774,13 +843,14 @@ int main(int argc, char* argv[])
     // both configurable in AppSettings["LogRetention"]. (#2498)
     AetherSDR::LogManager::instance().pruneOldLogs(logDir);
 
-    // Skip stderr when it's a pipe to a non-draining parent (Stream Deck
-    // "Run Command", systemd user services, GUI launchers).  Once the
-    // ~64 KB pipe buffer fills, a blocking write could lock up the logger.
-    static const bool stderrIsTty = isatty(fileno(stderr));
-
+    // The terminal gets log lines only when asked for with --debug-level.
+    // Asking for it also covers a redirected stderr; without it, a pipe to a
+    // non-draining parent (Stream Deck "Run Command", systemd user services,
+    // GUI launchers) can't fill and lock up the logger.
     auto& logManager = AetherSDR::LogManager::instance();
-    if (logManager.startLogging(logPath, stderrIsTty)) {
+    logManager.setConsoleLevel(*consoleLogLevel);
+    if (logManager.startLogging(logPath,
+                                *consoleLogLevel > AetherSDR::ConsoleLogLevel::kOff)) {
         qInstallMessageHandler(messageHandler);
 
         // Record the GPU-selection decision now the log handler exists
@@ -923,7 +993,9 @@ int main(int argc, char* argv[])
 
     AetherSDR::ShutdownTrace::complete("application");
 
-    qInstallMessageHandler(nullptr);
+    // Back to the filtered early handler, not Qt's: late shutdown output keeps
+    // to --debug-level too.
+    qInstallMessageHandler(earlyMessageHandler);
     logManager.shutdownLogging();
 
     return exitCode;
