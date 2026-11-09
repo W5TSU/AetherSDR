@@ -8,6 +8,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v26.11.3] — 2026-11-09
+
+Command-line changes: a choice of how much logging appears in the terminal, a
+help option, and an error for options AetherSDR doesn't know. **By default the
+terminal is now quiet,** where it used to show the whole log. The log file is
+unchanged.
+
+### Command line
+
+- **`--debug-level N` sets how much of the log is printed on the terminal (#120).**
+  Each level adds to the one before it:
+
+  | Level | Terminal shows |
+  |---|---|
+  | **0** (default) | Nothing |
+  | **1** | Info |
+  | **2** | Info, warnings and errors |
+  | **3** | All of the above, plus debug for the categories enabled in **Help → Support** |
+
+  The log file in `~/.config/AetherSDR/logs/` is the same at every level, so a
+  support log is never thinner for it. Until now the whole log was printed
+  whenever AetherSDR ran in a terminal. To get that back, use `--debug-level 3`. A
+  graphics library may still print a line about VDPAU at level 0: it writes to the
+  terminal itself.
+- **`-h` and `--help`** list the options and exit (#120).
+- **An option AetherSDR doesn't recognise now stops it,** with the usage and exit
+  status 1, rather than starting without it. A misspelt `--debug-level` used to
+  start silently at level 0. Qt's own options, such as `-platform` and `-style`,
+  still work (#120).
+
+### Linux
+
+- **The man page is up to date (#120).** It lists every option, adds
+  `--config features`, and says where the settings and logs live. It describes
+  this fork and its radios, where it used to say FlexRadio only.
+
+### Not tested yet
+
+- The new options on Windows and macOS. They were tried only on Linux.
+
 ## [v26.11.2] — 2026-11-04
 
 A window that shows what PureSignal is doing and sends its own test signals, a
