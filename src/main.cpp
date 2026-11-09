@@ -586,6 +586,27 @@ int main(int argc, char* argv[])
 #endif
     QApplication app(argc, argv);
 
+    // QApplication has taken out the Qt options it knows (-platform, -style...),
+    // so anything left that isn't ours is a mistake, such as a misspelt
+    // --debug-level. Stop rather than start quietly without it.
+    {
+        const QStringList rest = QCoreApplication::arguments().mid(1);
+        for (int i = 0; i < rest.size(); ++i) {
+            const QString& arg = rest.at(i);
+            if (arg == QLatin1String("--no-splash")
+                || arg.startsWith(QLatin1String("--debug-level="))
+                || arg.startsWith(QLatin1String("-psn_")))   // macOS Finder launch
+                continue;
+            if (arg == QLatin1String("--debug-level")) {
+                ++i;   // its value, already checked
+                continue;
+            }
+            std::fprintf(stderr, "AetherSDR: unknown option '%s'\n\n", qPrintable(arg));
+            std::fputs(kUsage, stderr);
+            return 1;
+        }
+    }
+
     // Name the GUI thread. Qt names the threads it starts, propagating
     // QThread::objectName() in QThreadPrivate::start(), but the main thread was
     // never started that way — so it is the one thread with no name, in the
