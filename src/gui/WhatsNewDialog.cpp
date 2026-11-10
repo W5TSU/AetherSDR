@@ -33,11 +33,8 @@
 namespace AetherSDR {
 namespace {
 
-constexpr auto kReleaseApiBase =
-    "https://api.github.com/repos/aethersdr/AetherSDR/releases/tags/%1";
-
-constexpr auto kReleaseApiLatest =
-    "https://api.github.com/repos/aethersdr/AetherSDR/releases/latest";
+constexpr auto kReleaseApiBase = UpdateChecker::kReleasesApiTagUrl;
+constexpr auto kReleaseApiLatest = UpdateChecker::kReleasesApiLatestUrl;
 
 QString normalizedTag(const QString& version)
 {
@@ -121,7 +118,7 @@ QString releaseErrorText(QNetworkReply* reply, const QByteArray& payload)
         return QStringLiteral(
             "GitHub is rate-limiting requests from your network — try again "
             "in a few minutes.  You can also read the release notes directly "
-            "at github.com/aethersdr/AetherSDR/releases.");
+            "at github.com/W5TSU/AetherSDR/releases.");
     }
 
     if (status.isValid())

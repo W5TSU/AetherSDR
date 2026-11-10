@@ -5368,6 +5368,14 @@ endif()
 set_target_properties(console_log_level_test PROPERTIES AUTOMOC ON)
 add_test(NAME console_log_level_test COMMAND console_log_level_test)
 
+# Help → Check for Updates asks this fork's releases, not upstream's.
+add_executable(update_checker_repo_test
+    tests/update_checker_repo_test.cpp
+)
+target_include_directories(update_checker_repo_test PRIVATE src)
+target_link_libraries(update_checker_repo_test PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME update_checker_repo_test COMMAND update_checker_repo_test)
+
 # Support & Diagnostics category toggle must enable Info alongside Debug
 # (#4419): most categories declare a QtWarningMsg threshold, and the filter
 # rules previously re-enabled .debug only, leaving every qCInfo on those
