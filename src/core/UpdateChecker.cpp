@@ -10,9 +10,6 @@
 
 namespace AetherSDR {
 
-static constexpr char kReleasesApiUrl[] =
-    "https://api.github.com/repos/aethersdr/AetherSDR/releases/latest";
-
 UpdateChecker::UpdateChecker(QObject* parent)
     : QObject(parent)
 {}
@@ -22,7 +19,7 @@ void UpdateChecker::checkNow()
     if (m_inFlight) return;
     m_inFlight = true;
 
-    QNetworkRequest req{QUrl{QString(kReleasesApiUrl)}};
+    QNetworkRequest req{QUrl{QString(kReleasesApiLatestUrl)}};
     req.setRawHeader("Accept", "application/vnd.github+json");
     req.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     req.setRawHeader("User-Agent",

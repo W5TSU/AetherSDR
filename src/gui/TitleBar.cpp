@@ -33,6 +33,7 @@
 #include <QNetworkReply>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "core/UpdateChecker.h"
 #include "core/VersionNumber.h"
 #include "core/ThemeManager.h"
 
@@ -1088,7 +1089,7 @@ void TitleBar::showFeatureRequestDialog()
     // holding the manager and the lambda's captures with it.
     nam->setTransferTimeout(kTransferTimeoutMs);
     auto* reply = nam->get(QNetworkRequest(
-        QUrl("https://api.github.com/repos/aethersdr/AetherSDR/releases/latest")));
+        QUrl(QString::fromLatin1(UpdateChecker::kReleasesApiLatestUrl))));
     connect(reply, &QNetworkReply::finished, this, [this, reply, nam] {
         reply->deleteLater();
         nam->deleteLater();
